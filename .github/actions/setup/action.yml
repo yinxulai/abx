@@ -25,10 +25,12 @@ runs:
     - name: Set up pnpm
       uses: pnpm/action-setup@v6.1.0
 
+    # 版本与开发机一致（`node -v` 的 major），也写在根 `package.json` 的 `engines` 里。
+    # 两处是同一个事实的两种表达：CI 装哪个版本、以及哪个版本才算被支持。
     - name: Set up Node.js
       uses: actions/setup-node@v5
       with:
-        node-version: 22
+        node-version: 24
         cache: pnpm
 
     # Turbo 的任务缓存是内容寻址的：命中同一个 key 就能跳过没变的包。
