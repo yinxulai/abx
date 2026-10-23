@@ -113,22 +113,6 @@ export function normalizeRemoteAddress(remoteAddress: string | undefined): strin
   return formatIpv4(octets)
 }
 
-/**
- * 这个地址是不是回环。
- *
- * 给调用方用的：舱面绑在回环上时，允许列表要把回环放进去，否则一个请求都进不来
- * （绑回环时内核本来就只让回环连进来，多这一条不会让「谁能连上」变宽）。
- */
-export function isLoopbackAddress(address: string): boolean {
-  const normalized = normalizeRemoteAddress(address)
-  if (normalized === null) return false
-  if (normalized === '::1') return true
-
-  const octets = parseIpv4(normalized)
-  // 整个 127.0.0.0/8 都是回环，不只是 127.0.0.1。
-  return octets !== null && (octets >>> 24) === 127
-}
-
 /** 判定来源，给出拒因。`server.ts` 用它写审计里的决策。 */
 export function classifyCellSource(remoteAddress: string | undefined, allowedSubnets: readonly string[]): CellSourceCheck {
   const address = normalizeRemoteAddress(remoteAddress)

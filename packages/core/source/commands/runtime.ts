@@ -19,13 +19,10 @@ import {
   type SandboxBackendId,
 } from '@abx/contracts'
 import {
-  DEFAULT_ALLOWED_CELL_SUBNETS,
   DEFAULT_CELL_ID,
-  LOOPBACK_SUBNET,
   defaultCellTokenPath,
   formatHostForUrl,
   generateCellToken,
-  isLoopbackAddress,
   readCellTokenFile,
   startBroker,
 } from '../broker/index'
@@ -104,25 +101,6 @@ export function resolveCellHost(config: AbxConfig, backend: SandboxBackendId, ov
   if (override !== null) return override
   if (backend === 'local') return '127.0.0.1'
   return config.broker.cellHost
-}
-
-/**
- * 舱面允许的来源网段。
- *
- * 默认那份只认 docker 的网桥 / VM 网段（见 `broker/cell-source.ts`），这没问题：
- * 生产形态下舱就活在那两个网段里。**但舱面绑在回环上时得把回环也放进去**，
- * 否则一个请求都进不来——包括舱里正常的 agent，表现是一片 403。
- *
- * 两个会走到这条路上的情形：
- *   - `local` 后端：舱面绑 `127.0.0.1`（见 {@link resolveCellHost}）；开发自测用；
- *   - `--cell-host 127.0.0.1` 之类的手工覆盖（`e2e-local.sh` 就是这么跑的）。
- *
- * 绑回环时多这一条不会让「谁能连上」变宽：内核本来就只允许回环连进来。
- * 配置项 `broker.allowedCellSubnets` 落地之后，这段判断要跟着挪到配置层。
- */
-export function allowedCellSubnetsFor(cellHost: string): readonly string[] {
-  if (!isLoopbackAddress(cellHost)) return DEFAULT_ALLOWED_CELL_SUBNETS
-  return [...DEFAULT_ALLOWED_CELL_SUBNETS, LOOPBACK_SUBNET]
 }
 
 export function cellOriginFor(config: AbxConfig, cellHost: string): string {
@@ -239,7 +217,6 @@ export async function ensureBroker(input: EnsureBrokerInput): Promise<BrokerLeas
     env: input.context.env,
     cellToken: token,
     cellHost: input.cellHost,
-    allowedCellSubnets: allowedCellSubnetsFor(input.cellHost),
     logger: { info: input.log, warn: input.log, error: input.log },
   })
 

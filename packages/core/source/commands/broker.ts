@@ -15,7 +15,7 @@ import {
   type BrokerHandle,
 } from '../broker/index'
 import type { CommandOptions } from './options'
-import { CommandError, allowedCellSubnetsFor, resolveBackend, resolveCellHost, type CommandContext } from './runtime'
+import { CommandError, resolveBackend, resolveCellHost, type CommandContext } from './runtime'
 
 export interface BrokerInput {
   readonly options: CommandOptions
@@ -44,7 +44,6 @@ export async function runBroker(input: BrokerInput): Promise<number> {
       env: context.env,
       cellToken: token,
       cellHost,
-      allowedCellSubnets: allowedCellSubnetsFor(cellHost),
       auditSink: createFileAuditSink(config.broker.auditPath),
     })
   } catch (error) {

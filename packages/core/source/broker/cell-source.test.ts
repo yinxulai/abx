@@ -13,7 +13,6 @@ import {
   classifyCellSource,
   findInvalidCellSubnets,
   isAllowedCellSource,
-  isLoopbackAddress,
   normalizeRemoteAddress,
 } from './cell-source'
 
@@ -167,22 +166,6 @@ describe('normalizeRemoteAddress', () => {
     expect(normalizeRemoteAddress(undefined)).toBeNull()
     expect(normalizeRemoteAddress('')).toBeNull()
     expect(normalizeRemoteAddress('  ')).toBeNull()
-  })
-})
-
-describe('isLoopbackAddress', () => {
-  it('认整个 127.0.0.0/8，也认 IPv6 的回环', () => {
-    expect(isLoopbackAddress('127.0.0.1')).toBe(true)
-    expect(isLoopbackAddress('127.1.2.3')).toBe(true)
-    expect(isLoopbackAddress('::ffff:127.0.0.1')).toBe(true)
-    expect(isLoopbackAddress('::1')).toBe(true)
-  })
-
-  it('不是回环的返回 false', () => {
-    expect(isLoopbackAddress('192.168.65.2')).toBe(false)
-    expect(isLoopbackAddress('0.0.0.0')).toBe(false)
-    expect(isLoopbackAddress('fe80::1')).toBe(false)
-    expect(isLoopbackAddress('')).toBe(false)
   })
 })
 

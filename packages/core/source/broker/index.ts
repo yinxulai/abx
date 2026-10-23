@@ -46,7 +46,6 @@ export {
   classifyCellSource,
   findInvalidCellSubnets,
   isAllowedCellSource,
-  isLoopbackAddress,
   normalizeRemoteAddress,
 } from './cell-source'
 export type { CellSourceCheck, CellSourceReason } from './cell-source'
