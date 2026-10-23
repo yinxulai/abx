@@ -77,6 +77,59 @@ export const en = {
     quit: 'Quit',
     caption: 'Panel mock-up · drawn from the product spec; the desktop shell is still in progress',
   },
+  model: {
+    eyebrow: 'Credentials',
+    title: 'Keys do not enter the cell, and that is not a setting',
+    lead: 'abx does not rely on hiding your keys well. It relies on the cell having no real key to begin with. All four statements below have to hold — drop one and the conclusion goes with it.',
+    body1:
+      'Models and keys are configured on the host, in OSW, which has already collected your channels behind a single local address. abx copies none of that configuration and carries no key into the cell.',
+    body2:
+      'Everything the agent inside sees is on the right: one custom provider, one baseUrl, one placeholder token that the airlock replaces unconditionally. No provider list, no model list, no account, no second key.',
+    quote: 'What is hidden gets found; ',
+    quoteAccent: 'what does not exist cannot be.',
+    whoTitle: 'Who holds what',
+    who: 'Who',
+    holds: 'Holds',
+    tableCaption: 'What OSW, the airlock and the agent inside the cell each hold',
+    questionsTitle: 'Three questions this always gets',
+    footnote:
+      'The airlock is the front door of the cell and OSW is the control room behind it: the cell only ever sees one address, pointing at the airlock, which hands the request to OSW — OSW itself needs no changes.',
+    sampleTitle: 'Everything the agent inside can see',
+    sampleBadge: 'mock-up',
+    sampleComment: '// replaced unconditionally',
+    principle: {
+      host: {
+        title: 'Keys stay on the host, outside the cell',
+        body: 'Providers, keys and model routing are configured in OSW on the host. abx copies none of that and writes no credential into the cell — the environment variables inside contain no real key, and a test guards exactly that.',
+      },
+      placeholder: {
+        title: 'Inside the cell there is only a placeholder',
+        body: 'The apiKey the agent holds is a fake token that the airlock swaps out unconditionally. Printing it, committing it or pasting it to someone has no consequence whatsoever.',
+      },
+      egress: {
+        title: 'Egress is denied by default',
+        body: 'Traffic leaves only to domains on the allowlist. Anything not listed is blocked and recorded as a denial — the default is already the strictest setting, so there is nothing for you to tighten.',
+      },
+      audit: {
+        title: 'Every request in and out is recorded',
+        body: 'One line per forwarded request: time, cell, target domain, allowed or denied, status code, duration. The key column only ever says injected or not injected — never the value.',
+      },
+    },
+    question: {
+      baseUrl: {
+        q: 'The baseUrl points at the airlock — is that not the same as handing over the key?',
+        a: 'The airlock authenticates the cell token, not that placeholder. The cell token is issued per session and dies with the cell — replay it and you get a 401.',
+      },
+      sibling: {
+        q: 'Can the agent just read the credential file next door?',
+        a: 'No. Only the single config file abx generates is mounted. A credential file in the same directory (.credentials.json, auth.json and friends) is blocked by its own rule, and the error says so in those words. The file does not exist inside the cell at all — it is not a permissions problem.',
+      },
+      audit: {
+        q: 'Can a key leak into the audit log?',
+        a: 'No: that column only says injected or not injected. The key exists in the airlock process memory and is attached at the moment of forwarding; nothing about it is persisted.',
+      },
+    },
+  },
   agents: {
     eyebrow: 'Agents',
     title: 'Three agents, one manifest each',

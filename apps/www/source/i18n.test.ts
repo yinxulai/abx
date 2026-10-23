@@ -61,6 +61,20 @@ const DYNAMIC_TRANSLATION_KEYS = [
   'nav.boundaries',
   'nav.faq',
   'nav.download',
+  'model.principle.host.title',
+  'model.principle.host.body',
+  'model.principle.placeholder.title',
+  'model.principle.placeholder.body',
+  'model.principle.egress.title',
+  'model.principle.egress.body',
+  'model.principle.audit.title',
+  'model.principle.audit.body',
+  'model.question.baseUrl.q',
+  'model.question.baseUrl.a',
+  'model.question.sibling.q',
+  'model.question.sibling.a',
+  'model.question.audit.q',
+  'model.question.audit.a',
 ] as const
 
 describe('官网 i18n', () => {
