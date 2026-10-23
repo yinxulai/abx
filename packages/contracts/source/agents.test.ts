@@ -120,8 +120,10 @@ describe('清单的四组数据：展示 / 持久化目录 / 镜像 / 配置内�
       expect(agent.image.version).not.toBe('latest')
       expect(agentImageRef(agent)).toBe(`${agent.image.repository}:${agent.image.version}`)
     }
-    // 有镜像的那条要能对上一个真实存在的标签。
+    // 有镜像的那两条要能对上真实存在的标签（`images/agents/<id>/` 下有各自的
+    // Dockerfile，构建脚本打的就是这个标签）。
     expect(agentImageRef(findAgent('claude')!)).toBe('abx-agent-claude:2.1.308')
+    expect(agentImageRef(findAgent('codex')!)).toBe('abx-agent-codex:0.164.0')
   })
 
   it('镜像按 agent 给，没有两个 agent 共用一个仓库', () => {
@@ -130,11 +132,11 @@ describe('清单的四组数据：展示 / 持久化目录 / 镜像 / 配置内�
   })
 
   it('还没建镜像的 agent 写 unbuilt，而不是编一个版本号', () => {
-    // 这三条里只有 claude 的镜像存在（images/agents/claude）。另外两条写 unbuilt
-    // 是**如实**：编一个版本号会让人以为镜像已经在了。
+    // claude 与 codex 的镜像都存在（images/agents/<id>/），dsh 还没有。剩下这条写
+    // unbuilt 是**如实**：编一个版本号会让人以为镜像已经在了。
     expect(AGENT_IMAGE_UNBUILT).toBe('unbuilt')
     const unbuilt = AGENT_DEFINITIONS.filter((agent) => agent.image.version === AGENT_IMAGE_UNBUILT)
-    expect(unbuilt.map((agent) => agent.id)).toEqual(['codex', 'dsh'])
+    expect(unbuilt.map((agent) => agent.id)).toEqual(['dsh'])
   })
 
   it('每个 agent 都登记了持久化目录，写法是 ~/...', () => {

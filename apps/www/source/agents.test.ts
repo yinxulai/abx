@@ -72,15 +72,15 @@ describe('agent rows', () => {
 
   it('turns the unbuilt sentinel into a state, not a version', () => {
     // `unbuilt` 是给脚本看的哨兵值。数据层必须把它翻成状态，
-    // 否则页面会显示 `abx-agent-codex:unbuilt`，读起来像一个真实版本号。
+    // 否则页面会显示 `abx-agent-dsh:unbuilt`，读起来像一个真实版本号。
     const byId = Object.fromEntries(AGENT_ROWS.map(row => [row.id, row.image]))
 
     expect(byId.claude).toEqual({ state: 'built', repository: 'abx-agent-claude', version: '2.1.308' })
-    expect(byId.codex).toEqual({ state: 'unbuilt', repository: 'abx-agent-codex' })
+    expect(byId.codex).toEqual({ state: 'built', repository: 'abx-agent-codex', version: '0.164.0' })
     expect(byId.dsh).toEqual({ state: 'unbuilt', repository: 'abx-agent-dsh' })
 
     // 未构建的那一行**没有 version 字段**：页面因此拼不出 `仓库:unbuilt`。
-    expect(byId.codex).not.toHaveProperty('version')
+    expect(byId.dsh).not.toHaveProperty('version')
 
     // 构建了的那一行，version 也不许是哨兵值。
     for (const row of AGENT_ROWS) {
