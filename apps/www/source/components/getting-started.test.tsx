@@ -8,7 +8,7 @@ import { FULL_PAGE_TIMEOUT, renderApp, textOf } from '../test-support'
  *
  * - 三步就是三步（多一步就说明这一节在往手册长）；
  * - 第一步必须写着现在还没有安装包 —— 这一节最容易退化成一句假的「点这里下载」；
- * - 拖一个目录进去之后会发生什么必须写出来（只读、取回区），
+ * - 拖一个目录进去之后会发生什么必须写出来（只读、递出来的东西当场打开），
  *   而不是「享受无缝体验」这种读完还是不知道会发生什么的话；
  * - **它描述的界面就是今天那个界面**：副标题上没有数字，「停止全部」不在托盘上。
  *   形态改过一轮之后，最容易留在这里的就是这类复述——它读起来仍然像最新的。
@@ -44,11 +44,29 @@ describe('getting started', { timeout: FULL_PAGE_TIMEOUT }, () => {
   it('describes what happens when a directory is dropped in', async () => {
     await renderApp('zh')
 
-    const body = textOf(section())
-    expect(body).toContain('共享条目')
-    expect(body).toContain('只读')
-    expect(body).toContain('取回区')
-    expect(body).toContain('不删你的原文件')
+    // 只对第三步那一段下判断：`section()` 里还有下面那条 note，两处的用词不一样。
+    const drop = textOf(within(section()).getAllByRole('listitem')[2])
+    expect(drop).toContain('共享条目')
+    expect(drop).toContain('只读')
+    // 产物是**递出来即打开**，不是「写进面板里一个叫取回区的地方、点一下到访达」：
+    // 面板没有取回列表，也没有打开文件夹的按钮（`packages/console` 里搜不到），
+    // 而打开的是**文件本身**、还受后缀限制。这两句当初读起来像最新的，
+    // 指的却是两个不存在的东西。
+    expect(drop).toContain('给你看')
+    expect(drop).toContain('不是替你执行')
+    expect(drop).not.toContain('取回区')
+    expect(drop).not.toContain('访达')
+    // 停掉什么、什么会留下 —— 这一节里最容易被误读的一句，仍然要在。
+    expect(textOf(section())).toContain('不删你的原文件')
+
+    // 英文侧是另一份字，得单独判一遍：只说中文改完了，英文那句假界面会照样待在线上。
+    cleanup()
+    await renderApp('en')
+    const dropEn = textOf(within(section()).getAllByRole('listitem')[2])
+    expect(dropEn).toContain('shown to you')
+    expect(dropEn).toContain('not run for you')
+    expect(dropEn).not.toContain('Finder')
+    expect(dropEn).not.toContain('outbox')
   })
 
   it('describes the panel header the way the panel actually draws it', async () => {
