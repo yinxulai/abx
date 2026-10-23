@@ -30,6 +30,9 @@ release
 .eslintcache
 coverage
 .local
+# 官网的本地状态：截图与审计报告。它们是「看一眼」用的产物，体积大、随时重生成，
+# 不进仓库（截图落盘路径见 apps/docs/specs/product/www.md）。
+.state/
 
 # 本地环境变量与密钥：仓库里只写变量名，真正的值一律留在本地文件里，绝不进仓库。
 .env
