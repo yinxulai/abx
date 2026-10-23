@@ -4,8 +4,8 @@ import { AgentOverview } from './components/agent-overview'
 import { Boundaries } from './components/boundaries'
 import { CredentialModel } from './components/credential-model'
 import { DownloadSection } from './components/download-section'
+import { GettingStarted } from './components/getting-started'
 import { Hero } from './components/hero'
-import { HowItWorks } from './components/how-it-works'
 import { SiteFooter } from './components/site-footer'
 import { SiteHeader } from './components/site-header'
 import type { Lang } from './i18n'
@@ -56,7 +56,7 @@ export const App = () => {
         <Hero />
         <CredentialModel />
         <AgentOverview />
-        <HowItWorks />
+        <GettingStarted />
         <Boundaries />
         <DownloadSection />
       </main>

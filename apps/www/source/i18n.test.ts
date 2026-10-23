@@ -99,6 +99,12 @@ const DYNAMIC_TRANSLATION_KEYS = [
   'boundaries.unsuitable.dockerInDocker',
   'boundaries.unsuitable.wholeMachine',
   'boundaries.unsuitable.longLived',
+  'start.step.install.title',
+  'start.step.install.body',
+  'start.step.firstRun.title',
+  'start.step.firstRun.body',
+  'start.step.drop.title',
+  'start.step.drop.body',
 ] as const
 
 describe('官网 i18n', () => {

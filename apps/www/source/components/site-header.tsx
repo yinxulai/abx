@@ -13,7 +13,7 @@ type SiteHeaderProps = {
 const ANCHORS = [
   { id: 'model', key: 'nav.model', fallback: '凭据模型' },
   { id: 'agents', key: 'nav.agents', fallback: 'Agent 一览' },
-  { id: 'how', key: 'nav.start', fallback: '怎么用' },
+  { id: 'start', key: 'nav.start', fallback: '开始使用' },
   { id: 'boundaries', key: 'nav.boundaries', fallback: '边界' },
   { id: 'download', key: 'nav.download', fallback: '下载' },
 ] as const

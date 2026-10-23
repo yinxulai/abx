@@ -238,6 +238,26 @@ export const en = {
         'You want a long-lived environment that keeps all its state across sessions — cells are disposable.',
     },
   },
+  start: {
+    eyebrow: 'Get started',
+    title: 'Three steps to hand the work over',
+    lead: 'No command line, no configuration file, and no key to type in. The tray is the whole entrance.',
+    step: {
+      install: {
+        title: 'Install it',
+        body: 'There is no installer yet. Once there is, it is a .dmg you drag into Applications. The signature is ad-hoc and there is no notarisation, so the first launch is stopped by Gatekeeper and you let it through in Privacy & Security — that step goes away once there is a real signature.',
+      },
+      firstRun: {
+        title: 'Open it for the first time',
+        body: 'An abx icon appears in the menu bar, and nothing in the Dock. Open the panel: the first line already says how many cells are running and where the credentials live. No setup wizard, no key to paste — the keys are in OSW, outside the cell, so there is nowhere here to put one.',
+      },
+      drop: {
+        title: 'Drag a directory in',
+        body: 'Drop it on the menu bar icon, or on the dashed area in the panel. It becomes a shared item: the agent inside can read it at once, read-only. It works inside that directory, writes what it produces into the outbox of its own cell, and one click puts that in Finder.',
+      },
+    },
+    note: 'Drag and drop uses the native macOS menu bar, which is why the first version is macOS only. When you want things to stop, "Stop all" stops cells: the files in the shared area and the outbox stay where they are, and removing a shared item only unmounts it — it never deletes your original.',
+  },
   footer: {
     line: 'An airlock for your AI coding agent. The first version is macOS only.',
   },
