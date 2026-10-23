@@ -27,7 +27,7 @@ describe('FAQ', () => {
       '需要改我现在的 OSW 配置吗？',
       '白名单不够用怎么办？',
       '现在能下载了吗？',
-      '有账号吗？会不会上报数据？会不会另外收费？',
+      '有账号吗？会上报数据吗？另外收费吗？',
     ])
     expect(within(section()).getAllByRole('definition')).toHaveLength(questions.length)
   })

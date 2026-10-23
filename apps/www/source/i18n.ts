@@ -68,7 +68,7 @@ export const en = {
     sub: 'Models and keys stay outside, in OSW. Inside the cell there is one address and one placeholder — ',
     subAccent: 'nothing worth leaking.',
     primary: 'See what is inside',
-    secondary: 'How it works',
+    secondary: 'Get started',
     highlightKeys: 'No key enters the cell',
     highlightEgress: 'Egress denied by default',
     highlightAudit: 'Everything audited',

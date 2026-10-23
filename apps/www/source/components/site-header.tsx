@@ -23,9 +23,13 @@ const ANCHORS = [
 /**
  * 常驻顶栏：品牌、锚点导航、主题开关、语言开关。
  *
- * 交互元素的可点区域**在窄屏一律 ≥44×44**（`h-11`/`py-3`），宽屏才收回
- * `h-8`/`py-1.5` —— 手机上顶栏会因此占两行，这是刻意的取舍：一行塞得下的代价是
+ * 交互元素的可点区域**在窄屏一律 ≥44×44**（`size-11`/`min-h-11`），宽屏才收回
+ * `h-8`/`py-1` —— 手机上顶栏会因此占三行，这是刻意的取舍：一行塞得下的代价是
  * 每个开关都小到点不准。`audit.mjs` 的 tap-target 判据（手机 44px）守着这条。
+ *
+ * **窄屏不吸顶**（`md:sticky`）：三行顶栏贴在屏幕上有 190px 高，而手机上的页面
+ * 有一万三千多像素 —— 一路滚下去等于每屏少掉四分之一。宽屏一行放得下，吸顶才有
+ * 价值（锚点在视口里随手可点）。手机要回顶部，用品牌那一行的链接。
  */
 export const SiteHeader = (props: SiteHeaderProps) => {
   const { theme, onThemeChange } = props
@@ -33,7 +37,7 @@ export const SiteHeader = (props: SiteHeaderProps) => {
   const lang = i18n.language as Lang
 
   return (
-    <header className="sticky top-0 z-40 border-b border-line bg-surface-chrome backdrop-blur-md">
+    <header className="z-40 border-b border-line bg-surface-chrome backdrop-blur-md md:sticky md:top-0">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-3 gap-y-1 px-6 py-2">
         <a
           className="flex items-center gap-2.5 rounded-sm py-2 pr-2"

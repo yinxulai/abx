@@ -55,7 +55,7 @@ export const Hero = () => {
               className="inline-flex min-h-11 items-center rounded-md border border-line-strong px-5 py-2.5 text-sm font-medium text-ink-2 transition-colors hover:border-ink-4 hover:text-ink"
               href="#start"
             >
-              {t('hero.secondary', '怎么用')}
+              {t('hero.secondary', '开始使用')}
             </a>
           </div>
 
