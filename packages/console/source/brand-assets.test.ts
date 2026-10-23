@@ -574,3 +574,57 @@ describe('sha256 清单：手改一张 png 就跑不过', () => {
     }
   })
 })
+
+describe('使用处：站点 head 真的引用了这些图标', () => {
+  /*
+   * **产出物存在 ≠ 被使用。**
+   *
+   * 上面每一组断言都在证明这些文件「画得对、还是生成器产出的那一张」，
+   * 但那句话只覆盖到磁盘为止：一个没有任何 `<head>` 引用的 favicon.svg，
+   * 和一张不存在的 favicon.svg，用户看到的是同一件事——浏览器标签页上的空白。
+   *
+   * 两份站点各有自己的模板，读的就是它们，不是 build 产物：
+   * 产物要在构建里才存在，而这里要断言的是「仓库里写着要引它」。
+   */
+  const WWW_HTML = '../../../apps/www/index.html'
+  const DOCS_HTML = '../../../apps/docs/index.html'
+
+  /** 模板 head 里的全部 `<link>`。属性值一律用双引号，HTML 里就是这么写的。 */
+  const linksOf = (file: string): readonly { readonly rel: string; readonly href: string }[] =>
+    [...textOf(file).matchAll(/<link\b[^>]*>/g)].map((match) => ({
+      rel: /rel="([^"]*)"/.exec(match[0])?.[1] ?? '',
+      href: /href="([^"]*)"/.exec(match[0])?.[1] ?? '',
+    }))
+
+  /** 一个 rel 里可以写好几个词（`rel="icon apple-touch-icon"`），所以按词找。 */
+  const withRel = (file: string, word: string) =>
+    linksOf(file).filter((link) => link.rel.split(/\s+/).includes(word))
+
+  it('扫描本身不能空转：两个模板都读到了 link', () => {
+    expect(linksOf(WWW_HTML).length).toBeGreaterThan(0)
+    expect(linksOf(DOCS_HTML).length).toBeGreaterThan(0)
+  })
+
+  it('官网 head 引用的图标只有一个，且指的是产出物', () => {
+    // 「只有一个」不是洁癖：两个 favicon 引用会各说各话，改了一处另一处继续说旧话，
+    // 而浏览器标签页上只会显示其中一个。
+    expect(withRel(WWW_HTML, 'icon')).toEqual([{ rel: 'icon', href: '/icon.svg' }])
+    // `/icon.svg` 是 Vite 的 `public/`，构建时原样拷到站点根：这里顺着它回到仓库里的文件。
+    expect(bytesOf(`../../../apps/www/public/icon.svg`).length).toBeGreaterThan(0)
+  })
+
+  it('文档站 head 引用的图标只有一个，且指的是产出物', () => {
+    expect(withRel(DOCS_HTML, 'icon')).toEqual([{ rel: 'icon', href: '/favicon.svg' }])
+    expect(bytesOf(`../../../apps/docs/public/favicon.svg`).length).toBeGreaterThan(0)
+  })
+
+  it('文档站那张 256 的位图也真的接上了', () => {
+    // 它原来只是躺在 `public/` 里没人引用：`createIconTags` 只认 `clarify.ts` 给的**一个**
+    // 字符串，svg 与 png 只能进去一个。png 的用处在 Safari——它不吃 svg favicon，
+    // 少了 `apple-touch-icon`，「添加到主屏幕」拿到的是一个空白方块。
+    expect(withRel(DOCS_HTML, 'apple-touch-icon')).toEqual([
+      { rel: 'apple-touch-icon', href: '/icon-256.png' },
+    ])
+    expect(bytesOf(`../../../apps/docs/public/icon-256.png`).length).toBeGreaterThan(0)
+  })
+})

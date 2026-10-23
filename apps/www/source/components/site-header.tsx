@@ -2,7 +2,7 @@ import { Moon, Sun } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { LANGS, type Lang } from '../i18n'
 import type { Theme } from '../theme'
-import { AirlockMark } from './airlock-mark'
+import { BrandMark } from './brand-mark'
 
 type SiteHeaderProps = {
   theme: Theme
@@ -44,7 +44,9 @@ export const SiteHeader = (props: SiteHeaderProps) => {
           href="#main"
           title={t('nav.home', '回到页面开头')}
         >
-          <AirlockMark className="size-7 text-ink" />
+          {/* 标志是**装饰**，名字由旁边那两个字承担——不再另给颜色类：
+              它的颜色是品牌渐变，跟着 `text-*` 走是上一版那扇线描舱门的事。 */}
+          <BrandMark className="size-7" />
           <span className="text-base font-semibold tracking-tight">abx</span>
           <span className="text-xs text-ink-4">气闸</span>
         </a>

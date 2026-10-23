@@ -1,3 +1,7 @@
+<!-- 标志。图是 `pnpm icons` 产出的，**不要手改**；真源是 `packages/console/public/icon.svg`。
+     `alt` 是空的：它是装饰，名字由下面那行标题承担（`design-system.md` §5）。 -->
+<img src="./apps/docs/assets/brand/png/icon-256.png" alt="" width="96" />
+
 # abx
 
 给 AI coding agent 用的本地隔离沙箱（代号 Airlock）。

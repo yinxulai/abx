@@ -80,6 +80,10 @@
   /* 同样是窗口几何（文档 §4 末段）：标题栏 36、列表行 40。 */
   --titlebar-height: 36px;
   --row-height: 40px;
+  /* 标题栏左端那个品牌图标的边长（文档 §5：「16px 品牌图标」）。
+     16 不是随手取的：整套位图里最小的一档就是它（托盘图标 16²），
+     标志在那一档下还得读得出两只眼睛，见 `apps/docs/assets/brand/README.md`。 */
+  --mark-size: 16px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -164,17 +168,19 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
+/* 品牌标志（`design-system.md` §5 骨架一的左端：16px 品牌图标）。
+   原来是「深色实心方块 + 首字母 a」的占位——文档 §12 第 1 条早就定了「图标用真实的
+   品牌标识，不用首字母」，这一处是最后一个没跟上它的地方。
+
+   方块没了：标志**自带容器**（那个圆角矩形就是它的头），再套一层实心底只是把品牌色
+   压在一块中性色上。尺寸也不再是原来的 28——文档写的是 16。
+   颜色是**品牌色**（黄→橙→粉的渐变，取自真源），与界面的点缀色 `--accent`（青绿）
+   是两个东西（同文档 §2）：状态点不用品牌色，标志也不用点缀色。 */
 .abx-mark {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-md);
-  background: var(--text-primary);
-  color: var(--surface);
-  font-size: var(--text-sm);
-  font-weight: 600;
-  line-height: 1;
+  display: block;
+  flex: none;
+  width: var(--mark-size);
+  height: var(--mark-size);
 }
 
 .abx-title {
