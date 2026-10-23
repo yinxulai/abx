@@ -1,9 +1,11 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   AUTO_OPEN_EXTENSIONS,
   INLINE_PREVIEW_EXTENSIONS,
   MAX_DELIVERABLE_BYTES,
   NEVER_AUTO_OPEN_EXTENSIONS,
+  TRANSOM_SERVER_VERSION,
   TRANSOM_TOOL_NAMES,
   classifyDeliverable,
   formatBytes,
@@ -155,6 +157,13 @@ describe('formatBytes', () => {
     expect(formatBytes(1536)).toBe('1.5 KiB')
     expect(formatBytes(1024 * 1024)).toBe('1.0 MiB')
     expect(formatBytes(70 * 1024 * 1024)).toBe('70.0 MiB')
+  })
+})
+
+describe('自报的版本', () => {
+  it('与根 package.json 一致——抄了一份，所以要有东西盯着它', () => {
+    const root = JSON.parse(readFileSync(new URL('../../../package.json', import.meta.url), 'utf8')) as { version: string }
+    expect(TRANSOM_SERVER_VERSION).toBe(root.version)
   })
 })
 

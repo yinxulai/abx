@@ -47,6 +47,16 @@ export const TRANSOM_ENDPOINT_PATH = '/mcp'
 export const TRANSOM_TOOL_NAMES: readonly string[] = ['publish', 'open']
 
 /**
+ * 自报的产品版本（MCP 握手时 `serverInfo.version`）。
+ *
+ * 它必须与 `package.json` 里那个版本是同一个值，而**这里抄了一份**——因为
+ * `package.json` 在运行期不一定还在（打出来的东西可以不在仓库里跑）。
+ * 抄写就会漂，所以有一条用例读根 `package.json` 比对；漂了会让一条测试变红，
+ * 而不是让某个用户在一堆互相对不上的版本号里猜。
+ */
+export const TRANSOM_SERVER_VERSION = '0.1.0'
+
+/**
  * shim 的文件名。
  *
  * 它同时是宿主上的文件名与挂载源的最后一段——挂载策略会核对这个字面量，
