@@ -24,6 +24,8 @@ export type AuditDecision =
   | 'denied-egress'
   /** 舱令牌不对。 */
   | 'denied-cell-token'
+  /** 令牌有效，但请求头自称的舱 id 与令牌绑定的不一致。 */
+  | 'denied-cell-identity'
   /** 既不是 `/u/<id>/...`，也没带目标头。 */
   | 'denied-route'
   /** `/u/<id>/...` 里的 id 在配置里不存在。 */

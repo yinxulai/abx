@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { makeConfig, makeEgressRule, makeUpstream } from '@abx/contracts/test-support'
 import type { AbxConfig } from '@abx/contracts'
 import { createMemoryAuditSink, type MemoryAuditSink } from './audit'
-import { startBroker, type BrokerHandle } from './server'
+import { DEFAULT_CELL_ID, startBroker, type BrokerHandle } from './server'
 
 /** 假的真实密钥。它出现在这个文件里是安全的：它不是一个能用的凭据。 */
 const FAKE_SECRET = 'sk-ant-FAKE-3333333333333333333333333333'
@@ -84,6 +84,7 @@ afterEach(async () => {
 interface StartTestBrokerOptions {
   readonly upstreamOrigin: string
   readonly config?: AbxConfig
+  readonly cellRegistryLimit?: number
 }
 
 async function startTestBroker(options: StartTestBrokerOptions): Promise<TestBroker> {
@@ -113,6 +114,7 @@ async function startTestBroker(options: StartTestBrokerOptions): Promise<TestBro
     cellHost: '127.0.0.1',
     hostPort: 0,
     cellPort: 0,
+    cellRegistryLimit: options.cellRegistryLimit ?? null,
     logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
   })
 
@@ -129,11 +131,12 @@ describe('broker 端到端', () => {
     const upstream = await startEchoUpstream()
     cleanups.push(() => upstream.close())
     const broker = await startTestBroker({ upstreamOrigin: upstream.origin })
+    const cellToken = broker.handle.registerCell('cell-e2e-1')
 
     const response = await fetch(cellUrl(broker, '/u/anthropic/v1/messages?beta=true'), {
       method: 'POST',
       headers: {
-        'x-abx-cell': CELL_TOKEN,
+        'x-abx-cell': cellToken,
         authorization: `Bearer ${PLACEHOLDER}`,
         'content-type': 'application/json',
         'x-abx-cell-id': 'cell-e2e-1',
@@ -254,6 +257,89 @@ describe('broker 端到端', () => {
 
     expect(response.status).toBe(401)
     expect(broker.audit.records[0]).toMatchObject({ decision: 'denied-cell-token' })
+  })
+
+  it('A 舱的令牌不能访问 B 舱：伪造 cell id 头就是 401', async () => {
+    const upstream = await startEchoUpstream()
+    cleanups.push(() => upstream.close())
+    const broker = await startTestBroker({ upstreamOrigin: upstream.origin })
+    const tokenA = broker.handle.registerCell('cell-a')
+    broker.handle.registerCell('cell-b')
+
+    const response = await fetch(cellUrl(broker, '/u/anthropic/v1/messages'), {
+      headers: { 'x-abx-cell': tokenA, 'x-abx-cell-id': 'cell-b' },
+    })
+
+    expect(response.status).toBe(401)
+    const body = (await response.json()) as { error: string }
+    expect(body.error).toBe('abx_cell_id_mismatch')
+    expect(upstream.requests).toHaveLength(0)
+    // 审计记的是令牌真正的归属，不是伪造的头。
+    expect(broker.audit.records[0]).toMatchObject({
+      cellId: 'cell-a',
+      decision: 'denied-cell-identity',
+      status: 401,
+      face: 'cell',
+    })
+  })
+
+  it('没有 cell id 头时，审计仍用令牌反查出来的身份', async () => {
+    const upstream = await startEchoUpstream()
+    cleanups.push(() => upstream.close())
+    const broker = await startTestBroker({ upstreamOrigin: upstream.origin })
+    const tokenA = broker.handle.registerCell('cell-a')
+    broker.handle.registerCell('cell-b')
+
+    const response = await fetch(cellUrl(broker, '/u/anthropic/v1/messages'), {
+      headers: { 'x-abx-cell': tokenA },
+    })
+
+    expect(response.status).toBe(200)
+    expect(broker.audit.records[0]).toMatchObject({ cellId: 'cell-a', decision: 'allowed' })
+  })
+
+  it('unregister 之后原令牌立刻失效', async () => {
+    const upstream = await startEchoUpstream()
+    cleanups.push(() => upstream.close())
+    const broker = await startTestBroker({ upstreamOrigin: upstream.origin })
+    const cellToken = broker.handle.registerCell('cell-a')
+
+    const before = await fetch(cellUrl(broker, '/u/anthropic/v1/messages'), {
+      headers: { 'x-abx-cell': cellToken },
+    })
+    expect(before.status).toBe(200)
+
+    expect(broker.handle.unregisterCell('cell-a')).toBe(true)
+
+    const after = await fetch(cellUrl(broker, '/u/anthropic/v1/messages'), {
+      headers: { 'x-abx-cell': cellToken },
+    })
+    expect(after.status).toBe(401)
+    expect(broker.audit.records[1]).toMatchObject({ decision: 'denied-cell-token', status: 401 })
+  })
+
+  it('宿主固定令牌仍然能用，且只对应默认舱', async () => {
+    const upstream = await startEchoUpstream()
+    cleanups.push(() => upstream.close())
+    const broker = await startTestBroker({ upstreamOrigin: upstream.origin })
+
+    const response = await fetch(cellUrl(broker, '/u/anthropic/v1/messages'), {
+      headers: { 'x-abx-cell': CELL_TOKEN, 'x-abx-cell-id': DEFAULT_CELL_ID },
+    })
+
+    expect(response.status).toBe(200)
+    expect(broker.audit.records[0]).toMatchObject({ cellId: DEFAULT_CELL_ID, decision: 'allowed' })
+  })
+
+  it('注册超过上限时失败，错误里带当前数量与上限', async () => {
+    const upstream = await startEchoUpstream()
+    cleanups.push(() => upstream.close())
+    // 默认舱占一个位置，所以上限 2 只还能再登记一个。
+    const broker = await startTestBroker({ upstreamOrigin: upstream.origin, cellRegistryLimit: 2 })
+
+    broker.handle.registerCell('cell-a')
+    expect(() => broker.handle.registerCell('cell-b')).toThrow(/当前 2 个舱/)
+    expect(() => broker.handle.registerCell('cell-b')).toThrow(/上限 2 个舱/)
   })
 
   it('宿主面不校验令牌', async () => {

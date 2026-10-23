@@ -19,6 +19,7 @@ import {
   type SandboxBackendId,
 } from '@abx/contracts'
 import {
+  DEFAULT_CELL_ID,
   defaultCellTokenPath,
   formatHostForUrl,
   generateCellToken,
@@ -135,12 +136,30 @@ export async function waitForPort(host: string, port: number, timeoutMs = 8000):
   }
 }
 
+/** 一个舱实际拿到的令牌与它绑定的身份。 */
+export interface CellBinding {
+  /** 令牌在注册表里绑定的舱 id。正常等于请求的 cellId。 */
+  readonly cellId: string
+  readonly token: string
+  /**
+   * 是不是注册表分配的专属令牌。
+   *
+   * `false` 表示接上了一个**别的进程**里的 broker：注册表不在我们手里，
+   * 只能退回宿主固定令牌（默认舱）。这种情况下所有会话共享一个身份。
+   */
+  readonly dedicated: boolean
+}
+
 export interface BrokerLease {
   readonly hostOrigin: string
   readonly cellOrigin: string
   readonly cellToken: string
   /** 是我们起的，还是接上了一个已经在跑的。 */
   readonly spawned: boolean
+  /** 起舱：登记一个舱并拿到它专属的令牌。 */
+  registerCell(cellId: string): CellBinding
+  /** 舱销毁：注销；返回是否真的删掉了一条。 */
+  unregisterCell(cellId: string): boolean
   stop(): Promise<void>
 }
 
@@ -170,6 +189,16 @@ export async function ensureBroker(input: EnsureBrokerInput): Promise<BrokerLeas
       cellOrigin,
       cellToken: token,
       spawned: false,
+      registerCell: (cellId) => {
+        // 注册表在另一个进程里，没有跨进程接口。这里只能退回默认舱，
+        // 说清楚是为了让人知道「这个会话的审计身份不是它自己的 id」。
+        input.log(
+          `[abx] 注意：接上的是已经在跑的 broker，无法为 ${cellId} 单独注册令牌；` +
+            `本次会话使用默认舱 ${DEFAULT_CELL_ID} 的宿主固定令牌。`,
+        )
+        return { cellId: DEFAULT_CELL_ID, token, dedicated: false }
+      },
+      unregisterCell: () => false,
       stop: () => Promise.resolve(),
     }
   }
@@ -196,6 +225,8 @@ export async function ensureBroker(input: EnsureBrokerInput): Promise<BrokerLeas
     cellOrigin: handle.cellOrigin,
     cellToken: handle.cellToken,
     spawned: true,
+    registerCell: (cellId) => ({ cellId, token: handle.registerCell(cellId), dedicated: true }),
+    unregisterCell: (cellId) => handle.unregisterCell(cellId),
     stop: () => handle.close(),
   }
 }

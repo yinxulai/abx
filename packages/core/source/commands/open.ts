@@ -83,11 +83,15 @@ export async function runOpen(input: OpenInput): Promise<number> {
 
   const lease = await ensureBroker({ context, backend: backendId, cellHost, log })
 
+  // 舱的令牌从注册表来，不再复用宿主固定令牌。`binding.cellId` 与令牌绑定，
+  // 也是审计里会出现的身份；正常情况下就是这次的 cellId。
+  const binding = lease.registerCell(cellId)
+
   const env = buildCellEnv({
     agent,
     brokerCellOrigin: cellOriginFor(context.config, cellHost),
-    cellId,
-    cellToken: lease.cellToken,
+    cellId: binding.cellId,
+    cellToken: binding.token,
     upstreamId: upstream.id,
     tokenInPath: context.config.broker.allowCellTokenInPath,
   })
@@ -122,6 +126,8 @@ export async function runOpen(input: OpenInput): Promise<number> {
   // agent 退出后销毁会话。docker 后端靠 `--rm` 在容器退出的那一刻就销毁了，
   // 这里只需要等它退出；local 后端没有需要销毁的东西。
   const exit = await session.exit
+  // 舱销毁即注销：令牌随会话结束立刻失效，不会留到下一个会话。
+  lease.unregisterCell(cellId)
   // 只关掉自己起的那个。接上别人已经在跑的 broker 时不动它——
   // 那可能是用户前台开着的，杀了会把别的会话一起带走。
   if (lease.spawned) await lease.stop()
