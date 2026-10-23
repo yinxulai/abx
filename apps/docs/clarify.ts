@@ -111,6 +111,9 @@ export default defineConfig({
   // 部署地址尚未确定，因此先不写 siteUrl（它只影响 sitemap / canonical）。
   // 定下域名后补在这里，并同步 wrangler.toml 的 routes。
   logo: '/logo.svg',
+  // **缺省值**，不是站上实际生效的那一条：模板 `index.html` 自己声明了 rel=icon，
+  // 而 clarify 见到模板已经声明就不再注入（`createHtmlShellPlugin` 里的 `REL_ICON_RE`）。
+  // 两处指的是同一个文件（都由 `pnpm icons` 产出）；改图标路径要**两处一起改**。
   favicon: '/favicon.svg',
   theme: {
     preset: 'default',

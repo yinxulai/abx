@@ -4,6 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>abx 使用手册</title>
+    <!-- 两枚图标都指向 `pnpm icons` 产出的那一份（`apps/docs/public/` 下），
+         **不要手改这两个文件**：真源是 `packages/console/public/icon.svg`。
+
+         favicon 写成显式的：本文件是站点模板（`clarify build` 拿它当底），
+         而 clarify 只在模板**没有**声明 rel=icon 时才自己去注入一条
+         （`createHtmlShellPlugin` 里的 `REL_ICON_RE`）。显式写在这里，
+         「站点到底引了哪个文件」就是仓库里看得见的一行，而不是 CLI 里的一段行为。
+         `clarify.ts` 的 `favicon` 于是成了缺省值——两处指的是同一个文件。
+
+         apple-touch-icon 用的是那张 256 的位图：Safari 不吃 svg favicon，
+         少了这一条，「添加到主屏幕」拿到的是一个空白方块。 -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/icon-256.png" />
   </head>
   <body>
     <div id="root"></div>
