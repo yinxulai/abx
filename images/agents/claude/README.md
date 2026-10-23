@@ -1,9 +1,9 @@
 # `abx-agent-claude` —— 带 claude 的舱内镜像
 
-`session.image` 的默认值是 `node:22-slim`，那里面**没有** `claude` 这条命令。
-三个 agent 清单里的 `command` 分别是 `claude` / `codex` / `dsh`，所以拿默认镜像起舱，
-docker 后端能起的只是一个空壳容器：真实验证只验得到「舱内连得上气闸」，
-验不到「agent 真的在舱里干活」。
+一个裸的 `node:22-slim` 里**没有** `claude` 这条命令。三个 agent 清单里的
+`command` 分别是 `claude` / `codex` / `dsh`，而镜像现在也按 agent 给
+（`session.image` 不写时用的就是清单里那个）；镜像不对，docker 后端能起的
+只是一个空壳容器：真实验证只验得到「舱内连得上气闸」，验不到「agent 真的在舱里干活」。
 
 这个镜像补的就是那一样东西：**一个能跑的 `claude` 命令**。别的什么都不是。
 
@@ -24,15 +24,18 @@ docker 后端能起的只是一个空壳容器：真实验证只验得到「舱�
 
 | | |
 |---|---|
-| 基础镜像 | `node:22-slim`（与 `session.image` 的默认值同一个） |
+| 基础镜像 | `node:22-slim` |
 | 装的是什么 | `npm install -g @anthropic-ai/claude-code@<钉住的版本>` |
 | 入口 | 没有 `ENTRYPOINT`，`CMD` 也不设——命令由 abx 拼（`claude -p '...'`） |
 | 用户 | 镜像里是 root 装的包；**跑的时候**由 abx 指定 `--user 1000:1000`（镜像自带的 `node` 用户） |
 
 ## 为什么钉死版本
 
-`ARG CLAUDE_CODE_VERSION` 的默认值写在 Dockerfile 里，构建脚本从那儿读，
-只此一份。当前钉的是 **`2.1.308`**：
+版本号只写在注册表里：`packages/contracts/source/agents.ts` 中 claude 的
+`image.version`（当前是 **`2.1.308`**）。构建脚本从那儿读，再用
+`--build-arg CLAUDE_CODE_VERSION=...` 传给 Dockerfile；Dockerfile 里的 `ARG`
+刻意没有默认值，所以「注册表说一个版本、Dockerfile 里是另一个」这种不一致
+不会发生。
 
 - 宿主上跑的 claude 是原生安装的 `2.1.308`。镜像里这份是 npm 全局包。
   两边同版本，「镜像里跑出来的行为和宿主不一样」就少了一个变量。

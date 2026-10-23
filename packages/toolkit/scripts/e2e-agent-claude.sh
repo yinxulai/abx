@@ -2,13 +2,13 @@
 #
 # Abx 端到端实测：**真 agent（claude）在真容器里，经真气闸，打到真上游。**
 #
-# 为什么需要它：在这之前，真 docker 验证（`e2e-docker.sh`）只验到「舱内连得上舱面」——
-# 因为 `session.image` 的默认镜像 `node:22-slim` 里根本没有 `claude` 这条命令，
-# 起舱只能起个空壳。这份脚本补的是那一段：舱里真的跑起一个 agent，
-# 它真的发出一次模型请求，请求真的穿过气闸落到上游，答案真的回到舱里。
+# 为什么需要它：真 docker 验证（`e2e-docker.sh`）用的是裸镜像，里面根本没有
+# `claude` 这条命令，起舱只能起个空壳。这份脚本补的是那一段：舱里真的跑起一个
+# agent，它真的发出一次模型请求，请求真的穿过气闸落到上游，答案真的回到舱里。
 #
 # 三处东西是真的，都不许换成替身：
-#   1. 容器 —— 用 `abx-agent-claude:local` 起，参数由 core 的 `buildDockerArgs` 拼；
+#   1. 容器 —— 用注册表里 claude 的那个镜像起（默认取 `<repo>:local`，见
+#      `lib/agent-registry.mjs`），参数由 core 的 `buildDockerArgs` 拼；
 #   2. 气闸 —— `packages/core/source/broker` 的真 broker，不是替身服务；
 #   3. 上游 —— 宿主上 claude 正在用的那个网关（从 `~/.claude/settings.json` 的
 #      `env` 段**运行期**读），不是本地假上游。
@@ -72,7 +72,10 @@ ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; PASSED=$((PASSED + 1)); }
 fail() { printf '  \033[31m✗ %s\033[0m\n' "$1"; FAILED=$((FAILED + 1)); }
 note() { printf '  \033[33m·\033[0m %s\n' "$1"; }
 
-IMAGE="${ABX_TEST_AGENT_IMAGE:-abx-agent-claude:local}"
+AGENT_REGISTRY="packages/toolkit/scripts/lib/agent-registry.mjs"
+# 镜像名与版本来自注册表，本脚本不写第二份；`ABX_TEST_AGENT_IMAGE` 是唯一的覆盖口
+# （例如指向已打好的版本标签，而不是 `:local`）。
+IMAGE="${ABX_TEST_AGENT_IMAGE:-$(node "$AGENT_REGISTRY" claude local-ref)}"
 HOST_PORT="${ABX_TEST_HOST_PORT:-28888}"
 CELL_PORT="${ABX_TEST_CELL_PORT:-28889}"
 NONCE="$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n')"
@@ -185,7 +188,7 @@ cat > "$WORK/abx.config.agent.json" <<'EOF'
     { "id": "echo", "baseUrl": "http://127.0.0.1:29977", "authHeader": "authorization",
       "authScheme": "Bearer", "secretEnv": "ABX_E2E_FAKE_KEY" }
   ],
-  "session": { "backend": "docker", "image": "${ABX_TEST_AGENT_IMAGE:-abx-agent-claude:local}" }
+  "session": { "backend": "docker", "image": "${ABX_TEST_AGENT_IMAGE}" }
 }
 EOF
 # 端口与工作目录用占位符替换，而不是让配置层去展开：那两个值不是字符串字面量
@@ -400,8 +403,10 @@ log(`[config] 资源限额 内存 ${config.session.limits.memory} / pids ${confi
 
 const backend = config.session.backend
 if (backend !== 'docker') throw new Error(`这份 e2e 只跑 docker 后端，配置里是 ${backend}`)
-if (!config.session.image.startsWith('abx-agent-claude')) {
-  throw new Error(`session.image 是 ${config.session.image}，不是本任务构建的那个 agent 镜像`)
+// 镜像名从注册表里取，不在驱动里写第二份。只核「是不是这个 agent 的仓库」，
+// 不核具体标签：`ABX_TEST_AGENT_IMAGE` 可以指向 `:local`，也可以指向某个版本标签。
+if (!config.session.image.startsWith(`${agent.image.repository}:`)) {
+  throw new Error(`session.image 是 ${config.session.image}，不是注册表里 ${agent.id} 的镜像（${agent.image.repository}:*）`)
 }
 
 // 舱内那个 home，**不是宿主 home**。下面每一处用到 home 的地方都用这个值：

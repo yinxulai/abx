@@ -2,15 +2,17 @@
 #
 # 本地构建 agent 镜像（目前只有 claude）。
 #
-# 为什么需要它：`session.image` 的默认值是 `node:22-slim`，那里面**没有** `claude`
-# 这条命令。不构建一个自带 agent 的镜像，docker 后端能起的就只有「一个空壳容器」，
-# 真实验证只验得到「舱内连得上气闸」，验不到「agent 真的在舱里干活」。
+# 为什么需要它：一个裸的 `node:22-slim` 里**没有** `claude` 这条命令。不构建一个
+# 自带 agent 的镜像，docker 后端能起的就只有「一个空壳容器」，真实验证只验得到
+# 「舱内连得上气闸」，验不到「agent 真的在舱里干活」。
+#
+# 镜像名与版本**只从注册表读**（`packages/contracts/source/agents.ts` 里 claude 的
+# `image`）：这是同一个值的唯一来源，构建脚本里不再写第二份。
 #
 # 只做本地：不推远端、不签名（见 images/agents/claude/README.md 的「明确不做」）。
 #
 # 用法：
 #   bash packages/toolkit/scripts/build-agent-image.sh
-#   CLAUDE_CODE_VERSION=2.1.309 bash packages/toolkit/scripts/build-agent-image.sh
 #
 # 退出码：0 = 镜像已在本地；1 = 构建失败或 docker 不可用（不会静默跳过）。
 #
@@ -19,10 +21,9 @@ set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$REPO"
 
-IMAGE_REPO="${ABX_AGENT_IMAGE_REPO:-abx-agent-claude}"
+AGENT_REGISTRY="packages/toolkit/scripts/lib/agent-registry.mjs"
 DOCKERFILE="images/agents/claude/Dockerfile"
 CONTEXT="images/agents/claude"
-LOCAL_TAG="${IMAGE_REPO}:local"
 
 step() { printf '\n\033[1m=== %s ===\033[0m\n' "$1"; }
 run()  { printf '  \033[2m$'; printf ' %s' "$@"; printf '\033[0m\n'; }
@@ -53,28 +54,39 @@ if [ $? != 0 ]; then
 fi
 ok "docker 守护进程可用（server $DOCKER_SERVER）"
 
-# ── 1. 钉住的版本从 Dockerfile 里读，不在这里再写一份 ──────────────────────
+# ── 1. 镜像名与版本从注册表读，不在这里再写一份 ────────────────────────────
 # 两处各写一个版本号，早晚会只改到其中一处；那时镜像是 A、标签是 B，
 # 而「标签说 2.1.308、里面其实是 2.1.309」正是最难查的那种不一致。
-step '1. 取到要钉的 claude 版本'
+step '1. 从注册表读要构建的镜像与版本'
 
 if [ ! -f "$DOCKERFILE" ]; then
   fail "找不到 $DOCKERFILE"
   exit 1
 fi
 
-DEFAULT_VERSION="$(grep -E '^ARG CLAUDE_CODE_VERSION=' "$DOCKERFILE" | head -1 | cut -d= -f2 | tr -d '[:space:]')"
-if [ -z "$DEFAULT_VERSION" ]; then
-  fail "$DOCKERFILE 里没有 ARG CLAUDE_CODE_VERSION=...，无法确定版本"
+IMAGE_REPO="$(node "$AGENT_REGISTRY" claude repository)"
+CLAUDE_CODE_VERSION="$(node "$AGENT_REGISTRY" claude version)"
+if [ -z "$IMAGE_REPO" ] || [ -z "$CLAUDE_CODE_VERSION" ]; then
+  fail '从注册表里读不到 claude 的 image.repository / image.version。'
+  raw "注册表：packages/contracts/source/agents.ts（经由 $AGENT_REGISTRY）"
   exit 1
 fi
-CLAUDE_CODE_VERSION="${CLAUDE_CODE_VERSION:-$DEFAULT_VERSION}"
-
-raw "Dockerfile 钉的版本：$DEFAULT_VERSION"
-if [ "$CLAUDE_CODE_VERSION" != "$DEFAULT_VERSION" ]; then
-  raw "本次用环境变量覆盖成：$CLAUDE_CODE_VERSION（Dockerfile 里仍然是 $DEFAULT_VERSION）"
+if [ "$CLAUDE_CODE_VERSION" = "unbuilt" ]; then
+  fail '注册表里 claude 的 image.version 是 unbuilt：先把版本钉住（见 agents.ts 的注释）。'
+  exit 1
 fi
-ok "要构建的版本：$CLAUDE_CODE_VERSION"
+
+# 版本要真的传进 Dockerfile：ARG 没有默认值之后，只靠 `docker build` 直接调用
+# 会装到一个空版本。这里确认那一行还在。
+if ! grep -qE '^ARG CLAUDE_CODE_VERSION' "$DOCKERFILE"; then
+  fail "$DOCKERFILE 里没有 ARG CLAUDE_CODE_VERSION，构建脚本传的版本不会起作用"
+  exit 1
+fi
+
+LOCAL_TAG="${IMAGE_REPO}:local"
+raw "注册表给的镜像：$IMAGE_REPO"
+raw "注册表钉的版本：$CLAUDE_CODE_VERSION"
+ok "要构建：$IMAGE_REPO:$CLAUDE_CODE_VERSION（另有本地标签 $LOCAL_TAG）"
 
 # ── 2. 构建 ───────────────────────────────────────────────────────────────
 step '2. 构建镜像'

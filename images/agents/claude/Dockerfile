@@ -9,15 +9,18 @@
 
 FROM node:22-slim
 
-# 版本钉死，不用 latest。
+# 版本钉死，不用 latest。**版本号只写在注册表里**
+# （`packages/contracts/source/agents.ts` 中 claude 的 `image.version`），
+# 由 `build-agent-image.sh` 用 `--build-arg` 传进来。这里刻意不给默认值：
+# 两份默认值迟早会漂，而「标签说 2.1.308、里面其实是别的版本」几乎查不出来。
+# 直接 `docker build` 而不传这个 arg 会装到一个空版本并当场失败——这是有意的。
 #
-# 宿主上跑的 claude 是 2.1.308（原生安装）。镜像里这份是 npm 全局包，
-# 让两边同为 2.1.308，「镜像里跑出来的行为和宿主不一样」就少了一个变量。
-# 升版本是一次显式的改动，不是某天 `docker build` 顺手带上来的。
+# 镜像里这份是 npm 全局包，让它的版本与注册表里那个值一致，
+# 「镜像里跑出来的行为和预期不一样」就少了一个变量。
 #
 # 注意：`node:22-slim` 的默认 npm registry 是 https://registry.npmjs.org/，
 # 不受宿主那份镜像源配置影响。
-ARG CLAUDE_CODE_VERSION=2.1.308
+ARG CLAUDE_CODE_VERSION
 
 RUN npm install --global --no-fund --no-audit "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
   && npm cache clean --force \
