@@ -59,10 +59,11 @@
     "$comment": [
       "backend 默认是 docker。想换成 local 的话，先读一遍 packages/session/source/local-backend.ts 顶部那段——",
       "它不是沙箱，禁止用于演示。",
-      "local 后端下 broker 的舱面会自动改绑 127.0.0.1，不需要改 cellHost。"
+      "local 后端下 broker 的舱面会自动改绑 127.0.0.1，不需要改 cellHost。",
+      "不写 image 时用所选 agent 清单里的镜像（见 packages/contracts/source/agents.ts）；",
+      "要跑一个跟 agent 无关的裸容器做验证，才在这里显式写一个镜像。"
     ],
     "backend": "docker",
-    "image": "node:22-slim",
     "user": "1000:1000",
     "network": "bridge",
     "workdir": "/workspace",

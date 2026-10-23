@@ -15,7 +15,7 @@
 
 import { existsSync, statSync } from 'node:fs'
 import path from 'node:path'
-import { findAgent, agentIds } from '@abx/contracts'
+import { agentIds, agentImageRef, findAgent } from '@abx/contracts'
 import { collectSecretEnvNames } from '../broker/index'
 import {
   appendSessionRecord,
@@ -73,6 +73,11 @@ export async function runOpen(input: OpenInput): Promise<number> {
     )
   }
 
+  // 镜像按 agent 给：配置里没写就用清单里那个（`repository:version`）。
+  // 配置里写了就以配置为准——那是「只跑一个裸容器」这类场合的出口，
+  // 它跟某个 agent 无关，所以没道理为它登记一条清单。
+  const image = context.config.session.image ?? agentImageRef(agent)
+
   const backendId = resolveBackend(context.config, options.backend)
   const cellHost = resolveCellHost(context.config, backendId, null)
   const cellId = generateCellId(agent.id)
@@ -127,6 +132,7 @@ export async function runOpen(input: OpenInput): Promise<number> {
         context,
         cellId,
         instance,
+        image,
         configPaths: plan.files.map((file) => file.cellPath),
       }),
     )
@@ -226,7 +232,7 @@ export async function runOpen(input: OpenInput): Promise<number> {
       env,
       forbiddenEnvNames: collectSecretEnvNames(context.config.upstreams),
       limits: context.config.session.limits,
-      image: context.config.session.image,
+      image,
       user: context.config.session.user,
       network: context.config.session.network,
       tmpfsSizeMb: context.config.session.tmpfsSizeMb,
@@ -289,6 +295,8 @@ interface RenderPlanInput {
   readonly context: CommandContext
   readonly cellId: string
   readonly instance: InstancePlan
+  /** 这次会话实际会用的镜像（已按「配置优先、清单兜底」算好）。 */
+  readonly image: string
   /** 本来会生成并挂进去的那几个配置文件（只列舱内路径）。 */
   readonly configPaths: readonly string[]
 }
@@ -302,7 +310,7 @@ function renderPlan(input: RenderPlanInput): string {
     `  会话 id      ${input.cellId}（这次的审计身份，每次都新生成）`,
     `  实例 id      ${input.instance.instanceId}（哪一份历史；同一个实例再开一次就接着往下写）`,
     `  后端         ${input.backendId}${input.backendId === 'local' ? '（不是沙箱，禁止用于演示）' : ''}`,
-    `  镜像         ${context.config.session.image}`,
+    `  镜像         ${input.image}`,
     `  运行用户     ${context.config.session.user}`,
     `  舱内 home    ${context.config.session.cellHome}（注入 HOME，也是下面路径里 ~ 展开的地方）`,
     `  资源限额     内存 ${context.config.session.limits.memory} / pids ${context.config.session.limits.pids} / cpus ${context.config.session.limits.cpus}`,

@@ -93,7 +93,7 @@ if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
     exit 0
   fi
 fi
-ok "镜像 $IMAGE 就绪（与 abx.config.json 里 session.image 一致）"
+ok "镜像 $IMAGE 就绪（本脚本显式指定的裸镜像，不带 agent）"
 
 # ── 1. 起真的 broker ──────────────────────────────────────────────────────
 step '1. 起真 broker（舱面绑 0.0.0.0），顺带复现 §19.1 的「宿主绑不上网桥地址」'

@@ -39,12 +39,25 @@ describe('agent overview', () => {
     }
   })
 
-  it('admits that no per-agent image is declared instead of borrowing one', async () => {
+  it('shows the built image reference, and says "not built yet" for the others', async () => {
     await renderApp('zh')
 
-    expect(textOf(section())).toContain('清单未按 agent 指定')
-    // 真出现镜像之后，这里会变成 `仓库:tag`，所以「未指定」不该被写死成永久文案。
-    expect(AGENT_ROWS.every(row => row.image === null)).toBe(true)
+    // claude 的镜像已经构建：显示 `仓库:版本`。
+    expect(textOf(cardFor('Claude Code').closest('article'))).toContain('abx-agent-claude:2.1.308')
+
+    // codex / dsh 的 version 是 `unbuilt` —— 那是给脚本看的哨兵值，
+    // 页面上必须是「镜像尚未构建」，不能拼成 `abx-agent-codex:unbuilt`。
+    const codexCard = textOf(cardFor('OpenAI Codex CLI').closest('article'))
+    expect(codexCard).toContain('镜像尚未构建')
+    expect(codexCard).not.toContain('unbuilt')
+  })
+
+  it('has the English copy for the unbuilt image', async () => {
+    await renderApp('en')
+
+    const codexCard = textOf(cardFor('OpenAI Codex CLI').closest('article'))
+    expect(codexCard).toContain('not built yet')
+    expect(codexCard).not.toContain('unbuilt')
   })
 
   it('marks the manifest entries that are not verified yet', async () => {

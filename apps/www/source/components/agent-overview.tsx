@@ -9,7 +9,7 @@ import { SectionHeading } from './section-heading'
  *
  * 这一节的每一个值都来自 `source/agents.ts`（它又直接读
  * `packages/contracts/source/agents.ts` 的清单），页面上没有一份手抄的 agent 数据。
- * 清单改了，这里跟着改 —— 包括「镜像还没指定」「命令名还没核对」这种「不好看但真实」
+ * 清单改了，这里跟着改 —— 包括「镜像还没构建」「命令名还没核对」这种「不好看但真实」
  * 的状态：它们正是这一节最该说清楚的东西。
  *
  * 与手册的分工：这里只回答「abx 怎么把这三个 agent 接起来」，不写怎么装、怎么配置。
@@ -51,7 +51,7 @@ export const AgentOverview = () => {
               <span aria-hidden="true" className="mt-2.5 size-1 shrink-0 rounded-full bg-ink-4" />
               {t(
                 'agents.caveatImage',
-                '镜像：清单还没按 agent 指定，所以这里显示「未指定」而不是拿一个全局镜像顶上。指定之后这一格会自动跟着变。',
+                '镜像：有的 agent 还没构建镜像，那一格显示「尚未构建」，而不是拼一个假版本号。镜像构建好之后会自动变成「仓库:版本」。',
               )}
             </li>
             <li className="flex gap-2">
@@ -164,11 +164,12 @@ const AgentCard = (props: AgentCardProps) => {
           </span>
         </Row>
         <Row label={t('agents.fieldImage', '镜像')}>
-          {row.image === null ? (
-            <span className="text-ink-4">{t('agents.imageMissing', '清单未按 agent 指定')}</span>
+          {row.image.state === 'unbuilt' ? (
+            // `unbuilt` 是清单给脚本看的哨兵值，不是版本号：这里必须说人话。
+            <span className="text-ink-4">{t('agents.imageUnbuilt', '镜像尚未构建')}</span>
           ) : (
             <code className="font-mono text-xs text-ink-2">
-              {row.image.repository}:{row.image.tag}
+              {row.image.repository}:{row.image.version}
             </code>
           )}
         </Row>

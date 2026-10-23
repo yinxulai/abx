@@ -16,6 +16,9 @@ const main = async () => {
       cwd: repositoryRoot,
     })
     await run(process.execPath, ['packages/toolkit/scripts/check-package-boundaries.mjs'], { cwd: repositoryRoot })
+    // agent 清单是「一个 agent = 一条数据」的唯一来源：自洽性、脚本里不许再写镜像名、
+    // 不许出现第二张 agent 表。判据与单测共用 `agentManifestProblems()`。
+    await run(process.execPath, ['packages/toolkit/scripts/check-agent-manifest.mjs'], { cwd: repositoryRoot })
     // 版本号写在仓库根与每一个 workspace 包的 manifest 里。这里只读校验，
     // 与根不一致就直接失败——「哪一份 manifest 忘了改」不该等到发布之后靠人回头看。
     await run(process.execPath, ['packages/toolkit/scripts/version.mjs', '--check'], { cwd: repositoryRoot })

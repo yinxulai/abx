@@ -36,7 +36,7 @@ bash packages/toolkit/scripts/e2e-docker.sh --keep   # 跑完不清理临时目�
 
 | 环境变量 | 默认 | 说明 |
 |---|---|---|
-| `ABX_E2E_IMAGE` | `node:22-slim` | 与 `abx.config.json` 的 `session.image` 保持一致 |
+| `ABX_E2E_IMAGE` | `node:22-slim` | 跑真容器用的**裸镜像**（不带 agent）。`abx.config.json` 不再写 `session.image`；不写时 `abx open` 用所选 agent 清单里的镜像 |
 
 ---
 
