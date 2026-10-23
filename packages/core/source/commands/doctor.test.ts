@@ -21,6 +21,7 @@ function options(overrides: Partial<CommandOptions> = {}): CommandOptions {
     json: false,
     tail: false,
     dryRun: false,
+    instance: null,
     cellHost: null,
     tokenFile: null,
     ...overrides,

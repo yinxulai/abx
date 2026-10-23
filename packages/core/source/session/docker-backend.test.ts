@@ -10,8 +10,10 @@
  */
 
 import { EventEmitter } from 'node:events'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { agentConfigFileNames } from '@abx/contracts'
 import type { SandboxSpec } from './backend'
 import { buildDockerArgs, containerName, isExecutableOnPath } from './docker-backend'
@@ -219,6 +221,64 @@ describe('生成的 agent 配置：逐个文件、只读', async () => {
         onStderr: () => undefined,
       }),
     ).rejects.toThrow(/凭据文件/)
+    expect(spawned).toBe(false)
+  })
+})
+
+describe('实例状态目录：第二个可写挂载，配置嵌在它里面', async () => {
+  const { createDockerBackend } = await import('./docker-backend')
+
+  const tempDirs: string[] = []
+
+  afterEach(() => {
+    for (const directory of tempDirs) rmSync(directory, { recursive: true, force: true })
+    tempDirs.length = 0
+  })
+
+  /** 一个真实存在的实例状态目录。策略那边是**失败关闭**的，所以必须真的建出来。 */
+  function stateDirFixture(instanceId = 'claude', agentId = 'claude') {
+    const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'abx-docker-')))
+    tempDirs.push(base)
+    const instancesRoot = path.join(base, 'instances')
+    const hostPath = path.join(instancesRoot, instanceId, agentId)
+    mkdirSync(hostPath, { recursive: true })
+    return { base, instancesRoot, stateDir: { hostPath, cellPath: `/home/node/.${agentId}`, agentId } }
+  }
+
+  it('目录以 rw 挂进去，同一个目录里的配置那一格以 ro 盖在上面', async () => {
+    // 这是真实形态：配置**长在**实例目录里，所以它落在可写挂载内部。
+    // docker 的嵌套绑定是「深的目标赢」，两个挂载点必须同时在 argv 里。
+    const { stateDir } = stateDirFixture()
+    const settings = { hostPath: path.join(stateDir.hostPath, 'settings.json'), cellPath: `${stateDir.cellPath}/settings.json` }
+
+    const current = spec({ agentConfigFiles: [settings], stateDirs: [stateDir] })
+    const volumes = allFlagValues(buildDockerArgs(current, MOUNT_POLICY.buildMounts(current.taskDir, current.workdir, [settings], [stateDir])), '--volume')
+
+    expect(volumes).toEqual([
+      `${TASK_DIR}:/workspace:rw`,
+      `${stateDir.hostPath}:${stateDir.cellPath}:rw`,
+      `${settings.hostPath}:${settings.cellPath}:ro`,
+    ])
+    // 状态目录的挂载点必须在配置挂载点的**前面**，否则「深的目标赢」这条规则
+    // 就依赖于 docker 的实现细节而不是顺序。断言顺序比断言集合更安全。
+    expect(volumes.indexOf(`${stateDir.hostPath}:${stateDir.cellPath}:rw`)).toBeLessThan(
+      volumes.indexOf(`${settings.hostPath}:${settings.cellPath}:ro`),
+    )
+  })
+
+  it('起容器前过闸：拿宿主真实的 ~/.claude 当状态目录源，spawn 都不会发生', async () => {
+    let spawned = false
+    const backend = createDockerBackend({
+      spawnProcess: (() => {
+        spawned = true
+        return new EventEmitter()
+      }) as never,
+    })
+    const hostClaude = { hostPath: path.join(homedir(), '.claude'), cellPath: '/home/node/.claude', agentId: 'claude' }
+
+    await expect(
+      backend.create(spec({ stateDirs: [hostClaude] }), { mode: 'pipe', onStdout: () => undefined, onStderr: () => undefined }),
+    ).rejects.toThrow(/不在实例根/)
     expect(spawned).toBe(false)
   })
 })

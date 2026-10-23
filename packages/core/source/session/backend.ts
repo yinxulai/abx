@@ -27,7 +27,7 @@ export interface SandboxMount {
  * 想挂成可写或者挂成目录，都不是「传错一个参数」，而是得改这个类型。
  */
 export interface SandboxConfigFile {
-  /** 生成文件的宿主路径，形如 `<cellRoot>/agents/<agentId>/settings.json`。 */
+  /** 生成文件的宿主路径，形如 `<instancesRoot>/<instanceId>/<agentId>/settings.json`。 */
   readonly hostPath: string
   /** 舱内挂到哪儿。与宿主那份配置的路径一致（D2）。 */
   readonly cellPath: string

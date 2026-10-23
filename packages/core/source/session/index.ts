@@ -32,7 +32,6 @@ export type { BuildCellEnvOptions, CellBaseUrlOptions, ScrubEnvResult } from './
 export {
   AgentConfigError,
   agentHomePath,
-  cellRootFor,
   renderAgentConfig,
   stageAgentConfig,
   toSandboxConfigFiles,

@@ -24,7 +24,6 @@
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
 import path from 'node:path'
 import {
   DEFAULT_CELL_HOME,
@@ -156,51 +155,47 @@ export function agentHomePath(agent: AgentDefinition, cellHome: string = DEFAULT
   return directory
 }
 
-/**
- * 一次会话的宿主目录：`~/.abx/cells/<cellId>`。
- *
- * 选在 `~/.abx/` 下面有两个理由：它跟着 home 走（Docker Desktop 只把 home 下的路径
- * 共享给 VM，见 architecture §19.2），以及它与任务目录天然分开——abx 生成的东西
- * 不该混进用户的项目里。
- */
-export function cellRootFor(cellId: string, homeDir: string = homedir()): string {
-  // cellId 是我们自己生成的（agent-时间戳-随机后缀），但这一层不假设调用方老实：
-  // 带 `../` 的 id 会把生成目录挪到 `~/.abx/` 外面去。取 basename 就够。
-  return path.join(homeDir, '.abx', 'cells', path.basename(cellId))
-}
-
 export interface StagedAgentConfigFile extends RenderedAgentConfigFile {
-  /** 宿主上实际写到哪儿：`<cellRoot>/agents/<agentId>/<文件名>`。 */
+  /** 宿主上实际写到哪儿：`<实例状态目录>/<文件名>`。 */
   readonly hostPath: string
 }
 
 export interface StagedAgentConfig {
   readonly agentId: string
-  readonly cellRoot: string
+  /** 写进了哪个目录。就是这次会话的实例状态目录。 */
+  readonly directory: string
   readonly baseUrl: string
   readonly files: readonly StagedAgentConfigFile[]
 }
 
 export interface StageAgentConfigOptions extends RenderAgentConfigOptions {
-  /** 这次会话的目录，约定是 `~/.abx/cells/<cellId>`。 */
-  readonly cellRoot: string
+  /**
+   * 写到哪个目录：`<instancesRoot>/<instanceId>/<agentId>`，也就是**实例状态目录**。
+   *
+   * 由调用方给而不是这一层自己算：那个目录必须先由 `ensureInstanceStateDir()` 建出来、
+   * 再过 `assertStateDirPolicy()` 那几道闸，**然后**才能往里写。这一层只负责写。
+   */
+  readonly directory: string
 }
 
 /**
  * 生成并落盘。
  *
- * 落盘位置是 `<cellRoot>/agents/<agentId>/<原文件名>`：**每个 agent 一个子目录**，
- * 因为同一个 cellId 下不会有第二个 agent，而分开之后「这份配置是谁的」在文件系统上
- * 就是显然的，排查时不用去猜。挂载时挂的是这个目录里的**一个文件**，不是目录。
+ * 落盘位置是**实例状态目录本身**（`<instancesRoot>/<instanceId>/<agentId>/settings.json`），
+ * 而不是另一个地方：那个目录整个以 rw 挂进舱（历史要写在里面），而配置文件就长在
+ * 它里面，于是它天然落在了「可写挂载**内部**」。
+ *
+ * 所以起容器时还要在这个文件上再套一层**只读**挂载（见 `mount-policy.ts` 里
+ * 「生成的配置挂回实例状态目录内部」那条规则）：docker 的嵌套绑定是「深的目标赢」，
+ * 目录整体可写、配置那一格改不动，两件事同时成立。
  *
  * 不把文件权限改成 0444：只读是 `:ro` 挂载参数保证的（见 `docker-backend.ts`），
- * 而改权限会在同一个 cellId 重跑时把自己锁在外面——下一轮写不进去，报的还是一个
- * 跟挂载毫无关系的 EACCES。
+ * 而改权限会让下一轮重写时把自己锁在外面——报的还是一个跟挂载毫无关系的 EACCES。
  */
 export function stageAgentConfig(options: StageAgentConfigOptions): StagedAgentConfig {
   const rendered = renderAgentConfig(options)
-  const directory = path.join(options.cellRoot, 'agents', rendered.agentId)
-  mkdirSync(directory, { recursive: true })
+  const directory = options.directory
+  mkdirSync(directory, { recursive: true, mode: 0o700 })
 
   const files = rendered.files.map((file) => {
     const hostPath = path.join(directory, file.fileName)
@@ -208,7 +203,7 @@ export function stageAgentConfig(options: StageAgentConfigOptions): StagedAgentC
     return { ...file, hostPath }
   })
 
-  return { agentId: rendered.agentId, cellRoot: options.cellRoot, baseUrl: rendered.baseUrl, files }
+  return { agentId: rendered.agentId, directory, baseUrl: rendered.baseUrl, files }
 }
 
 /**
