@@ -14,6 +14,7 @@
     "build": "turbo run build",
     "release:mac": "pnpm build && pnpm --filter @abx/app run package:mac",
     "release:linux": "pnpm build && pnpm --filter @abx/app run package:linux",
+    "icons": "node scripts/generate-icons.mjs",
     "lint": "node packages/toolkit/scripts/lint.mjs",
     "test": "node packages/toolkit/scripts/test.mjs",
     "test:coverage": "node packages/toolkit/scripts/test.mjs --coverage",
