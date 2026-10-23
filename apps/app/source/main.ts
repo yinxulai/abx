@@ -130,6 +130,15 @@ ipcMain.on('panel:dropped-files', (_event, paths: unknown) => {
 app.whenReady().then(() => {
   tray = createTray()
   panel = createPanel()
+  // 无头验证用的开关：`Xvfb` 里没有托盘宿主，`getBounds()` 恒为 0×0，也没东西可点，
+  // 面板就永远不会显示。置 1 时开局直接摊开面板，好让截图与 DOM 转储有东西可看。
+  //
+  // 默认关闭，产品路径一个字节都不变——它是「怎么看到面板」的开关，
+  // 不是「面板长什么样」的开关。
+  if (process.env.ABX_PANEL_SHOW_ON_START === '1') {
+    placePanel(panel)
+    panel.show()
+  }
 })
 
 // 托盘应用：最后一个窗口关掉不等于退出，退出只由「退出」动作触发。
