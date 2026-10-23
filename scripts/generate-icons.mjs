@@ -8,12 +8,13 @@
  *
  * ## 为什么留白不量墨迹框
  *
- * osw 的同名脚本要先扫一遍 alpha 求出「含描边的墨迹框」，再把墨迹 contain-fit 进画布——
- * 因为它的标志本身没有内边距。abx 的标志**自带**留白：路径画在 16…240 之间，加 6 单位
- * 描边（两边各 3）后墨迹落在 13…243，也就是 256 画布四周各留 5.1%。
+ * osw 的同名脚本要先扫一遍 alpha 求出墨迹框，再把墨迹 contain-fit 进画布——
+ * 因为它的标志本身没有内边距。abx 的标志**自带**留白，而且左右与上下各自对称：
+ * 头画在 x 16…240（左右各留 16/256 = 6.25%）、y 34…222（上下各留 34/256 = 13.3%），
+ * 没有描边，墨迹框就是那个矩形本身。
  * 所以各尺寸直接等比缩放即可，不需要那套扫描与 contain-fit。
  * 唯一的例外是开发版（右下角要腾出圆点的位置），那里才真的需要知道墨迹落在哪，
- * 于是脚本会**从已渲染的 1024 里量一次**（`measureInk`），而不是把 13 写死成常量。
+ * 于是脚本会**从已渲染的 1024 里量一次**（`measureInk`），而不是把 16 / 34 写死成常量。
  *
  * ## 怎么渲染
  *
@@ -54,11 +55,18 @@ const DOCS_PUBLIC_DIR = resolve(repoRoot, 'apps/docs/public')
 /** 官网自己的图标位（Vite 的 `public/`，构建时原样拷到站点根）。 */
 const WWW_PUBLIC_DIR = resolve(repoRoot, 'apps/www/public')
 
-/** Windows 的 ico 惯例档位；256 是 Vista 之后的上限，再大没有意义。 */
-const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
+/**
+ * Windows 的 ico 档位。
+ *
+ * 这几个数是**通知区与资源管理器真的会要的尺寸**，不是「多来几档总没坏处」：
+ * 20 是 125% 缩放下的小图标（最容易被漏掉的一档，漏了就由 16 拉伸上来，糊），
+ * 24 是 150%、32 是 200%，48 是大图标视图，256 是 Vista 之后的上限（也是 electron-builder
+ * 对 `win.icon` 的硬要求：小于 256 直接拒绝打包）。
+ */
+const ICO_SIZES = [16, 20, 24, 32, 48, 64, 256]
 
 /**
- * 托盘：macOS 与 Linux 共用的一份逻辑尺寸 16，实际出 1× 与 2× 两档位图。
+ * 托盘：macOS 与 Windows 共用的一份逻辑尺寸 16，实际出 1× 与 2× 两档位图。
  *
  * 文件名不是随便起的——`nativeImage.createFromPath()` 会**自己去找同目录的 `@2x` 兄弟**：
  * 只传 `trayTemplate.png` 时，返回的 NativeImage 上挂着 [1, 2] 两个倍率（本机实测）。
@@ -66,16 +74,6 @@ const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
  */
 const TRAY_BASE_SIZE = 16
 const TRAY_SCALES = [1, 2]
-
-/**
- * Windows 专用的一张：48²，当「1×」交给系统。
- *
- * Windows 的多倍率是假的。Electron 在 Windows 上走
- * `NativeImage::GetHICON(GetSystemMetrics(SM_CXSMICON))`，而**非 `.ico` 来源**的
- * `GetHICON` 会丢弃 size 参数、只取 1× 那一档位图（`AsBitmap()`）。挂上去的 2× 永远
- * 读不到，系统只会拿 16² 放大到 24/32px，于是糊。解法就是让 1× 本身足够大。
- */
-const TRAY_WINDOWS_SIZE = 48
 
 /** 文档导出的通用尺寸档（1024 那张在打包图标那一步顺带出，这里不重复）。 */
 const BRAND_SIZES = [512, 256, 128, 64, 32]
@@ -85,22 +83,37 @@ const DARK_BACKGROUND = '#191A1C'
 const SOCIAL_PREVIEW = { width: 1280, height: 640, markRatio: 0.64 }
 
 /**
- * 开发版标记：标志右下角一颗圆点。所有数字都以**标志框**（源的 `viewBox`）为单位。
+ * 开发版标记：满血标志 + 右下角一颗独立的圆点。所有数字都以**画布**（源的 `viewBox`）为单位。
  *
- * 上一版的做法是「把标志的斜角切掉一块」，但 16px 下缺口会和标志自己那个开着的角
- * （传递窗）糊在一起，看起来像图没画完。现在改成**满血标志 + 右下角一颗独立圆点**。
+ * 同时开着打包版与 `pnpm dev` 时，两枚菜单栏图标长得一模一样，分不清屏幕上那个是哪个，
+ * 所以开发版多一颗点（`apps/app/source/main.ts` 按 `app.isPackaged` 挑文件，与 osw 同构）。
  *
- * 标志是**实心方块**，右下角是填满的，所以圆点必须占一块自己的地方：标志缩进左上角的
- * `region` 方框，圆点落在右下角的空处。两者之间留出约 0.1 框宽的缝——16px 下 ≈ 1.7px，
- * 看得出是两颗东西（`brand-assets.test.ts` 会按像素验这一点）。
+ * 托盘蒙版里标志与圆点**同色**（都是纯白），形状只由 alpha 表达，所以两者之间必须真空出
+ * 一条缝来：缝没了，圆点就长在标志上，一颗点变成一块鼓包。标志那一侧用**量出来的墨迹**
+ * 而不是写死的框——标志从方头改成扁头（这一版正是如此）时，写死的老数字会把缝吃掉，
+ * 而那件事在 1024 上根本看不出来，只有 16px 才露馅。
  */
-const DEV_BADGE = { region: 0.8, x: 0.86, y: 0.86, radius: 0.11, fill: '#fff' }
+const DEV_BADGE = {
+  /** 合并包围盒（标志墨迹 + 缝 + 圆点）占画布的比例。 */
+  coverage: 0.92,
+  /** 缝宽。16px 下约 1.5px，是「两颗东西」能被看出来的下限。 */
+  gap: 0.094,
+  /** 圆点半径。16px 下直径约 3.2px。 */
+  radius: 0.1,
+  fill: '#fff',
+}
 
 /** 墨迹扫描的阈值：边缘反锯齿会产生一大片 1/255 的近透明像素，取 0 会把框撑到整张画布。 */
 const INK_THRESHOLD = 12
 
-/** 单色档要替换掉的颜色引用（渐变 ID 怎么写都行，凡是 `url(#…)` 一律换掉）。 */
-const PAINT_REFERENCE = /url\(#[^)]*\)/g
+/**
+ * 单色档要替换掉的颜色引用。**只换 `fill=` 那一种。**
+ *
+ * 源里的 `mask="url(#abx-eyes)"` 写法和渐变引用一模一样，但它是**几何**不是颜色：
+ * 一起换掉，眼睛就不再是挖空的两个洞，单色档会变成一张没有眼睛的实心色块
+ * ——而这件事在校样图上看不太出来，在 16px 的托盘上更是完全看不出来。
+ */
+const PAINT_REFERENCE = /fill="url\(#[^)]*\)"/g
 
 const toPosix = (file) => file.slice(repoRoot.length + 1).replaceAll('\\', '/')
 
@@ -198,7 +211,7 @@ function composeSvg(options) {
   const viewBoxWidth = options.viewBoxWidth ?? box.width
   const viewBoxHeight = options.viewBoxHeight ?? box.height
   const shift = options.shift ?? { x: 0, y: 0 }
-  const content = paint === undefined ? inner : inner.replaceAll(PAINT_REFERENCE, paint)
+  const content = paint === undefined ? inner : inner.replaceAll(PAINT_REFERENCE, `fill="${paint}"`)
   const [rx, ry] = [mark.x - box.minX * mark.scale, mark.y - box.minY * mark.scale]
 
   return [
@@ -239,7 +252,8 @@ function renderScale(pixels) {
  * 用 Chrome 把一张 SVG 光栅化成 PNG。
  *
  * `--default-background-color=00000000` 是透明底的关键：不给这个参数，Chrome 会铺一层
- * 不透明白底，托盘蒙版与图标就都没有 alpha 了。
+ * 不透明白底，托盘蒙版与图标就都没有 alpha 了。挖空的眼睛也是靠这条活着的
+ * ——那两处是 alpha 洞，底下是什么由这里的透明画布决定。
  *
  * 截出来的尺寸**当场核对**：`-resize WxH!` 会把任何尺寸差都「修好」——包括不该修的，
  * 比如哪天 Chrome 改了行为、给回一张别的尺寸，那就会静默产出被拉变形的标志。
@@ -288,12 +302,12 @@ function writeDownscaled(source, target, pixels, flattenWhite) {
 }
 
 /**
- * 量出「含描边的墨迹」包围盒（用户空间坐标）。
+ * 量出墨迹包围盒（用户空间坐标）。
  *
  * `-alpha extract` 把 alpha 单独取出来，`gray:-` 是不带任何头的原始灰度字节流，
  * 所以不需要图片解码器：按 `y * 宽 + x` 索引扫一遍即可。
- * 入参是**已经渲染好的位图**（拿 1024 那张来量），不是路径的 `d`——
- * 标志是靠 `stroke-width` 喂胖的，只看路径顶点会算出偏小一圈的框。
+ * 入参是**已经渲染好的位图**（拿 1024 那张来量），不是源的 `rect` 属性——
+ * 标志内部那两只挖空的眼睛、以及将来若有人加回描边，都会改变「看得见的形状」落在哪。
  */
 function measureInk(pngPath, pixels, box) {
   const alpha = imagemagickRun([pngPath, '-alpha', 'extract', '-depth', '8', 'gray:-'])
@@ -313,7 +327,7 @@ function measureInk(pngPath, pixels, box) {
       if (y > maxY) maxY = y
     }
   }
-  if (maxX < 0) throw new Error('标志渲染后完全透明，检查 fill / stroke 是否指向了不存在的渐变')
+  if (maxX < 0) throw new Error('标志渲染后完全透明，检查 fill / mask 是否指向了不存在的 id')
   const unit = box.width / pixels
   return { x: box.minX + minX * unit, y: box.minY + minY * unit, w: (maxX - minX + 1) * unit, h: (maxY - minY + 1) * unit }
 }
@@ -400,7 +414,9 @@ function main() {
     // ── 墨迹框：从刚出炉的 1024 里量一次，只服务开发版构图（见文件头的说明）。
     const ink = measureInk(join(BUILD_DIR, 'icon.png'), 1024, box)
 
-    // ── ICO：每一帧都是一张独立位图，按各自的目标尺寸重新光栅化（不是把 1024 缩下去）。
+    // ── Windows 图标（`win.icon` 与通知区共用一份）：每一帧都是一张独立位图，
+    // 按各自的目标尺寸重新光栅化（**不是**把 1024 缩下去——那等于先用 1024 的采样
+    // 精度换一次重取样，再把 16px 该有的像素对齐交给运气）。
     const frames = ICO_SIZES.map((size) => {
       const target = join(scratch, `ico-${size}.png`)
       const pixels = { width: size, height: size }
@@ -409,7 +425,7 @@ function main() {
       writeDownscaled(rasterize(svg, pixels, scale, scratch), target, pixels, false)
       return { size, png: readFileSync(target) }
     })
-    const ico = join(BUILD_DIR, 'icon.ico')
+    const ico = join(BUILD_DIR, 'icon-win.ico')
     writeFileSync(ico, packIco(frames))
     written.push({ file: ico, note: `${ICO_SIZES.length} 档：${ICO_SIZES.join('/')}` })
 
@@ -424,34 +440,27 @@ function main() {
         note: '托盘蒙版',
       })
     }
-    emit(join(BUILD_DIR, 'tray-icon-win.png'), {
-      width: TRAY_WINDOWS_SIZE,
-      mark: full,
-      paint: '#fff',
-      note: 'Windows 托盘（单张当 1×）',
-    })
 
-    // ── 开发版：标志缩进左上角，右下角一颗圆点，再按合并包围盒居中。
-    const region = DEV_BADGE.region * box.width
-    const devScale = Math.min(region / box.width, region / box.height)
-    const devMark = {
-      x: region / 2 - devScale * (box.minX + box.width / 2),
-      y: region / 2 - devScale * (box.minY + box.height / 2),
-      scale: devScale,
-    }
+    // ── 开发版：标志缩进左上角，右下角一颗独立圆点，再按合并包围盒居中。
+    // 构图全在用户空间里算，尺寸档位与正式版完全一致（只有这两张，没有别的平台变体：
+    // Windows 走 `icon-win.ico`，Linux 走彩色 `icon.png`，见 `main.ts` 的 `trayIcon()`）。
+    const gap = DEV_BADGE.gap * box.width
+    const dotRadius = DEV_BADGE.radius * box.width
+    // 圆点摆在墨迹框右下角的**外侧斜对角**上：圆心到那个角的距离取「缝 + 半径」，
+    // 于是圆点边缘与标志的最近距离正好是 gap（除以 √2 是「斜着摆」这件事本身带来的）。
+    const dotOffset = (gap + dotRadius) / Math.SQRT2
+    const budget = DEV_BADGE.coverage * box.width - dotOffset - dotRadius
+    const devScale = Math.min(budget / ink.w, budget / ink.h)
+    const devMark = { x: -ink.x * devScale, y: -ink.y * devScale, scale: devScale }
     const dot = {
-      x: DEV_BADGE.x * box.width,
-      y: DEV_BADGE.y * box.height,
-      radius: DEV_BADGE.radius * box.width,
+      x: ink.w * devScale + dotOffset,
+      y: ink.h * devScale + dotOffset,
+      radius: dotRadius,
       fill: DEV_BADGE.fill,
     }
-    // 「缩小后的标志墨迹」与「圆点」合起来的包围盒，按图心拉回画布中央，
-    // 否则圆点会把整个图形拽向右下、看起来偏一边。
-    const left = Math.min(devMark.x + devScale * ink.x, dot.x - dot.radius)
-    const right = Math.max(devMark.x + devScale * (ink.x + ink.w), dot.x + dot.radius)
-    const top = Math.min(devMark.y + devScale * ink.y, dot.y - dot.radius)
-    const bottom = Math.max(devMark.y + devScale * (ink.y + ink.h), dot.y + dot.radius)
-    const shift = { x: box.width / 2 - (left + right) / 2, y: box.height / 2 - (top + bottom) / 2 }
+    // 合并包围盒（标志墨迹 + 缝 + 圆点）按图心拉回画布中央，否则圆点会把整个图形
+    // 拽向右下、看起来偏一边。
+    const shift = { x: (box.width - (dot.x + dotRadius)) / 2, y: (box.height - (dot.y + dotRadius)) / 2 }
 
     for (const scale of TRAY_SCALES) {
       const suffix = scale === 1 ? '' : `@${scale}x`
@@ -464,14 +473,6 @@ function main() {
         note: '托盘蒙版 · 开发版（右下角圆点）',
       })
     }
-    emit(join(BUILD_DIR, 'tray-icon-dev-win.png'), {
-      width: TRAY_WINDOWS_SIZE,
-      mark: devMark,
-      paint: '#fff',
-      badge: dot,
-      shift,
-      note: 'Windows 托盘 · 开发版',
-    })
 
     // ── 文档 / 宣发导出。
     for (const size of BRAND_SIZES) emit(join(BRAND_PNG_DIR, `icon-${size}.png`), { width: size, mark: full })
@@ -513,9 +514,13 @@ function main() {
       const { size } = statSync(file)
       console.log(`${toPosix(file)}  ${(size / 1024).toFixed(1)} KB${note === undefined ? '' : `  (${note})`}`)
     }
+    // 留白按四边分开打：这个脚本的构图全都建立在「标志自带对称留白」上面，
+    // 打出来的两对数不相等就是那个前提不成立了（`brand-assets.test.ts` 也这么断言）。
     console.log(
-      `\n墨迹框 ${ink.w.toFixed(1)} × ${ink.h.toFixed(1)}（用户空间），四周留白 ` +
-        `${(((box.width - ink.w) / box.width) * 100).toFixed(1)}%，共 ${written.length} 个产物`,
+      `\n墨迹框 ${ink.w.toFixed(1)} × ${ink.h.toFixed(1)}（用户空间）：` +
+        `左右留白 ${(ink.x - box.minX).toFixed(1)} / ${(box.minX + box.width - ink.x - ink.w).toFixed(1)}，` +
+        `上下 ${(ink.y - box.minY).toFixed(1)} / ${(box.minY + box.height - ink.y - ink.h).toFixed(1)}，` +
+        `共 ${written.length} 个产物`,
     )
   } finally {
     rmSync(scratch, { recursive: true, force: true })

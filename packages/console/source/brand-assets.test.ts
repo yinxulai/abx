@@ -232,27 +232,44 @@ const MONO_ICONS = [
 ] as const
 
 /**
- * 托盘蒙版：纯白 + alpha。`dev` 那份是开发版（标志右下角一颗圆点）；
- * `-win` 那份是 Windows 专用的 48²——非 `.ico` 来源的 `GetHICON` 会丢掉尺寸参数、
- * 只取 1× 那一档，所以 Windows 单独吃一张大图。
+ * 托盘蒙版：纯白 + alpha，1× 与 2× 两档。`dev` 那份是开发版（标志右下角一颗圆点），
+ * `main.ts` 的 `trayTemplate()` 按 `app.isPackaged` 挑正式/开发文件。
+ *
+ * Windows 不在这张表里：它吃的是 `icon-win.ico`（多尺寸，系统按 DPI 自己挑一档），
+ * 所以也没有「Windows 版的 48² 大图」这种东西——非 `.ico` 来源的 `GetHICON` 会丢掉
+ * 尺寸参数、只取 1× 那一档，那正是 Windows 必须走 ICO 的原因。
  */
 const TRAY = [
   { file: `${APP_BUILD}trayTemplate.png`, size: 16, dev: false },
   { file: `${APP_BUILD}trayTemplate@2x.png`, size: 32, dev: false },
-  { file: `${APP_BUILD}tray-icon-win.png`, size: 48, dev: false },
   { file: `${APP_BUILD}trayTemplate-dev.png`, size: 16, dev: true },
   { file: `${APP_BUILD}trayTemplate-dev@2x.png`, size: 32, dev: true },
-  { file: `${APP_BUILD}tray-icon-dev-win.png`, size: 48, dev: true },
 ] as const
 
-/** Windows 的 ico 档位，与生成脚本里那张表一致。 */
-const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256] as const
+/** Windows 的 ico 档位，与生成脚本里那张表一致。20 是 125% 缩放那一档，最容易被漏掉。 */
+const ICO_SIZES = [16, 20, 24, 32, 48, 64, 256] as const
+const ICO_FILE = `${APP_BUILD}icon-win.ico`
 
-/** 真源里的标志：路径、渐变两端。换标志就得连这个测试一起改，这是故意的。 */
-const MARK_PATH = 'M152 16 H74 A58 58 0 0 0 16 74 V182 A58 58 0 0 0 74 240 H182 A58 58 0 0 0 240 182 V104 Z'
-const MARK_GRADIENT = ['#3FD9C6', '#0E8C80'] as const
+/**
+ * 真源里的标志：一个圆角矩形，两只眼是**挖空的**（同一个 mask 里的黑圆）。
+ * 换标志就得连这个测试一起改，这是故意的。
+ */
+const MARK = { x: 16, y: 34, width: 224, height: 188, radius: 62, canvas: 256 } as const
+const MARK_RECT = `x="${MARK.x}" y="${MARK.y}" width="${MARK.width}" height="${MARK.height}" rx="${MARK.radius}"`
+/** 三段渐变（osw 那道闪电的前三段，去掉末端的紫）。 */
+const MARK_STOPS = [
+  { offset: '0', color: '#FFE066' },
+  { offset: '0.42', color: '#FF9500' },
+  { offset: '1', color: '#F0297C' },
+] as const
+const EYES = [
+  { cx: 85, cy: 128, r: 24 },
+  { cx: 171, cy: 128, r: 24 },
+] as const
 /** 深色底板：`design-system.md` §2 的深色 `--bg`。 */
 const DARK_BACKGROUND = [0x19, 0x1a, 0x1c] as const
+/** social preview 上标志占画布高度的比例，与生成脚本里的 `SOCIAL_PREVIEW.markRatio` 一致。 */
+const SOCIAL_MARK_RATIO = 0.64
 
 /**
  * 几何对账的容差，单位是**像素**而不是比例。
@@ -269,21 +286,23 @@ const REFERENCE_BOX = shapeBox(REFERENCE, undefined)
 describe('矢量源：一个文件，所有派生图都从它来', () => {
   const source = textOf(SOURCE_SVG)
 
-  it('真源里就是那个标志（路径 + 渐变两端），不是一张空 svg', () => {
-    expect(source).toContain(`d="${MARK_PATH}"`)
+  it('真源里就是那个标志（圆角矩形 + 两只挖空的眼睛 + 三段渐变），不是一张空 svg', () => {
     expect(source).toContain('viewBox="0 0 256 256"')
     expect(source).toContain('aria-label="abx"')
-    // 界面点缀色与标志是同一对颜色：标志不能自己另起一套。
-    for (const stop of MARK_GRADIENT) expect(source).toContain(`stop-color="${stop}"`)
+    expect(source).toContain(MARK_RECT)
+    // 眼睛必须在同一个 mask 里、而且被这个 rect 用上：分开写的话「挖空」就不成立了。
+    expect(source).toContain('mask="url(#abx-eyes)"')
+    for (const eye of EYES) expect(source).toContain(`<circle cx="${eye.cx}" cy="${eye.cy}" r="${eye.r}" fill="#000"/>`)
+    for (const stop of MARK_STOPS) expect(source).toContain(`offset="${stop.offset}" stop-color="${stop.color}"`)
   })
 
-  it('标志自带留白：路径画在 16…240，加 6 单位描边后四周各让出约 5%', () => {
+  it('标志自带留白，且没有描边——留白就是那个矩形本身', () => {
     // 这条守着「各尺寸直接等比缩放、不需要扫墨迹框」这个判断，缘由写在生成脚本的文件头。
-    // 留白的三个参数（路径的 16、描边的 6、画布的 256）在这里给全：少了任何一个，
-    // 「13/256」这个数就不再是算出来的——而下面那组几何对账正拿它当基准。
-    expect(MARK_PATH.startsWith('M152 16 H74')).toBe(true)
-    expect(MARK_PATH.endsWith('V104 Z')).toBe(true)
-    expect(source).toContain('stroke-width="6"')
+    // 有描边的话墨迹框会比矩形大一圈（上一版正是如此），下面那组几何对账的基准就不是
+    // 这个矩形了——所以「没有描边」是那个判断的前提，得在这里钉住。
+    expect(source).not.toContain('stroke')
+    expect(MARK.x * 2 + MARK.width).toBe(MARK.canvas)
+    expect(MARK.y * 2 + MARK.height).toBe(MARK.canvas)
   })
 
   it('站点与文档引用的每一份都是真源的副本，逐字节一致', () => {
@@ -299,19 +318,54 @@ describe('打包与导出：尺寸精确', () => {
     }
   })
 
-  it('彩色那张不透明处是青绿，不是单纯的黑白蒙版', () => {
-    // 只查中心一点：渐变在这一处落在两端色之间，换成白或黑都会当场露馅。
+  it('彩色那张真的是那条三段渐变，不是单色填充', () => {
+    // 两个采样点，落在渐变的两头（左上偏黄、右下偏品红），坐标按真源的 256 空间给。
+    // 只查一点是查不出「渐变没了」的：一个纯橙色块能满足任何单点断言。
     const raster = rasterOf(`${APP_BUILD}icon.png`)
-    const [red, green, blue, alpha] = pixelAt(raster, 512, 512)
-    expect(alpha).toBe(255)
-    expect(green).toBeGreaterThan(120)
-    expect(green).toBeGreaterThan(red)
-    expect(green).toBeGreaterThan(blue)
+    const unit = raster.width / MARK.canvas
+    const at = (x: number, y: number): readonly number[] => pixelAt(raster, Math.round(x * unit), Math.round(y * unit))
+    const [yellowRed, yellowGreen, yellowBlue, yellowAlpha] = at(50, 70)
+    const [pinkRed, pinkGreen, pinkBlue, pinkAlpha] = at(210, 200)
+    expect([yellowAlpha, pinkAlpha]).toEqual([255, 255])
+    // 两头都是暖色（红最高），但绿的走向必须是从上到下变低、蓝的走向反过来。
+    expect([yellowGreen > pinkGreen, yellowBlue < pinkBlue]).toEqual([true, true])
+    for (const [red, green, blue] of [
+      [yellowRed, yellowGreen, yellowBlue],
+      [pinkRed, pinkGreen, pinkBlue],
+    ]) {
+      expect(red).toBeGreaterThan(green)
+      expect(red).toBeGreaterThan(blue)
+    }
+  })
+
+  it('眼睛是挖空的洞（alpha 洞），不是画上去的白点', () => {
+    // 这条守着一个很容易写错的地方：生成脚本做单色档时要把渐变引用换成一种颜色，
+    // 而 `mask="url(#abx-eyes)"` 的写法和渐变引用一模一样——一起换掉的话，
+    // 眼睛就不再是洞，单色档变成一张没有眼睛的实心色块。查 alpha 才查得出来。
+    //
+    // 判据用 `SOLID` 而不是「恰好 0」：16px 上那只洞只有 3px 宽，圆心落在一个
+    // 没被完全覆盖的像素上时 alpha 是十几而不是 0，那仍然是洞。画上去的白点是 255。
+    for (const { file, size } of [
+      { file: `${APP_BUILD}icon.png`, size: 1024 },
+      { file: `${APP_BUILD}trayTemplate.png`, size: 16 },
+      { file: `${APP_BUILD}trayTemplate@2x.png`, size: 32 },
+      ...MONO_ICONS.map((entry) => ({ file: entry.file, size: entry.size })),
+    ]) {
+      const raster = rasterOf(file)
+      const unit = size / MARK.canvas
+      for (const eye of EYES) {
+        const [x, y] = [Math.round(eye.cx * unit), Math.round(eye.cy * unit)]
+        expect([file, x, y, pixelAt(raster, x, y)[3] <= SOLID]).toEqual([file, x, y, true])
+      }
+      // 两只眼必须是**两只**：中间那道鼻梁若也成了洞，就是整个 mask 写反了。
+      const [bridgeX, bridgeY] = [Math.round((MARK.canvas / 2) * unit), Math.round(128 * unit)]
+      expect([file, pixelAt(raster, bridgeX, bridgeY)[3] > SOLID]).toEqual([file, true])
+    }
   })
 })
 
-describe('icon.ico：真的含 7 档，而不是「文件在了」', () => {
-  const bytes = bytesOf(`${APP_BUILD}icon.ico`)
+describe('icon-win.ico：真的含 7 档，而不是「文件在了」', () => {
+  const bytes = bytesOf(ICO_FILE)
 
   it('容器头是 ICO，档数就是 7', () => {
     expect([bytes.readUInt16LE(0), bytes.readUInt16LE(2), bytes.readUInt16LE(4)]).toEqual([0, 1, ICO_SIZES.length])
@@ -377,14 +431,23 @@ describe('托盘蒙版：纯白 + alpha，开发版多一颗圆点', () => {
 })
 
 describe('一套几何：所有派生图共用同一个轮廓', () => {
-  it('基准自己就是「标志自带约 5% 留白」', () => {
-    // 13/256 = 5.08%：16 的内边距 + 3 的描边（路径画在 16…240，描边 6 两边各 3）。
-    // 这条同时是「不需要扫墨迹框」的证据，也是**唯一**把位图钉回矢量源几何的一处：
-    // 容差给 2px（1024 上 0.2%），改一个用户空间单位就是 4px，跑不掉。
-    const inset = (13 * REFERENCE.width) / 256
-    expect(Math.abs(REFERENCE_BOX.x - inset)).toBeLessThanOrEqual(2)
-    expect(Math.abs(REFERENCE_BOX.y - inset)).toBeLessThanOrEqual(2)
-    expect(REFERENCE_BOX.width).toBe(REFERENCE_BOX.height)
+  it('基准就是真源那个矩形，而且左右对称、上下对称', () => {
+    // 这条同时是「不需要扫墨迹框」的证据，也是**唯一**把位图钉回矢量源几何的一处。
+    // 容差给 2px（1024 上 0.2%）：改一个用户空间单位就是 4px，跑不掉。
+    const unit = REFERENCE.width / MARK.canvas
+    const insets = {
+      left: REFERENCE_BOX.x,
+      right: REFERENCE.width - (REFERENCE_BOX.x + REFERENCE_BOX.width),
+      top: REFERENCE_BOX.y,
+      bottom: REFERENCE.height - (REFERENCE_BOX.y + REFERENCE_BOX.height),
+    }
+    for (const [edge, inset] of Object.entries(insets)) {
+      const expected = (edge === 'left' || edge === 'right' ? MARK.x : MARK.y) * unit
+      expect([edge, Math.abs(inset - expected) <= 2]).toEqual([edge, true])
+    }
+    // 对称比定值更抗漂移：标志可以在画布里整体挪，但不能挪歪——而「挪歪」正是
+    // 上一版真的发生过的事（y 从 34 写成 44，上下留白差 24，肉眼看不出来）。
+    expect([Math.abs(insets.left - insets.right) <= 2, Math.abs(insets.top - insets.bottom) <= 2]).toEqual([true, true])
   })
 
   it('每一张的图形都落在同一处、同样大小', () => {
@@ -440,7 +503,7 @@ describe('文档导出：单色、底板与社交预览', () => {
     expect(pixelAt(raster, 0, raster.height - 1)).toEqual(corner)
   })
 
-  it('social preview 是 1280×640，标志居中且是方的', () => {
+  it('social preview 是 1280×640，标志居中且没有被拉伸', () => {
     // GitHub 的仓库预览图固定这个尺寸，比例不对会被裁掉两边。
     const raster = rasterOf(`${BRAND_PNG}social-preview.png`)
     expect([raster.width, raster.height]).toEqual([1280, 640])
@@ -448,9 +511,11 @@ describe('文档导出：单色、底板与社交预览', () => {
     // 左右与上下都对称 = 居中。
     expect(Math.abs(raster.width - (box.x + box.width) - box.x)).toBeLessThanOrEqual(2)
     expect(Math.abs(raster.height - (box.y + box.height) - box.y)).toBeLessThanOrEqual(2)
-    expect(box.width / box.height).toBeCloseTo(1, 1)
-    // 标志占画布高度的约 0.64 × 0.898（那 0.898 是标志自带的留白）。
-    expect(box.height / raster.height).toBeCloseTo(0.64 * (REFERENCE_BOX.height / REFERENCE.height), 2)
+    // 标志不是方图（头是 224×188），所以比的是**真源那个矩形的宽高比**：
+    // 拉伸或裁切都会让这个比值跑掉，而「居中」那两条不会。
+    expect(box.width / box.height).toBeCloseTo(MARK.width / MARK.height, 1)
+    // 占画布高度的比例 = markRatio × 标志在 256 里自己的高度占比（那 0.734 是自带留白）。
+    expect(box.height / raster.height).toBeCloseTo(SOCIAL_MARK_RATIO * (REFERENCE_BOX.height / REFERENCE.height), 2)
   })
 
   it('文档站那张 256 就是品牌目录里那张，不是另渲一份', () => {
