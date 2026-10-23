@@ -68,6 +68,15 @@ export {
 export type { ResolveSharedMountsOptions, ResolveSharedMountsResult, SharedSourceContext } from './shared'
 
 export {
+  SHARED_LIST_FILE_NAME,
+  addSharedEntries,
+  defaultSharedListPath,
+  markMissingEntries,
+  readSharedEntries,
+  writeSharedEntries,
+} from './shared-store'
+
+export {
   DANGEROUS_TASK_DIRS,
   DOCKER_SOCKET_PATH,
   FORBIDDEN_CREDENTIAL_FILE_PATTERNS,
