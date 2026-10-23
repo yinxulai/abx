@@ -4,9 +4,18 @@
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
-  "description": "Web 控制台，构建为纯静态产物；只通过管理 API 与核心通信。",
+  "description": "托盘面板：React 自绘的无边框浮层，由 apps/app 加载。",
   "exports": {
     ".": "./source/index.ts",
     "./*": "./source/*.ts"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@abx/contracts": "workspace:*",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   }
 }
