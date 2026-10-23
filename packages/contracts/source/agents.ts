@@ -496,6 +496,14 @@ export function agentManifestProblems(definitions: readonly AgentDefinition[] = 
     if (agent.statePaths.length === 0) {
       report(agent, 'statePaths 是空的：至少要有历史落点，或者明确不持久化这件事本身要写成数据。')
     }
+    if (agent.statePaths.length > 1) {
+      report(
+        agent,
+        `statePaths 登记了 ${agent.statePaths.length} 个目录，而挂载策略今天只挂一个` +
+          `（形状闸门判的是 <实例根>/<实例 id>/<agentId> 那一格）：多出来的会静默不挂。` +
+          `要支持多个，先改 mount-policy.ts 的闸门与宿主侧布局。`,
+      )
+    }
     for (const statePath of agent.statePaths) {
       if (!statePath.path.startsWith('~/') || statePath.path.slice(2).trim() === '') {
         report(agent, `statePaths 里的 ${JSON.stringify(statePath.path)} 必须是 ~/... 形式（相对舱内 home）。`)

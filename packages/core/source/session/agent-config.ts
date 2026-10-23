@@ -119,35 +119,35 @@ export function renderAgentConfig(options: RenderAgentConfigOptions): RenderedAg
 /**
  * agent 在舱内的主目录：`<cellHome>/.claude` 这样一段。
  *
- * 从注册表里那几份**会生成**的配置文件的路径推出来，而不是在代码里写死一张
- * `claude → .claude` 的表：注册表已经是路径的唯一真相，再写一张表就会漂。
+ * 路径来自清单里的 `statePaths`（「这个 agent 把历史写在哪」），**不在这里算**：
+ * 它是某个 agent 的性质，会随 agent 版本漂移，写在代码里的那份没人会记得跟着改。
+ * 展开 `~` 是这一层的事，因为只有这里知道舱内 home 是哪个。
  *
  * 这个目录同时也是持久化挂载点（见 `instance.ts`）：把整个 agent 主目录挂进去，
  * 历史才跟着走。所以下面几条都必须拦住——
  *
- *   - 配置文件分散在多个目录：只能挂一个，另一个会静默丢历史，不如直接抛；
+ *   - 一条清单登记了多个目录：挂载策略今天只挂一个（形状闸门判的是
+ *     `<实例根>/<实例 id>/<agentId>` 那一格），多出来的会**静默不挂**，不如直接抛；
  *   - 目录就是舱内 home 本身：那等于把整个 home 变成可写挂载点，挂载面大了一整圈。
  */
 export function agentHomePath(agent: AgentDefinition, cellHome: string = DEFAULT_CELL_HOME): string {
-  const directories = [
-    ...new Set(
-      generatedConfigFiles(agent).map((file) => path.posix.dirname(expandHome(file.path, cellHome))),
-    ),
-  ]
+  const directories = [...new Set(agent.statePaths.map((statePath) => expandHome(statePath.path, cellHome)))]
 
   const directory = directories[0]
   if (directory === undefined) {
-    throw new AgentConfigError(`agent ${agent.id} 没有登记任何会生成的配置文件，不知道它的舱内主目录在哪。`)
+    throw new AgentConfigError(
+      `agent ${agent.id} 没有登记任何持久化目录（statePaths），不知道它的舱内主目录在哪。`,
+    )
   }
   if (directories.length > 1) {
     throw new AgentConfigError(
-      `agent ${agent.id} 的配置文件分散在多个目录里（${directories.join('、')}）：` +
-        `持久化挂载只能挂一个目录，请先把它们收敛到同一个目录下。`,
+      `agent ${agent.id} 登记了多个持久化目录（${directories.join('、')}）：` +
+        `挂载策略只能挂一个目录，请先把它们收敛到同一个目录下。`,
     )
   }
   if (directory === cellHome || directory === '/' || directory === '.') {
     throw new AgentConfigError(
-      `agent ${agent.id} 的配置直接写在舱内 home 根上（${directory}）：` +
+      `agent ${agent.id} 的持久化目录就是舱内 home 本身（${directory}）：` +
         `那会把整个 home 变成可写挂载点，请让它住在自己的子目录里。`,
     )
   }

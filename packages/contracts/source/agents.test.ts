@@ -200,6 +200,14 @@ describe('清单自检拦得下写错的清单', () => {
     expect(problems({ statePaths: [] }).join()).toContain('statePaths 是空的')
   })
 
+  it('一条清单登记多个持久化目录 → 报错，而不是静默只挂第一个', () => {
+    const both = [
+      { path: '~/.claude', mode: 'rw' as const },
+      { path: '~/.claude-state', mode: 'rw' as const },
+    ]
+    expect(problems({ statePaths: both }).join()).toContain('只挂一个')
+  })
+
   it('生成的配置没有模板、不生成的却带模板，各报一条', () => {
     const claude = findAgent('claude')!
     const file = claude.configFiles[0]!
