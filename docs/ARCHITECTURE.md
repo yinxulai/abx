@@ -213,12 +213,15 @@ findConfigFile()  →  loadConfig()  →  parseConfig()  →  [expandEnvTree]  �
 | 面 | 地址 | 令牌校验 | 谁在用 |
 |---|---|---|---|
 | `host` | `127.0.0.1:<hostPort>` | **不校验** | 宿主的桌面客户端 / 调试 |
-| `cell` | `<网桥地址>:<cellPort>` | **强制校验舱令牌** | 舱内 agent |
+| `cell` | 见 §19.1（Docker Desktop 上必须绑 `0.0.0.0`） | **强制校验舱令牌** | 舱内 agent |
 
 **I-B1**：`cell` 面**必须**校验令牌，且校验用**恒定时间比较**（`safeEqual`）。
-**I-B2**：默认**不得**绑 `0.0.0.0`；`cell` 面只绑 docker 网桥地址。
+**I-B2（2026-10-23 实测后修正）**：原定「只绑 docker 网桥地址」**在 Docker Desktop 上做不到** ——
+网桥网关活在 VM 里，宿主根本绑不上。改为：**绑 `0.0.0.0` 或宿主局域网 IP**，并把
+「来源必须是 docker VM 网段」作为令牌之外的第二道校验（见 §19.1）。
 
-理由：局域网内任何机器都能连的代理 = 拿你钥匙的开放中继。这是最容易被忽略的一条。
+理由不变：局域网内任何机器都能连的代理 = 拿你钥匙的开放中继。
+但这条**不能靠 bind 地址来保证**了，只能靠令牌 + 来源网段校验。这是实测换来的代价，必须写清。
 
 ### 6.2 单次请求生命周期（12 步，每一步都有拒因）
 
@@ -466,7 +469,7 @@ idle ──open()──▶ preparing ──create()──▶ running ──stop(
 | **0 · 能力层（当前）** | `contracts` + `core(broker/policy/session/mounts)`；补 G1/G2/G3/G6；**托盘骨架 + 共享挂载（§18）** |
 | **1 · 文件闸口** | `core/mounts` 完成禁区 + 符号链接校验 + `review`（出舱审核）；`session` 消费 |
 | **2 · 体验层完善** | `packages/console` 面板（状态灯 / 产出通知 / 审计可视化）；经 HTTP 与 core 通信（R5） |
-| **3 · 接入 osw** | broker 增加「第二个监听面」在网桥地址 + 舱身份头；OSW 作为生产级上游替换自研代理 |
+| **3 · 接入 osw** | broker 增加「第二个监听面」+ 舱身份头；OSW 作为生产级上游替换自研代理 |
 | **未来（不实现）** | FUSE 文件闸口：open/write/unlink 全过策略进程 |
 
 ---
@@ -590,9 +593,13 @@ Claude Code / Codex 只会往 `BASE_URL` 发请求并带自己的 `Authorization
 「舱内 agent」这条主路径必须走**路径携带**：
 
 ```
-ABX_BASE_URL = http://<网桥IP>:8721/c/<cellToken>/u/anthropic
+ABX_BASE_URL = http://host.docker.internal:8721/c/<cellToken>/u/anthropic
 ABX_AUTH_TOKEN = abx-placeholder
 ```
+
+> **实测修正（2026-10-23）**：原稿写的是 `<网桥IP>`。在 Docker Desktop 上这个地址
+> **从舱内连不上**（`ECONNREFUSED`），必须用 `host.docker.internal`。macOS 只有 Docker
+> Desktop，所以这**不是边例，是主路径**。详见 §19.1。
 
 这正是 `route.ts` 里 `CELL_PATH_PREFIX = '/c/'` 与
 `CellTokenSource = 'header' | 'path'` 存在的原因 —— 两条路都要留。
@@ -601,7 +608,7 @@ ABX_AUTH_TOKEN = abx-placeholder
 
 | 泄漏途径 | 后果 | 缓解 |
 |---|---|---|
-| agent 打印 `BASE_URL`（含令牌） | 令牌进入终端输出 / 审计 / 提交 | 每舱一次性 + 舱销毁即失效；broker 舱面只绑网桥，局域网不可达 |
+| agent 打印 `BASE_URL`（含令牌） | 令牌进入终端输出 / 审计 / 提交 | 每舱一次性 + 舱销毁即失效；**舱面虽绑 `0.0.0.0`，但来源网段校验把非 docker VM 的请求挡在外面**（§19.1） |
 | 令牌被写进 Outbox 产物 | 会话结束后仍留在磁盘 | 出舱扫描 `findRiskyFilesInTaskDir` 模式扩展：命中已知令牌串即告警 |
 | 令牌进 git 历史 | 永久留存 | 同上；且令牌格式加可识别前缀（如 `abx_cell_`）便于扫描 |
 
@@ -710,6 +717,99 @@ ABX_AUTH_TOKEN = abx-placeholder
 1. 退出 app 是否清空 `shared/` → **建议保留**，UI 提供「全部清空」
 2. 拖入**目录**时：整目录挂载还是展开成条目 → **建议整目录挂载**
 3. 硬链接 vs 复制做默认 → **建议硬链接优先 + 不确定的源（外置盘）自动复制**
+
+---
+
+## 19. 真实 Docker 验证（2026-10-23，第一次跑通）
+
+第一阶段报告把「docker 后端没有对着真实守护进程跑过」列为**第一优先缺口**。
+本节记录补上这一项后的结果 —— 其中**两条推翻了原有设计假设**。
+
+环境：Docker Desktop for Linux，daemon 在 VM 内，server 29.9.1。
+
+### 19.1 ⚠️ 推翻原假设：`172.17.0.1` 在 Docker Desktop 上不可用
+
+原设计（§6.1 / §16.1）假定：舱面绑 docker 网桥网关，舱内通过它回连宿主。
+
+实测结果：
+
+| 地址 | 宿主能否绑定 | 舱内能否连到 |
+|---|---|---|
+| `172.17.0.1` | ❌ `EADDRNOTAVAIL` | ❌ `ECONNREFUSED` |
+| `host.docker.internal` | —（是 DNS 名） | ✅ `200`，解析到 `192.168.65.2` |
+| `0.0.0.0` | ✅ | ✅（经 `host.docker.internal` 访问） |
+
+**原因**：Docker Desktop 把守护进程放在 VM 里。`172.17.0.1` 是**VM 内部**的
+`docker0` 网桥，既不属于宿主（所以绑不上），也不指向宿主（所以连过去是 VM 自己）。
+`host.docker.internal` 由 Docker 注入 DNS，解析到 VM 的宿主网关（这里是 `192.168.65.2`）。
+
+**为什么这条特别要紧**：abx V1 **只做 macOS**，而 macOS 上**只有** Docker Desktop。
+也就是说这个「边例」在目标平台上是**唯一路径**，原默认值 100% 起不来。
+
+**修正后的规则**：
+
+1. `cellHost` 默认 **`0.0.0.0`**（不是网桥地址）
+2. 舱内 `BASE_URL` 的 host 用 **`host.docker.internal`**（不是 IP）
+3. 原生 Linux docker（非 Desktop）上两者仍可用网桥地址 —— 所以做成**探测后决定**，
+   不要硬编码
+4. **代价**：绑 `0.0.0.0` 意味着舱面在局域网上可见，`I-B2` 原本靠 bind 地址获得的
+   保护消失了。补偿措施：**来源网段校验** —— 非 docker VM 网段（`192.168.65.0/24`
+   或 `172.17.0.0/16`）的请求一律拒绝，即便令牌正确
+
+> 这条是本项目第一次「文档说的和机器做的不是一回事」。以后凡涉及网络可达性，
+> 一律先探测再断言，不许照抄约定值。
+
+### 19.2 ⚠️ 新发现：挂载源必须在 Docker Desktop 的共享路径内
+
+`--volume /tmp/xxx:/workspace` 直接失败：
+
+```
+docker: Error response from daemon: mounts denied:
+The path /tmp/abx-taskdir is not shared from the host and is not known to Docker.
+```
+
+Docker Desktop 只把特定宿主路径共享给 VM（macOS 默认 `/Users`、`/Volumes`、`/private`、
+`/tmp`；本机 Linux 版只共享 `/home`）。**落在共享路径外的任务目录，容器根本起不来。**
+
+**要求**：
+
+- 起舱前对每个挂载源做**共享路径检查**，不在范围内就报一句人话：
+  「这个目录在 Docker 的共享范围外，请把项目移到 `~/` 下，或在 Docker 设置里添加该路径」
+- 绝不能让用户看到裸的 `mounts denied`
+- `~/.abx/shared/` 与 `~/.abx/outbox/` 都在 home 下 → 天然安全，这也是选这个位置的又一个理由
+
+### 19.3 ✅ 隔离性质：逐条实测通过
+
+用 `buildDockerArgs` 真实生成的 argv 起容器（去掉 `--tty/--interactive`，因为无终端），
+舱内执行检查：
+
+| 性质 | 实测输出 | 结论 |
+|---|---|---|
+| 非 root | `uid=1000(node) gid=1000(node)` | ✅ |
+| 无 sudo | `command -v sudo` 无输出 | ✅ |
+| 根文件系统只读 | `touch /pwned` → `Read-only file system` | ✅ |
+| `/tmp` 可写（tmpfs） | `touch /tmp/ok` 成功 | ✅ |
+| 无 docker socket | `/var/run/docker.sock` 不存在 | ✅ |
+| 任务目录可读写 | `/workspace/note.txt` 可见 | ✅ |
+| 环境变量无真密钥 | 只有 `ABX_CELL_TOKEN=abx_cell_placeholder` | ✅ |
+| 退出即销毁 | `docker ps -a --filter label=...` 空 | ✅ `--rm` 生效 |
+| 舱内可达宿主 broker | 经 `host.docker.internal` 拿到 `200` | ✅（见 §19.1 的地址要求） |
+
+**一处需要更正第一阶段报告的说法**：报告称「容器里 `ls ~` 是空的」，实测**不是空的** ——
+`node:22-slim` 镜像自带 `.bashrc` / `.bash_logout` / `.profile` 三个骨架文件。
+
+这不影响安全结论（**没有任何宿主文件**进舱，这才是要验的性质），但**说法必须改**：
+应写成「`~` 里只有镜像自带的骨架文件，无任何宿主内容」，否则是把一个没验过的断言
+当成了已验证的结论。这类表述以后一律按实测输出写。
+
+### 19.4 仍然没验的
+
+- 真实的 Claude Code / Codex 二进制没有在舱内跑过（替身脚本不是它们）
+- `ANTHROPIC_CUSTOM_HEADERS` 的多行格式仍是推断
+- 真实 agent 还会连哪些域名（白名单大概率要补）→ 不补的话用户会看到「气闸一开就不好用」
+- 对抗性测试：没有任何一步尝试绕过白名单、伪造舱令牌、从舱内往外打
+- macOS 真机：以上全部是在 Linux 版 Docker Desktop 上测的。**macOS 的共享路径默认值
+  与 VM 网关地址可能不同**，必须在真机重跑一遍
 
 ---
 
