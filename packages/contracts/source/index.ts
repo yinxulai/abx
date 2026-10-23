@@ -23,13 +23,15 @@ export {
   ABX_CELL_ID_ENV,
   ABX_CELL_TOKEN_ENV,
   ABX_UPSTREAM_ID_ENV,
+  agentConfigFileNames,
   agentIds,
   findAgent,
+  generatedConfigFiles,
 } from './agents'
 /** 产品名。提示语、默认路径、测试都从这里取，不许各处硬编码。 */
 export const productName = 'abx'
 
-export type { AgentDefinition } from './agents'
+export type { AgentConfigFile, AgentConfigFormat, AgentDefinition } from './agents'
 
 export { expandEnvRefs, expandEnvTree } from './expand-env'
 export type { ExpandResult } from './expand-env'

@@ -120,22 +120,48 @@ export interface BuildCellEnvOptions {
   readonly tokenInPath: boolean
 }
 
+export interface CellBaseUrlOptions {
+  /** broker 舱面的地址，例如 `http://host.docker.internal:8789`。 */
+  readonly brokerCellOrigin: string
+  readonly upstreamId: string
+  readonly cellToken: string
+  /** 这个 agent 有没有别的办法把令牌送出去。 */
+  readonly cellTokenVia: 'header' | 'path'
+  /** 配置里允不允许把舱令牌写进 URL 路径。 */
+  readonly tokenInPath: boolean
+}
+
 /**
- * 构造要注入舱内的环境变量。
+ * 舱内要访问的那个 baseUrl。
  *
- * baseUrl 指向 `/u/<upstreamId>`，也就是说 agent 的请求直接落到那个上游路由上，
+ * 它指向 `/u/<upstreamId>`，也就是说 agent 的请求直接落到那个上游路由上，
  * 不需要它自己知道「气闸」这件事。这是刻意的：要让一个现成的 agent 命令行在气闸里
  * 跑起来，唯一可行的办法就是让它以为自己在直连。
+ *
+ * **两个地方要用同一个值**：注入的环境变量（`buildCellEnv`）和生成出来的配置文件
+ * （`agent-config.ts`）。所以拼装只写在这里一份——两边各拼一次的话，哪天路由形态改了，
+ * 只会改到其中一处，然后舱内就出现「环境变量说 A、配置文件说 B」这种最难查的错。
  */
-export function buildCellEnv(options: BuildCellEnvOptions): Record<string, string> {
+export function cellBaseUrlFor(options: CellBaseUrlOptions): string {
   // 两个条件都满足才把令牌写进 URL：配置允许，**并且**这个 agent 没有别的路。
   //
   // 只看配置的话，会写出「头里一份、URL 里又一份」的请求。两个机制同时开着并不
   // 更安全（broker 只认一份），只是白白让令牌多出现在一个地方——而 URL 是
   // 最容易被 agent 自己打印、被上游 access log 收走的那一个。
-  const usePath = options.tokenInPath && options.agent.cellTokenVia === 'path'
+  const usePath = options.tokenInPath && options.cellTokenVia === 'path'
   const tokenSegment = usePath ? `/c/${options.cellToken}` : ''
-  const baseUrl = `${options.brokerCellOrigin}${tokenSegment}/u/${options.upstreamId}`
+  return `${options.brokerCellOrigin}${tokenSegment}/u/${options.upstreamId}`
+}
+
+/** 构造要注入舱内的环境变量。 */
+export function buildCellEnv(options: BuildCellEnvOptions): Record<string, string> {
+  const baseUrl = cellBaseUrlFor({
+    brokerCellOrigin: options.brokerCellOrigin,
+    upstreamId: options.upstreamId,
+    cellToken: options.cellToken,
+    cellTokenVia: options.agent.cellTokenVia,
+    tokenInPath: options.tokenInPath,
+  })
 
   const env: Record<string, string> = {
     ABX_CELL_ID: options.cellId,

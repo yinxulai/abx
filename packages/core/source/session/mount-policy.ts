@@ -14,11 +14,17 @@
  *     它不能是某个危险目录本身（不能直接拿 `/home` 或 `/` 当任务目录）。
  *   - **额外挂载**一律不许。所以除任务目录外的任何宿主路径，只要落在禁挂前缀里，
  *     或者压根不是任务目录，都会被拒。
+ *
+ * 第三类规则拦的是**单个文件**：凭据文件名黑名单（`FORBIDDEN_CREDENTIAL_FILE_PATTERNS`）。
+ * 前缀名单拦不了它——`~/.claude/.credentials.json` 与 `~/.claude/settings.json`
+ * 在同一个目录里，而后者正是我们要挂进去的配置。所以「不许挂目录」不是洁癖，
+ * 是这两个东西必须分开对待的唯一办法。
  */
 
 import path from 'node:path'
 import { readFileSync } from 'node:fs'
-import type { SandboxMount } from './backend'
+import { agentConfigFileNames } from '@abx/contracts'
+import type { SandboxConfigFile, SandboxMount } from './backend'
 
 /**
  * 禁挂前缀：任何挂载源落在这下面都不行。
@@ -47,6 +53,46 @@ export const FORBIDDEN_MOUNT_PREFIXES: readonly string[] = [
 
 /** 单独点名：它比整个 `/var/run` 更值得在报错里被写出来。 */
 export const DOCKER_SOCKET_PATH = '/var/run/docker.sock'
+
+/**
+ * 凭据文件名规则：挂载源**命中即拒绝**，不看它在哪个目录下。
+ *
+ * 为什么需要这一条，而不是靠上面的前缀名单：**凭据文件就躺在配置文件的隔壁**。
+ *
+ *   ~/.claude/settings.json          配置
+ *   ~/.claude/.credentials.json      ⚠️ 账户 OAuth 凭据
+ *
+ * 前缀名单拦的是「整个目录」，而这里要拦的是「目录里的那一个文件」——
+ * `.credentials.json` 与 `settings.json` 共享同一个前缀，前缀规则区分不了它们。
+ *
+ * 所以这一条必须比前缀规则**先**判、而且报错要说清是「凭据」：
+ * 只说「禁止路径」的话，用户看到的是一句他没法照做的提示（那个路径看上去人畜无害），
+ * 然后大概率会去别的地方找一个更宽的挂载方式。
+ *
+ * 匹配只看文件名（basename），大小写不敏感：macOS 的默认文件系统大小写不敏感，
+ * `.Credentials.json` 与 `.credentials.json` 在那里是同一个文件。
+ * `*` 只支持「开头」或「结尾」两种，够用即可——这不是通用 glob。
+ */
+export const FORBIDDEN_CREDENTIAL_FILE_PATTERNS: readonly string[] = [
+  '.credentials.json',
+  'auth.json',
+  '*.env',
+  '*.pem',
+  'id_rsa*',
+]
+
+/** 这个挂载源命中哪条凭据规则；没命中就是 `null`。 */
+export function matchCredentialFileRule(source: string): string | null {
+  const name = path.basename(source).toLowerCase()
+  return FORBIDDEN_CREDENTIAL_FILE_PATTERNS.find((rule) => matchesCredentialRule(name, rule)) ?? null
+}
+
+function matchesCredentialRule(name: string, rule: string): boolean {
+  const pattern = rule.toLowerCase()
+  if (pattern.startsWith('*')) return name.endsWith(pattern.slice(1))
+  if (pattern.endsWith('*')) return name.startsWith(pattern.slice(0, -1))
+  return name === pattern
+}
 
 /**
  * 不能**作为任务目录本身**的路径。
@@ -83,13 +129,23 @@ export interface MountPolicy {
   readonly dangerousTaskDirs: readonly string[]
   /** 任务目录是不是可写。 */
   readonly taskDirMode: 'rw'
-  /** 除任务目录外，宿主的任何东西都不进舱内。 */
+  /**
+   * 宿主主目录里的**现成内容**一个都不进舱。
+   *
+   * 唯一从主目录下进去的是 abx 自己在 `~/.abx/cells/<cellId>/` 里生成的那几个配置文件：
+   * 只读、逐个文件、内容是 abx 现写的，所以它不是「从宿主主目录读到了什么」。
+   */
   readonly mountsHostHome: false
-  buildMounts(taskDir: string, workdir: string): readonly SandboxMount[]
+  buildMounts(
+    taskDir: string,
+    workdir: string,
+    agentConfigFiles?: readonly SandboxConfigFile[],
+  ): readonly SandboxMount[]
 }
 
 export const MOUNT_POLICY: MountPolicy = {
-  summary: '只把任务目录以可写方式挂进舱内；宿主上的其他一切都不挂。',
+  summary:
+    '只把任务目录以可写方式挂进舱内；abx 生成的那几个 agent 配置文件逐个只读挂进去；宿主上的其他一切都不挂。',
   taskDirMode: 'rw',
   mountsHostHome: false,
   forbiddenMountPrefixes: FORBIDDEN_MOUNT_PREFIXES,
@@ -111,9 +167,27 @@ export const MOUNT_POLICY: MountPolicy = {
       requirement: '除任务目录外不接受任何宿主路径',
       rationale: '需要读别的东西时，正确做法是复制进任务目录，而不是再开一个挂载点。',
     },
+    {
+      requirement: '凭据文件名一律不挂（.credentials.json / auth.json / *.env / *.pem / id_rsa*）',
+      rationale:
+        '这些文件与配置文件是同目录邻居：挂 ~/.claude/settings.json 时顺手把 ~/.claude 整个挂上，' +
+        '等于把账户 OAuth 凭据送进舱。舱内 agent 只需要 abx 生成的那份配置。',
+    },
+    {
+      requirement: 'agent 配置只从 abx 生成的那一个文件挂，且只读、逐个文件',
+      rationale:
+        '宿主那份 settings.json 里可能写着别家的 key、别的端点和别的模型，挂真的等于把它带进舱；' +
+        '而目录形态会连隔壁的凭据一起带进去。只读是因为它每次起舱都会被重写——舱内改了也不会留下，' +
+        '留着可写只会让人以为改得动。',
+    },
   ],
-  buildMounts(taskDir: string, workdir: string): readonly SandboxMount[] {
-    return [{ source: path.resolve(taskDir), target: workdir, mode: 'rw' }]
+  buildMounts(taskDir: string, workdir: string, agentConfigFiles: readonly SandboxConfigFile[] = []) {
+    return [
+      { source: path.resolve(taskDir), target: workdir, mode: 'rw' as const },
+      // 生成的文件逐个挂、只读。这一行是「目录形态」在生产代码里唯一可能出现的地方，
+      // 而它只认文件：每一项的来源是 `stageAgentConfig()` 写出来的那一个路径。
+      ...agentConfigFiles.map((file) => ({ source: file.hostPath, target: file.cellPath, mode: 'ro' as const })),
+    ]
   },
 }
 
@@ -126,6 +200,7 @@ export class MountPolicyViolation extends Error {
 
 /** 这个宿主路径能不能作为挂载源。 */
 export function isForbiddenMountSource(source: string): boolean {
+  if (matchCredentialFileRule(source) !== null) return true
   if (source === DOCKER_SOCKET_PATH) return true
   return FORBIDDEN_MOUNT_PREFIXES.some(
     (prefix) => source === prefix || source.startsWith(`${prefix}${path.sep}`),
@@ -136,6 +211,13 @@ export interface AssertMountPolicyInput {
   readonly mounts: readonly SandboxMount[]
   readonly taskDir: string
   readonly workdir: string
+  /**
+   * abx 这次会话自己生成、允许只读进舱的 agent 配置文件。
+   *
+   * 这是**收紧**用的名单，不是放宽：列进来的每一项还要再满足「只读 + 挂回它原本的位置 +
+   * 文件名在注册表里」。凭据文件即使被列进来也照样拒绝——那条判断更靠前。
+   */
+  readonly agentConfigFiles?: readonly SandboxConfigFile[]
 }
 
 /**
@@ -144,12 +226,17 @@ export interface AssertMountPolicyInput {
  * 会在这里抛而不是打个警告，是因为这些组合没有一种是「配置写错了但还是能跑」——
  * 它们全都是「跑起来了，但隔离没了」。
  *
- * 检查顺序是先看有没有禁挂路径，再看结构。理由很实际：一个同时犯了两个错的配置，
- * 用户最需要看到的是「你挂到 /home 去了」，而不是「挂载点数量不对」。
+ * 检查顺序是**凭据 → 禁挂路径 → 结构**。理由很实际：一个同时犯了两个错的配置，
+ * 用户最需要看到的是「这是凭据文件」或者「你挂到 /home 去了」，
+ * 而不是「挂载点数量不对」——后两句话他没法照着改。
  */
 export function assertMountPolicy(input: AssertMountPolicyInput): void {
   const taskDir = path.resolve(input.taskDir)
   const { mounts, workdir } = input
+
+  const configFiles = input.agentConfigFiles ?? []
+  assertConfigFileAllowList(configFiles)
+  const allowedConfigSources = new Map(configFiles.map((file) => [file.hostPath, file]))
 
   for (const mount of mounts) {
     if (!path.isAbsolute(mount.source) || !path.isAbsolute(mount.target)) {
@@ -161,8 +248,33 @@ export function assertMountPolicy(input: AssertMountPolicyInput): void {
       throw new MountPolicyViolation(`挂载路径里不允许出现 ..：${mount.source}`)
     }
 
+    // 凭据文件排在最前面判，而且**不分场合**：前缀规则区分不了
+    // `~/.claude/settings.json` 与它隔壁的 `~/.claude/.credentials.json`，
+    // 而这条规则可以。任务目录是唯一豁免——它是用户自己选的**目录**
+    // （CLI 起容器前已经确认过是个目录），文件名的黑名单管不到目录上去。
+    if (mount.source !== taskDir) assertNotCredentialFile(mount.source)
+
+    const allowedConfig = allowedConfigSources.get(mount.source)
+    if (allowedConfig !== undefined) {
+      assertConfigMount(mount, allowedConfig)
+      continue
+    }
+
     // 任务目录由用户显式指定，豁免前缀规则；其余的挂载源一个都不放过。
-    if (mount.source !== taskDir && isForbiddenMountSource(mount.source)) {
+    if (mount.source === taskDir) continue
+
+    // 「把配置目录挂进去」是这件事最容易走错的一步，而且错得悄无声息
+    // （目录里就有凭据文件）。所以挂到那份配置的父目录时单独给一句话，
+    // 说清要的是里面的哪个文件。
+    const directoryOwner = configFiles.find((file) => isAncestor(mount.source, file.hostPath))
+    if (directoryOwner !== undefined) {
+      throw new MountPolicyViolation(
+        `拒绝挂载 ${mount.source}：这是个目录，而里面既有配置也有凭据。` +
+          `要挂的是那一个生成出来的文件：${directoryOwner.hostPath}（只读）。`,
+      )
+    }
+
+    if (isForbiddenMountSource(mount.source)) {
       // docker socket 单独给一句话：它是最容易被顺手挂进去、后果也最严重的一个
       // （挂进去等于把宿主 root 交出去），值得在报错里被点名。
       if (mount.source === DOCKER_SOCKET_PATH) {
@@ -172,7 +284,7 @@ export function assertMountPolicy(input: AssertMountPolicyInput): void {
         )
       }
       throw new MountPolicyViolation(
-        `拒绝挂载 ${mount.source}：除任务目录外，宿主路径一律不进舱内。` +
+        `拒绝挂载 ${mount.source}：除任务目录与 abx 生成的那几个配置文件外，宿主路径一律不进舱内。` +
           `需要里面的文件时请复制到任务目录，而不是开一个挂载点。`,
       )
     }
@@ -194,13 +306,73 @@ export function assertMountPolicy(input: AssertMountPolicyInput): void {
   }
 
   for (const mount of mounts) {
-    if (mount.source !== taskDir) {
-      throw new MountPolicyViolation(`除任务目录 ${taskDir} 外不允许有别的挂载源，实际是 ${mount.source}`)
+    const isTaskDir = mount.source === taskDir
+    const isConfigFile = allowedConfigSources.has(mount.source)
+    if (!isTaskDir && !isConfigFile) {
+      throw new MountPolicyViolation(
+        `除任务目录 ${taskDir} 与 abx 生成的配置文件外不允许有别的挂载源，实际是 ${mount.source}`,
+      )
     }
-    if (mount.target !== workdir) {
+    if (isTaskDir && mount.target !== workdir) {
       throw new MountPolicyViolation(`除工作目录 ${workdir} 外不允许有别的挂载点，实际是 ${mount.target}`)
     }
   }
+}
+
+/**
+ * 凭据文件在任何情况下都不进舱——包括「abx 自己生成的文件」这份名单。
+ *
+ * 单独一个函数是因为它有两个调用点（挂载清单、允许清单），而两处必须给出**同一句话**：
+ * 报错说的是「这是凭据文件」，不是「路径不合法」。用户看到前者才知道该换个做法，
+ * 看到后者只会去找一个更宽的挂载方式。
+ */
+function assertNotCredentialFile(source: string): void {
+  const rule = matchCredentialFileRule(source)
+  if (rule === null) return
+  throw new MountPolicyViolation(
+    `拒绝挂载 ${source}：这是凭据文件（命中规则 ${rule}），不能挂进舱。` +
+      `挂配置文件时请只挂 abx 生成的那一个文件，不要挂它所在的目录；` +
+      `真凭据由气闸在宿主这一侧注入，舱内永远拿不到。`,
+  )
+}
+
+/** 允许清单本身也要过一遍：它决定谁可以豁免「除任务目录外一律不许挂」。 */
+function assertConfigFileAllowList(files: readonly SandboxConfigFile[]): void {
+  const known = agentConfigFileNames()
+  for (const file of files) {
+    if (!path.isAbsolute(file.hostPath) || !path.isAbsolute(file.cellPath)) {
+      throw new MountPolicyViolation(`生成的配置只能用绝对路径：${file.hostPath} → ${file.cellPath}`)
+    }
+    // 凭据先判：名单里混进一个 `auth.json` 时，要说的是「这是凭据」，
+    // 而不是「这个名字不在配置文件名名单里」。
+    assertNotCredentialFile(file.hostPath)
+    // 名字对不上注册表就不放行。这一条挡的是「把生成目录整个挂进去」——
+    // 那种形态在调用方看起来只是「路径少写了一段」，后果却是凭据一起进舱。
+    if (!known.includes(path.basename(file.hostPath))) {
+      throw new MountPolicyViolation(
+        `拒绝把 ${file.hostPath} 当 agent 配置挂进舱：能挂的只有生成出来的那一个文件（${known.join(' / ')}），不是它所在的目录。`,
+      )
+    }
+  }
+}
+
+function assertConfigMount(mount: SandboxMount, file: SandboxConfigFile): void {
+  if (mount.mode !== 'ro') {
+    throw new MountPolicyViolation(
+      `abx 生成的配置只能只读挂载，${mount.source} 被要求以 ${mount.mode} 挂进去：` +
+        `它每次起舱都会被重写，可写只会让舱内以为改得动。`,
+    )
+  }
+  if (mount.target !== file.cellPath) {
+    throw new MountPolicyViolation(
+      `生成的配置必须挂回它原本的位置：${mount.source} 应挂到 ${file.cellPath}，实际是 ${mount.target}。` +
+        `路径不一致等于没配——agent 只去那个固定的地方找配置。`,
+    )
+  }
+}
+
+function isAncestor(candidate: string, filePath: string): boolean {
+  return filePath.startsWith(`${candidate}${path.sep}`)
 }
 
 /**

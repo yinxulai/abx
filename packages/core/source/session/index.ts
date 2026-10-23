@@ -3,7 +3,15 @@
  */
 
 export { assertNoForbiddenEnv } from './backend'
-export type { SandboxBackend, SandboxExit, SandboxHandle, SandboxIo, SandboxMount, SandboxSpec } from './backend'
+export type {
+  SandboxBackend,
+  SandboxConfigFile,
+  SandboxExit,
+  SandboxHandle,
+  SandboxIo,
+  SandboxMount,
+  SandboxSpec,
+} from './backend'
 
 export { createDockerBackend, buildDockerArgs, containerName, isExecutableOnPath, probeDocker } from './docker-backend'
 export type { DockerBackendOptions, DockerProbeResult } from './docker-backend'
@@ -14,20 +22,33 @@ export type { LocalBackendOptions, UsernsProbeResult } from './local-backend'
 export {
   DANGEROUS_HOST_ENV_NAMES,
   buildCellEnv,
+  cellBaseUrlFor,
   generateCellId,
   scrubEnv,
 } from './env'
-export type { BuildCellEnvOptions, ScrubEnvResult } from './env'
+export type { BuildCellEnvOptions, CellBaseUrlOptions, ScrubEnvResult } from './env'
+
+export { AgentConfigError, cellRootFor, renderAgentConfig, stageAgentConfig, toSandboxConfigFiles } from './agent-config'
+export type {
+  RenderAgentConfigOptions,
+  RenderedAgentConfig,
+  RenderedAgentConfigFile,
+  StageAgentConfigOptions,
+  StagedAgentConfig,
+  StagedAgentConfigFile,
+} from './agent-config'
 
 export {
   DANGEROUS_TASK_DIRS,
   DOCKER_SOCKET_PATH,
+  FORBIDDEN_CREDENTIAL_FILE_PATTERNS,
   FORBIDDEN_MOUNT_PREFIXES,
   MOUNT_POLICY,
   MountPolicyViolation,
   assertMountPolicy,
   findRiskyFilesInTaskDir,
   isForbiddenMountSource,
+  matchCredentialFileRule,
 } from './mount-policy'
 export type { AssertMountPolicyInput, MountPolicy, MountPolicyRule } from './mount-policy'
 

@@ -10,7 +10,9 @@
  */
 
 import { EventEmitter } from 'node:events'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { agentConfigFileNames } from '@abx/contracts'
 import type { SandboxSpec } from './backend'
 import { buildDockerArgs, containerName, isExecutableOnPath } from './docker-backend'
 import { MOUNT_POLICY } from './mount-policy'
@@ -139,6 +141,76 @@ describe('buildDockerArgs', () => {
     const labels = allFlagValues(argsFor(), '--label')
     expect(labels).toContain('abx.cell-id=claude-20261023-ab12cd')
     expect(labels).toContain('abx.agent=claude')
+  })
+})
+
+describe('生成的 agent 配置：逐个文件、只读', async () => {
+  const { createDockerBackend } = await import('./docker-backend')
+  const SETTINGS = {
+    hostPath: '/home/dev/.abx/cells/claude-1/agents/claude/settings.json',
+    cellPath: '/home/dev/.claude/settings.json',
+  }
+  const CODEX_CONFIG = {
+    hostPath: '/home/dev/.abx/cells/claude-1/agents/codex/config.toml',
+    cellPath: '/home/dev/.codex/config.toml',
+  }
+
+  function configArgs(files = [SETTINGS]): readonly string[] {
+    const current = spec({ agentConfigFiles: files })
+    return buildDockerArgs(current, MOUNT_POLICY.buildMounts(current.taskDir, current.workdir, files))
+  }
+
+  it('一个文件一个 -v，全部 :ro，任务目录仍是唯一可写的那一个', () => {
+    expect(allFlagValues(configArgs([SETTINGS, CODEX_CONFIG]), '--volume')).toEqual([
+      `${TASK_DIR}:/workspace:rw`,
+      `${SETTINGS.hostPath}:${SETTINGS.cellPath}:ro`,
+      `${CODEX_CONFIG.hostPath}:${CODEX_CONFIG.cellPath}:ro`,
+    ])
+  })
+
+  it('没有一条挂载是目录形态——目录里躺着凭据文件', () => {
+    for (const volume of allFlagValues(configArgs([SETTINGS, CODEX_CONFIG]), '--volume').slice(1)) {
+      const [source, , mode] = volume.split(':')
+      expect(mode).toBe('ro')
+      // 源的 basename 必须是注册过的配置文件名。目录形态（`…/agents/claude`）
+      // 在这里露馅：它没有任何一个配置文件名。
+      expect(agentConfigFileNames()).toContain(path.basename(source!))
+      expect(volume).not.toContain(':/home/dev/.claude:')
+      expect(volume).not.toContain(':/home/dev/.codex:')
+    }
+  })
+
+  it('每一份配置各自一个挂载点，不会合并成父目录', () => {
+    const volumes = allFlagValues(configArgs([SETTINGS, CODEX_CONFIG]), '--volume')
+    expect(volumes).toHaveLength(3)
+    expect(volumes.every((volume) => !volume.startsWith('/home/dev/.abx/cells/claude-1/agents:'))).toBe(true)
+  })
+
+  it('没有配置时行为不变，仍然只挂任务目录', () => {
+    expect(allFlagValues(configArgs([]), '--volume')).toEqual([`${TASK_DIR}:/workspace:rw`])
+  })
+
+  it('凭据文件混进配置清单时，起容器之前就被拒', async () => {
+    let spawned = false
+    const backend = createDockerBackend({
+      spawnProcess: (() => {
+        spawned = true
+        return new EventEmitter()
+      }) as never,
+    })
+    const credential = {
+      hostPath: '/home/dev/.abx/cells/claude-1/agents/claude/.credentials.json',
+      cellPath: '/home/dev/.claude/.credentials.json',
+    }
+
+    await expect(
+      backend.create(spec({ agentConfigFiles: [credential] }), {
+        mode: 'pipe',
+        onStdout: () => undefined,
+        onStderr: () => undefined,
+      }),
+    ).rejects.toThrow(/凭据文件/)
+    expect(spawned).toBe(false)
   })
 })
 
