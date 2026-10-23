@@ -13,7 +13,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { SessionConfig } from '@abx/contracts'
+import { MCP_SHIM_CELL_PATH, type SessionConfig } from '@abx/contracts'
 import { makeConfig, makeUpstream } from '@abx/contracts/test-support'
 import type { CommandOptions } from './options'
 import { runOpen } from './open'
@@ -173,6 +173,37 @@ describe('runOpen --dry-run', () => {
     const { output } = await dryRun('claude', { image: 'node:22-slim' })
     expect(output).toContain('镜像         node:22-slim')
     expect(output).not.toContain('abx-agent-claude')
+  })
+
+  it('报出传递窗的 shim 从哪儿挂进舱，用的是这次会话 id 那一格', async () => {
+    // 挂载源与「会话 id」必须对得上：挂进去的是哪一份脚本，出错时要能一眼看出来。
+    const root = path.join(instancesRoot(), 'runtime')
+    const { output } = await dryRun('claude', { env: { ABX_RUNTIME_ROOT: root } })
+    const cellId = output.match(/会话 id\s+([^\s（]+)/)?.[1]
+
+    expect(cellId).toBeTruthy()
+    expect(output).toContain(`${path.join(root, cellId ?? '')}/abx-mcp-shim.mjs → ${MCP_SHIM_CELL_PATH}`)
+    expect(output).toContain('只读')
+  })
+
+  it('报出交付格：publish 出来的东西会落到哪儿', async () => {
+    const outbox = path.join(instancesRoot(), 'outbox')
+    const { output } = await dryRun('claude', { env: { ABX_OUTBOX_ROOT: outbox } })
+    const cellId = output.match(/会话 id\s+([^\s（]+)/)?.[1]
+
+    expect(cellId).toBeTruthy()
+    expect(output).toContain(path.join(outbox, cellId ?? ''))
+  })
+
+  it('干跑不建运行时目录、也不建交付格', async () => {
+    // 干跑的语义是「只说不做」。它会报出这两条路径，其中任何一条都不该被创建。
+    const root = instancesRoot()
+    const { output } = await dryRun('claude', {
+      env: { ABX_RUNTIME_ROOT: root, ABX_OUTBOX_ROOT: path.join(root, 'outbox') },
+    })
+
+    expect(output).toContain('abx-mcp-shim.mjs')
+    expect(existsSync(root)).toBe(false)
   })
 })
 

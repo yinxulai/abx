@@ -147,6 +147,11 @@ export function createFileAuditSink(filePath: string): AuditSink {
   }
 
   const ready = ensureFile()
+  // 与传递窗的账本同一个道理：这一次建目录 / 建文件在构造时就起跑，而唯一 await
+  // 它的地方是 `write`。一次都没写过的话（只探活、或者只被拒绝的那些请求不进审计），
+  // 一个「建不出审计文件」会变成未处理的 rejection，node 默认因此终止进程——
+  // 而它真正该有的表现是「第一次要写的时候写不进去」，由调用方决定怎么办。
+  void ready.catch(() => undefined)
 
   return {
     describe: path.resolve(filePath),

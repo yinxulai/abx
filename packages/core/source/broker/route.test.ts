@@ -78,6 +78,34 @@ describe('resolveRoute', () => {
   it('健康检查单独成一路', () => {
     expect(route('/healthz')).toEqual({ kind: 'health' })
   })
+
+  describe('传递窗', () => {
+    it('/mcp 是传递窗，不是直通', () => {
+      // 落进直通那条路的话，它会得到「不知道该转发到哪儿」——而它本来就不该被转发。
+      expect(route('/mcp')).toEqual({ kind: 'mcp' })
+    })
+
+    it('显式给了目标头就走直通', () => {
+      // `/mcp` 也可能正好是某个上游自己的端点。显式说了去哪儿就以那个为准。
+      const result = route('/mcp', '', { 'x-abx-target': 'https://api.example.com' })
+      expect(result.kind).toBe('passthrough')
+    })
+
+    it('目标头是空串时仍然算传递窗', () => {
+      // 空串等于没写。判成直通的话，一个空头就能让一个正常请求变成 400。
+      expect(route('/mcp', '', { 'x-abx-target': '' })).toEqual({ kind: 'mcp' })
+    })
+
+    it('只有 /mcp 这一条路径，别的不吃', () => {
+      expect(route('/mcp/').kind).toBe('invalid')
+      expect(route('/mcp/extra').kind).toBe('invalid')
+      expect(route('/mcpx').kind).toBe('invalid')
+    })
+
+    it('查询串不影响判定', () => {
+      expect(route('/mcp', '?a=1')).toEqual({ kind: 'mcp' })
+    })
+  })
 })
 
 describe('extractCellToken', () => {
