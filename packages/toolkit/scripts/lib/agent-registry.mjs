@@ -9,10 +9,15 @@
 // 没有任何 import，所以不需要 loader、不需要先编译。
 //
 // 用法（shell 里取一个字段）：
+//   node packages/toolkit/scripts/lib/agent-registry.mjs --ids               # 每行一个 agent id
 //   node packages/toolkit/scripts/lib/agent-registry.mjs <agent> repository  # 仓库名
 //   node packages/toolkit/scripts/lib/agent-registry.mjs <agent> version     # 注册表里钉的版本
 //   node packages/toolkit/scripts/lib/agent-registry.mjs <agent> ref         # 仓库名:版本
 //   node packages/toolkit/scripts/lib/agent-registry.mjs <agent> local-ref   # 仓库名:local
+//   node packages/toolkit/scripts/lib/agent-registry.mjs <agent> command     # 舱内要跑的命令名
+//
+// `--ids` 存在的理由：脚本要能告诉用户「有哪些 agent 可以选」，而那张名单同样只能
+// 有一个来源。在脚本里另写一遍 id 列表，就是第二张 agent 表。
 //
 // 退出码：0 = 打印了一个值；1 = 不认识的 agent；2 = 用法不对。
 
@@ -35,14 +40,29 @@ const FIELDS = {
   version: (agent) => agent.image.version,
   ref: (agent, { agentImageRef }) => agentImageRef(agent),
   'local-ref': (agent) => `${agent.image.repository}:local`,
+  // 舱内要跑的命令名。构建脚本拿它做冒烟（`<command> --version`）——
+  // 命令名写在脚本里就是第二处真相，清单里 `command` 已经有一个了。
+  command: (agent) => agent.command,
 }
 
 const FIELD_NAMES = Object.keys(FIELDS)
 
 const main = async () => {
   const [agentId, field] = process.argv.slice(2)
+
+  // `--ids`：列出注册表里的 agent，供「不传 id 时该构建哪个」这种情形打印候选。
+  if (agentId === '--ids') {
+    if (field !== undefined) {
+      process.stderr.write('用法：agent-registry.mjs --ids（后面不接参数）\n')
+      process.exit(2)
+    }
+    const registry = await loadAgentRegistry()
+    process.stdout.write(`${registry.agentIds().join('\n')}\n`)
+    return
+  }
+
   if (agentId === undefined || field === undefined) {
-    process.stderr.write(`用法：agent-registry.mjs <agent> <${FIELD_NAMES.join('|')}>\n`)
+    process.stderr.write(`用法：agent-registry.mjs <agent> <${FIELD_NAMES.join('|')}> | --ids\n`)
     process.exit(2)
   }
 

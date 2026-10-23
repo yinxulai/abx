@@ -33,9 +33,10 @@
 
 版本号只写在注册表里：`packages/contracts/source/agents.ts` 中 claude 的
 `image.version`（当前是 **`2.1.308`**）。构建脚本从那儿读，再用
-`--build-arg CLAUDE_CODE_VERSION=...` 传给 Dockerfile；Dockerfile 里的 `ARG`
+`--build-arg AGENT_VERSION=...` 传给 Dockerfile；Dockerfile 里的 `ARG`
 刻意没有默认值，所以「注册表说一个版本、Dockerfile 里是另一个」这种不一致
-不会发生。
+不会发生。这个 arg 的名字三个 agent 用同一个，构建脚本因此不用维护
+「哪个 agent 用哪个 arg 名」的表。
 
 - 宿主上跑的 claude 是原生安装的 `2.1.308`。镜像里这份是 npm 全局包。
   两边同版本，「镜像里跑出来的行为和宿主不一样」就少了一个变量。
@@ -50,9 +51,10 @@
 ## 怎么本地构建
 
 ```bash
-bash packages/toolkit/scripts/build-agent-image.sh
+bash packages/toolkit/scripts/build-agent-image.sh claude
 ```
 
+构建哪个 agent 要显式给 id（不传就什么都不建，只列出可选项）。
 打出两个标签：`abx-agent-claude:local` 和 `abx-agent-claude:<版本>`。
 脚本用的是 `node:22-slim` 的默认 npm registry（`https://registry.npmjs.org/`），
 不受宿主那份镜像源配置影响。
