@@ -128,20 +128,19 @@ describe('颜色：文档的两张表与两套主题逐条对上', () => {
   })
 })
 
-describe('字号：六档封顶，字重只用 400 / 500 / 600', () => {
+describe('字号：五档封顶，字重只用 400 / 500 / 600', () => {
   /** 文档 §3 的表：`| \`--text-2xs\` | 11 | 14 | …`。 */
   const rows = [...section('## 3. 字号与字重', '## 4.').matchAll(/^\|\s*`(--text-[a-z0-9]+)`\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|/gim)].map(
     (match) => ({ name: match[1] ?? '', size: `${match[2] ?? ''}px`, leading: `${match[3] ?? ''}px` }),
   )
 
-  it('六档，不多不少', () => {
+  it('五档，不多不少', () => {
     expect(rows.map((row) => row.name)).toEqual([
       '--text-2xs',
       '--text-xs',
       '--text-sm',
       '--text-base',
       '--text-lg',
-      '--text-xl',
     ])
   })
 
