@@ -1,37 +1,38 @@
-import { AGENT_DEFINITIONS, type AgentConfigFile, type AgentDefinition } from '@abx/contracts/agents'
+import {
+  AGENT_DEFINITIONS,
+  AGENT_IMAGE_UNBUILT,
+  type AgentConfigFile,
+  type AgentDefinition,
+  type AgentImage,
+  type AgentStatePath,
+} from '@abx/contracts/agents'
 
 /**
  * 官网「Agent 一览」的数据。**唯一来源是清单本身**
  * （`packages/contracts/source/agents.ts`），这里只做三件事：
  *
- * 1. 直接读清单里已有的字段（名字、命令、上游、舱内变量、配置文件、核实状态）。
- * 2. 把清单**还没声明、但官网要说**的两格（镜像、历史目录）按清单推导，
- *    读不到就如实说「清单里没有」，而不是在官网手抄一份。
+ * 1. 直接读清单里已有的字段（名字、命令、上游、舱内变量、配置文件、核实状态、
+ *    镜像、历史目录）。
+ * 2. 把清单里的**内部表示**翻成页面语义。今天只有一处：`AGENT_IMAGE_UNBUILT`
+ *    是给脚本看的哨兵值，不能原样显示成版本号（见 `AgentRowImage`）。
  * 3. 什么都不缓存：清单改了，页面跟着改。
  *
- * 为什么第 2 条要这么绕：手抄一份的下场是它一定会和清单漂移 —— 而镜像与历史目录
- * 恰恰是**某个 agent 的性质**，会随 agent 版本变（见
- * `apps/docs/specs/overview/agent-manifest.md`）。所以宁可现在这一格显示
- * 「清单里还没指定」，也不要写死一个明天就过期的值。
+ * 类型一律从 `@abx/contracts/agents` 引入，这里不再声明「镜像长什么样」。
+ * 官网手抄一份形状的下场是它一定会和清单漂移——上一版就因为自己推测了
+ * `{ repository, tag }`，在清单补上 `version` 之后整份过期了。
  */
-
-/** 清单里按 agent 给的容器镜像（`agent-manifest.md` 第 2 组）。 */
-export type AgentImage = {
-  repository: string
-  tag: string
-}
 
 /**
- * 清单上还没有、但正在往里搬的字段。
+ * 官网上「镜像」那一格要显示的东西。
  *
- * 断言成一个可选的附加形状，而不是写死「清单里没有这两个字段」：
- * 清单补上之后，官网**不需要改一行**就开始显示它们。读之前过一遍类型守卫，
- * 所以字段名写错、值不是字符串也都是「读不到」，不会渲染出半个对象。
+ * `AGENT_IMAGE_UNBUILT`（`'unbuilt'`）只表示「这个 agent 的镜像还没构建」，
+ * 它是**给脚本看的**哨兵值。把它直接拼成 `abx-agent-codex:unbuilt`，读起来会像
+ * 「有一个叫 unbuilt 的版本」，把一个内部约定漏到了界面上。所以数据层先把它翻成
+ * 状态，页面按状态决定文案：`unbuilt` 显示人话，`built` 才显示 `仓库:版本`。
  */
-type PendingManifestFields = {
-  image?: AgentImage
-  statePaths?: readonly { path: string }[]
-}
+export type AgentRowImage =
+  | ({ readonly state: 'built' } & AgentImage)
+  | { readonly state: 'unbuilt'; readonly repository: AgentImage['repository'] }
 
 export type AgentRow = {
   id: string
@@ -47,13 +48,11 @@ export type AgentRow = {
   configFiles: readonly AgentConfigFile[]
   /** 这个 agent 把历史、会话、缓存写在哪。 */
   statePaths: readonly string[]
-  /** 按 agent 指定的镜像；清单里还没有就是 `null`。 */
-  image: AgentImage | null
+  /** 按 agent 指定的镜像，以及它构建了没有。 */
+  image: AgentRowImage
 }
 
-export function buildAgentRows(
-  definitions: readonly AgentDefinition[],
-): readonly AgentRow[] {
+export function buildAgentRows(definitions: readonly AgentDefinition[]): readonly AgentRow[] {
   return definitions.map(definition => ({
     id: definition.id,
     label: definition.label,
@@ -65,44 +64,23 @@ export function buildAgentRows(
     placeholderToken: definition.placeholderToken,
     cellTokenVia: definition.cellTokenVia,
     configFiles: definition.configFiles,
-    statePaths: statePathsOf(definition),
-    image: readImage(definition),
+    statePaths: statePathsOf(definition.statePaths),
+    image: imageOf(definition.image),
   }))
 }
 
 /** 官网页面上那一份。组件只读它，不自己去翻清单。 */
 export const AGENT_ROWS: readonly AgentRow[] = buildAgentRows(AGENT_DEFINITIONS)
 
-/**
- * 历史目录：清单声明了就用手册那一份，没声明就从配置文件的位置推。
- *
- * 推导的依据是一个必须成立的约定：**配置文件就在这个 agent 的状态目录里**
- * （`~/.claude/settings.json` 在 `~/.claude` 下）。清单的注释里写着配置文件与凭据
- * 文件是同目录邻居 —— 也就是说，这个目录既是配置目录，也是历史目录。
- * 一旦清单声明了 `statePaths`，推导让位，以声明为准。
- */
-function statePathsOf(definition: AgentDefinition): readonly string[] {
-  const declared = (definition as AgentDefinition & PendingManifestFields).statePaths
-  if (Array.isArray(declared)) {
-    return declared.map(entry => entry.path)
+/** 历史目录：清单里直接给的就是舱内路径，页面照原样列出来。 */
+function statePathsOf(statePaths: readonly AgentStatePath[]): readonly string[] {
+  return statePaths.map(statePath => statePath.path)
+}
+
+/** 镜像：先把「还没构建」这个哨兵翻成状态，再交给页面。 */
+function imageOf(image: AgentImage): AgentRowImage {
+  if (image.version === AGENT_IMAGE_UNBUILT) {
+    return { state: 'unbuilt', repository: image.repository }
   }
-
-  const directories = definition.configFiles
-    .map(file => parentDirectory(file.path))
-    .filter((directory): directory is string => directory !== null)
-
-  return [...new Set(directories)]
-}
-
-/** `~/.claude/settings.json` → `~/.claude`；没有父目录（`settings.json`）时是 `null`。 */
-function parentDirectory(filePath: string): string | null {
-  const separator = filePath.lastIndexOf('/')
-  return separator <= 0 ? null : filePath.slice(0, separator)
-}
-
-function readImage(definition: AgentDefinition): AgentImage | null {
-  const image = (definition as AgentDefinition & PendingManifestFields).image
-  if (typeof image !== 'object' || image === null) return null
-  if (typeof image.repository !== 'string' || typeof image.tag !== 'string') return null
-  return { repository: image.repository, tag: image.tag }
+  return { state: 'built', repository: image.repository, version: image.version }
 }

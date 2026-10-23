@@ -156,11 +156,11 @@ export const en = {
     configRegistered: 'registered only — not written, not mounted',
     fieldHistory: 'Where history goes',
     fieldImage: 'Image',
-    imageMissing: 'not specified per agent yet',
+    imageUnbuilt: 'not built yet',
     none: 'not declared in the manifest',
     caveatTitle: 'Three "not yet" answers on this page',
     caveatImage:
-      'Image: the manifest does not name one per agent yet, so this reads "not specified" instead of quietly borrowing a global default. It fills itself in once the manifest declares one.',
+      'Image: some agents have no image built yet, so that cell reads "not built yet" instead of showing a fake version. It fills itself in as repository:version once the image exists.',
     caveatHistory:
       'History: these are the directories each agent writes its history and sessions into. Per-cell persistence is still being built — until it lands, these directories do not survive the container.',
     caveatStatus:
