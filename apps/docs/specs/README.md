@@ -97,6 +97,7 @@
 |---|---|---|
 | 功能设计 | [functional-design.md](./product/functional-design.md) | 四个概念的产品语言、六条用户旅程、面板布局与信息优先级、功能清单（V1 / V1.1 / 不做）、状态与文案表、产品级安全承诺与明确不承诺项、非功能目标 |
 | 托盘面板规格 | [tray-ui.md](./product/tray-ui.md) | 为什么是自绘窗口而不是原生菜单、窗口参数（422px / gutter 28）、设计令牌（逐字取自 osw）、布局尺寸、状态、交互 |
+| 第一个体验版验收 | [first-experience.md](./product/first-experience.md) | 体验版是什么、哪些能在无 GUI 的开发机上验、哪些必须在 macOS 上验、必须在 Mac 上走的逐条验收、已知会踩的坑、明确不做的事 |
 
 ## 核心原则
 
