@@ -320,6 +320,7 @@ describe('界面描述与真面板一致', () => {
   const firstRun = readMdx('zh', 'getting-started/first-run')
   const installation = readMdx('zh', 'getting-started/installation')
   const limitations = readMdx('zh', 'limits/limitations')
+  const troubleshooting = readMdx('zh', 'limits/troubleshooting')
 
   it('起舱说的是方块的形状，不是头部计数', () => {
     // 头部没有计数（`design-system.md` §8：数量归管理面板）。
@@ -357,6 +358,18 @@ describe('界面描述与真面板一致', () => {
     // 「真正的挂载」已经落地（契约 / 解析四道闸 / 真 docker 验证），
     // 再说它「仍在接入」就是把做完的事写在缺口里。
     expect(limitations).not.toContain('真正的挂载')
+  })
+
+  it('故障页不写那个不存在的面板状态', () => {
+    // 这一节原先写着「面板头部出现『未配置上游』」。真面板的头部只有两档
+    // （`packages/console` 的 `PanelCard`：运行中 / 把文件拖进来），没有第三个状态；
+    // 安装页上同一句话已经在上一轮清掉了。留着它，读者会照着一个不存在的读数
+    // 去面板上找一个不存在的字。缺口本身（缺上游时起不来）由起舱那一步当场报，
+    // 不在界面上留一个常驻状态。
+    expect(troubleshooting).not.toContain('未配置上游')
+    expect(troubleshooting).not.toContain('面板头部出现')
+    // 同一个假的读数不许换个说法从安装页或这一页长回来。
+    expect(installation).not.toContain('未配置上游')
   })
 
   it('示意图源码画的是现形态，不是上一版', () => {
