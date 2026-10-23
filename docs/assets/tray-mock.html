@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>abx tray — mock</title>
+<style>
+  /* ============ OSW design tokens (copied verbatim) ============ */
+  :root {
+    --radius: 0.375rem;
+    --font-sans: 'Geist Variable', -apple-system, 'SF Pro Text', 'Helvetica Neue', 'PingFang SC', sans-serif;
+    --font-mono: 'Source Code Pro', 'SF Mono', 'Fira Code', ui-monospace, Menlo, monospace;
+
+    /* light */
+    --l-bg: 0 0% 98%;
+    --l-card: 0 0% 100%;
+    --l-fg: 0 0% 9%;
+    --l-border: 0 0% 90%;
+    --l-muted: 0 0% 96%;
+    --l-accent: 0 0% 9%;
+    --l-accent-a: 0.08;
+
+    /* dark */
+    --d-bg: 0 0% 7%;
+    --d-card: 0 0% 12%;
+    --d-fg: 0 0% 98%;
+    --d-border: 0 0% 20%;
+    --d-muted: 0 0% 15%;
+    --d-accent: 0 0% 98%;
+    --d-accent-a: 0.12;
+
+    --destructive: 6 65% 48%;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-sans);
+    background: #1a1a1c;
+    padding: 40px;
+    display: flex;
+    gap: 48px;
+    align-items: flex-start;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---- shell: the transparent tray window (422 wide, 28 gutter) ---- */
+  .window {
+    width: 422px;
+    padding: 28px;               /* TRAY_PANEL_GUTTER */
+    border-radius: 18px;
+    background: #2a2a2e;         /* stands in for the desktop behind */
+  }
+  .window.light { background: #d9d9dd; }
+
+  .panel {
+    width: 366px;                /* 422 - 28*2 */
+    border-radius: calc(var(--radius) + 4px);
+    border: 1px solid;
+    overflow: hidden;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 0.12), 0 1px 4px rgb(0 0 0 / 0.06);
+  }
+
+  /* ---- dark theme ---- */
+  .dark { --bg: var(--d-bg); --card: var(--d-card); --fg: var(--d-fg);
+          --border: var(--d-border); --muted: var(--d-muted);
+          --accent: var(--d-accent); --accent-a: var(--d-accent-a); }
+  /* ---- light theme ---- */
+  .light { --bg: var(--l-bg); --card: var(--l-card); --fg: var(--l-fg);
+           --border: var(--l-border); --muted: var(--l-muted);
+           --accent: var(--l-accent); --accent-a: var(--l-accent-a); }
+
+  .panel {
+    background: hsl(var(--card));
+    border-color: hsl(var(--fg) / 0.14);   /* components-panel-border */
+    color: hsl(var(--fg));
+  }
+
+  /* ---- typography utilities (system-*) ---- */
+  .system-2xs-regular { font-size: 11px; font-weight: 400; line-height: 16px; }
+  .system-2xs-medium  { font-size: 11px; font-weight: 500; line-height: 16px; }
+  .system-xs-regular  { font-size: 12px; font-weight: 400; line-height: 16px; }
+  .system-xs-medium   { font-size: 12px; font-weight: 500; line-height: 16px; }
+  .system-sm-medium   { font-size: 13px; font-weight: 500; line-height: 16px; }
+  .system-sm-semibold { font-size: 13px; font-weight: 600; line-height: 16px; }
+
+  .t-1 { color: hsl(var(--fg)); }
+  .t-2 { color: hsl(var(--fg) / 0.70); }
+  .t-3 { color: hsl(var(--fg) / 0.50); }
+  .t-4 { color: hsl(var(--fg) / 0.35); }
+
+  /* ================= header ================= */
+  header {
+    display: flex; align-items: center; gap: 10px;
+    min-height: 56px; padding: 0 14px;
+    border-bottom: 1px solid hsl(var(--fg) / 0.14);
+  }
+  .appicon {
+    width: 28px; height: 28px; flex: none;
+    border-radius: 7px;
+    background: hsl(var(--fg));
+    color: hsl(var(--card));
+    display: grid; place-items: center;
+    font-size: 13px; font-weight: 600;
+  }
+  header .titles { min-width: 0; flex: 1; }
+  header .titles strong { display: block; }
+  .status {
+    display: inline-flex; align-items: center; gap: 5px;
+    flex: none;
+  }
+  .dot { width: 6px; height: 6px; border-radius: 99px; background: currentColor; }
+  .running { color: hsl(142 60% 42%); }
+  .light .running { color: hsl(142 55% 34%); }
+
+  /* ================= agent row ================= */
+  .agents {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+    padding: 12px 14px;
+  }
+  .agent {
+    border: 1px solid hsl(var(--fg) / 0.12);
+    border-radius: calc(var(--radius) - 2px);
+    background: hsl(var(--muted) / 0.55);
+    padding: 10px 0 9px;
+    display: flex; flex-direction: column; align-items: center; gap: 7px;
+  }
+  .agent .sq {
+    width: 30px; height: 30px; border-radius: 7px;
+    display: grid; place-items: center;
+    font-size: 12px; font-weight: 600;
+    background: hsl(var(--fg)); color: hsl(var(--card));
+  }
+  .agent.on .sq { background: hsl(var(--fg)); }
+  .agent.off .sq { background: hsl(var(--fg) / 0.14); color: hsl(var(--fg) / 0.55); }
+  .agent .nm { font-size: 11px; font-weight: 500; line-height: 12px; }
+  .agent.off .nm { color: hsl(var(--fg) / 0.55); }
+
+  /* ================= shared section ================= */
+  .section { padding: 0 14px 12px; }
+  .section-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 12px; margin: 4px 0 8px;
+  }
+  .list {
+    border: 1px solid hsl(var(--fg) / 0.10);
+    border-radius: calc(var(--radius) + 2px);
+    overflow: hidden;
+    background: hsl(var(--bg) / 0.5);
+  }
+  .row {
+    display: flex; align-items: center; gap: 8px;
+    min-height: 40px; padding: 8px 10px;
+    border-bottom: 1px solid hsl(var(--fg) / 0.07);
+  }
+  .row:last-child { border-bottom: 0; }
+  .glyph {
+    width: 16px; height: 16px; flex: none; border-radius: 4px;
+    border: 1px solid hsl(var(--fg) / 0.28);
+    display: grid; place-items: center;
+    font-size: 8px; color: hsl(var(--fg) / 0.55);
+  }
+  .row .name {
+    flex: 1; min-width: 0;
+    font-size: 12px; font-weight: 500; line-height: 16px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .badge {
+    flex: none;
+    font-size: 11px; line-height: 16px;
+    padding: 0 6px; border-radius: 99px;
+    border: 1px solid hsl(var(--fg) / 0.14);
+    color: hsl(var(--fg) / 0.50);
+  }
+
+  /* ---- drop zone ---- */
+  .drop {
+    margin-top: 8px;
+    border: 1px dashed hsl(var(--fg) / 0.22);
+    border-radius: calc(var(--radius) + 2px);
+    padding: 12px 10px;
+    text-align: center;
+    color: hsl(var(--fg) / 0.45);
+  }
+  .drop b { font-weight: 500; color: hsl(var(--fg) / 0.66); }
+
+  /* ================= footer ================= */
+  footer {
+    display: flex; align-items: center; gap: 6px;
+    padding: 8px 10px;
+    border-top: 1px solid hsl(var(--fg) / 0.14);
+    background: hsl(var(--muted) / 0.4);
+  }
+  .fbtn {
+    font-size: 11px; line-height: 16px;
+    padding: 4px 8px; border-radius: calc(var(--radius) - 2px);
+    color: hsl(var(--fg) / 0.62);
+  }
+  .fbtn.primary { color: hsl(var(--fg)); font-weight: 500; }
+  .fbtn.danger { color: hsl(var(--destructive)); }
+  .spacer { flex: 1; }
+
+  .caption {
+    font-size: 11px; line-height: 16px; margin-bottom: 12px;
+    color: #9a9aa2; font-weight: 500; letter-spacing: .02em;
+  }
+</style>
+</head>
+<body>
+
+  <!-- ======================= DARK ======================= -->
+  <div>
+    <div class="caption">DARK · macOS 深色</div>
+    <div class="window">
+      <div class="panel dark">
+
+        <header>
+          <div class="appicon">a</div>
+          <div class="titles">
+            <strong class="system-sm-semibold">abx</strong>
+            <span class="system-2xs-regular t-3">气闸运行中 · 凭据全部在舱外</span>
+          </div>
+          <span class="status system-2xs-regular running">
+            <i class="dot"></i>2 舱
+          </span>
+        </header>
+
+        <div class="agents">
+          <div class="agent on">
+            <div class="sq">C</div>
+            <div class="nm">Claude Code</div>
+          </div>
+          <div class="agent on">
+            <div class="sq">X</div>
+            <div class="nm">Codex</div>
+          </div>
+          <div class="agent off">
+            <div class="sq">D</div>
+            <div class="nm">dsh</div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-head">
+            <span class="system-2xs-medium t-2">共享给全部 agent</span>
+            <span class="system-2xs-regular t-4">3 项</span>
+          </div>
+
+          <div class="list">
+            <div class="row">
+              <div class="glyph">▤</div>
+              <div class="name">design-spec.pdf</div>
+              <div class="badge">只读</div>
+            </div>
+            <div class="row">
+              <div class="glyph">▤</div>
+              <div class="name">api-contract.md</div>
+              <div class="badge">只读</div>
+            </div>
+            <div class="row">
+              <div class="glyph">▦</div>
+              <div class="name">assets/</div>
+              <div class="badge">只读</div>
+            </div>
+          </div>
+
+          <div class="drop system-2xs-regular">
+            把文件或文件夹拖到这里 → <b>全部 agent 立刻可见</b>
+          </div>
+        </div>
+
+        <footer>
+          <div class="fbtn">审计流水…</div>
+          <div class="spacer"></div>
+          <div class="fbtn danger">停止全部</div>
+          <div class="fbtn primary">退出</div>
+        </footer>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= LIGHT ======================= -->
+  <div>
+    <div class="caption">LIGHT · macOS 浅色</div>
+    <div class="window light">
+      <div class="panel light">
+
+        <header>
+          <div class="appicon">a</div>
+          <div class="titles">
+            <strong class="system-sm-semibold">abx</strong>
+            <span class="system-2xs-regular t-3">气闸运行中 · 凭据全部在舱外</span>
+          </div>
+          <span class="status system-2xs-regular running">
+            <i class="dot"></i>2 舱
+          </span>
+        </header>
+
+        <div class="agents">
+          <div class="agent on">
+            <div class="sq">C</div>
+            <div class="nm">Claude Code</div>
+          </div>
+          <div class="agent on">
+            <div class="sq">X</div>
+            <div class="nm">Codex</div>
+          </div>
+          <div class="agent off">
+            <div class="sq">D</div>
+            <div class="nm">dsh</div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-head">
+            <span class="system-2xs-medium t-2">共享给全部 agent</span>
+            <span class="system-2xs-regular t-4">3 项</span>
+          </div>
+
+          <div class="list">
+            <div class="row">
+              <div class="glyph">▤</div>
+              <div class="name">design-spec.pdf</div>
+              <div class="badge">只读</div>
+            </div>
+            <div class="row">
+              <div class="glyph">▤</div>
+              <div class="name">api-contract.md</div>
+              <div class="badge">只读</div>
+            </div>
+            <div class="row">
+              <div class="glyph">▦</div>
+              <div class="name">assets/</div>
+              <div class="badge">只读</div>
+            </div>
+          </div>
+
+          <div class="drop system-2xs-regular">
+            把文件或文件夹拖到这里 → <b>全部 agent 立刻可见</b>
+          </div>
+        </div>
+
+        <footer>
+          <div class="fbtn">审计流水…</div>
+          <div class="spacer"></div>
+          <div class="fbtn danger">停止全部</div>
+          <div class="fbtn primary">退出</div>
+        </footer>
+
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>
