@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { App } from './App'
+import { renderApp, textOf } from './test-support'
 
 /**
  * 官网是产品的门面，也是唯一一处把安全承诺写死给人看的地方。
@@ -12,39 +12,35 @@ import { App } from './App'
  */
 afterEach(cleanup)
 
-const renderApp = () => render(<App />)
-
-const textOf = (element: HTMLElement | null) => element?.textContent ?? ''
-
 describe('landing page', () => {
-  it('leads with exactly one h1 that states the positioning', () => {
-    renderApp()
+  it('leads with exactly one h1 that states the positioning', async () => {
+    await renderApp()
 
     const headings = screen.getAllByRole('heading', { level: 1 })
     expect(headings).toHaveLength(1)
     expect(textOf(headings[0])).toContain('给 AI coding agent 的隔离舱')
   })
 
-  it('gives every section a name that resolves to a heading', () => {
-    const { container } = renderApp()
+  it('gives every section a name that resolves to a heading', async () => {
+    const { container } = await renderApp()
 
     const sections = [...container.querySelectorAll('section[aria-labelledby]')]
-    expect(sections).toHaveLength(5)
+    expect(sections).toHaveLength(8)
 
     const levels = sections.map(section => {
       const heading = container.querySelector(`#${section.getAttribute('aria-labelledby') ?? ''}`)
 
-      expect(textOf(heading as HTMLElement | null).length).toBeGreaterThan(0)
+      expect(textOf(heading).length).toBeGreaterThan(0)
       return heading?.tagName
     })
 
-    // 首屏的标签指向 h1，其余四节各有一个 h2：标题层级只有这两级。
+    // 首屏的标签指向 h1，其余每节各有一个 h2：标题层级只有这两级。
     expect(levels.filter(level => level === 'H1')).toHaveLength(1)
-    expect(levels.filter(level => level === 'H2')).toHaveLength(4)
+    expect(levels.filter(level => level === 'H2')).toHaveLength(7)
   })
 
-  it('points every in-page link at a target that is rendered', () => {
-    const { container } = renderApp()
+  it('points every in-page link at a target that is rendered', async () => {
+    const { container } = await renderApp()
 
     const fragments = [...container.querySelectorAll('a[href^="#"]')].map(link =>
       link.getAttribute('href'),
@@ -57,8 +53,8 @@ describe('landing page', () => {
     }
   })
 
-  it('offers no download while there is nothing to download', () => {
-    renderApp()
+  it('offers no download while there is nothing to download', async () => {
+    await renderApp()
 
     const downloads = screen.getByRole('region', { name: /macOS 版/ })
     expect(within(downloads).queryAllByRole('link')).toHaveLength(0)
@@ -66,16 +62,16 @@ describe('landing page', () => {
     expect(textOf(downloads)).toContain('尚未提供')
   })
 
-  it('states the limits of the sandbox next to the boundaries', () => {
-    renderApp()
+  it('states the limits of the sandbox next to the boundaries', async () => {
+    await renderApp()
 
     const boundaries = screen.getByRole('region', { name: /默认安全/ })
     expect(textOf(boundaries)).toContain('明确不承诺什么')
     expect(textOf(boundaries)).toContain('不承诺防住内核级逃逸')
   })
 
-  it('hides the decorative tray mock from assistive technology', () => {
-    const { container } = renderApp()
+  it('hides the decorative tray mock from assistive technology', async () => {
+    const { container } = await renderApp()
 
     const mock = container.querySelector('figure [aria-hidden="true"]')
     expect(mock).not.toBeNull()

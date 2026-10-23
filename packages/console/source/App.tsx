@@ -1,9 +1,12 @@
+import type { SharedEntry, SharedEntryKind, SharedListSnapshot } from '@abx/contracts'
 import { AGENT_DEFINITIONS } from '@abx/contracts/agents'
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
 import { getBridge } from './bridge'
 import { AgentStatusRow, type PanelAgent } from './components/AgentStatusRow'
 import { DropZone } from './components/DropZone'
 import { PanelCard } from './components/PanelCard'
+import { SharedRejectionList } from './components/SharedRejectionList'
+import { fileName } from './file-name'
 import { useReportHeight } from './hooks/useReportHeight'
 
 // 面板里那一排就是舱内能起的 agent，名字取自注册表（`@abx/contracts/agents`），
@@ -11,18 +14,52 @@ import { useReportHeight } from './hooks/useReportHeight'
 const PANEL_AGENTS: readonly PanelAgent[] = AGENT_DEFINITIONS.map((agent) => ({
   id: agent.id,
   label: agent.label,
+  // 图标也来自注册表；没有的 agent 就是 undefined，方块回退到首字母。
+  icon: agent.icon,
 }))
 
-/** 从绝对路径里取文件名，兼容 POSIX 与 Windows 分隔符。 */
-function fileName(filePath: string): string {
-  const segments = filePath.split(/[\\/]/)
-  return segments[segments.length - 1] ?? filePath
+/** 宿主还没答话时的空态。 */
+const EMPTY_SNAPSHOT: SharedListSnapshot = { entries: [], rejected: [] }
+
+/**
+ * 一行条目的状态。
+ *
+ * `pending` 与 `ready` 的区别是**谁说了算**：`pending` 是拖放时浏览器给的预览
+ * （`webkitGetAsEntry()`），`ready` 是宿主 stat 完之后给的结论。预览只是为了图标
+ * 立刻出现，它不写进任何持久化文件，也不该被当成「已经共享了」。
+ */
+type SharedRowState = 'ready' | 'missing' | 'pending'
+
+interface SharedRow {
+  readonly path: string
+  readonly kind: SharedEntryKind
+  readonly state: SharedRowState
+}
+
+/**
+ * 图标：文件保持原来的 `▤`，目录用 `◰`——方块里带一个左上角的小块，
+ * 是这一堆几何符号里最接近「文件夹」轮廓的那个。**不引图标库**：
+ * 面板只有这一处用得上图标，为它添一个依赖不划算。
+ */
+const KIND_ICON: Record<SharedEntryKind, string> = { file: '▤', directory: '◰' }
+const KIND_LABEL: Record<SharedEntryKind, string> = { file: '文件', directory: '目录' }
+
+/**
+ * 徽标。能挂上的都是只读，挂载模式没变；
+ * 「加入中」与「已失效」必须单独说——这两种状态下条目还没有用或者已经没用了，
+ * 混在「只读」里会让人以为它已经生效。
+ */
+const STATE_BADGE: Record<SharedRowState, string> = {
+  ready: '只读',
+  missing: '已失效',
+  pending: '加入中',
 }
 
 export function App() {
   const cardRef = useRef<HTMLElement | null>(null)
   const [runningIds, setRunningIds] = useState<readonly string[]>([])
-  const [sharedPaths, setSharedPaths] = useState<readonly string[]>([])
+  const [snapshot, setSnapshot] = useState<SharedListSnapshot>(EMPTY_SNAPSHOT)
+  const [preview, setPreview] = useState<readonly SharedEntry[]>([])
   const [dragging, setDragging] = useState(false)
 
   useReportHeight(cardRef)
@@ -30,16 +67,22 @@ export function App() {
   useEffect(() => {
     const bridge = getBridge()
     if (bridge === undefined) return
-    // 落下的路径由 preload 抽出后回调过来；这里只负责显示，挂载是另一个作业。
-    return bridge.onDroppedFiles((paths) => {
-      setSharedPaths((current) => {
-        const merged = [...current]
-        for (const path of paths) {
-          if (!merged.includes(path)) merged.push(path)
-        }
-        return merged
-      })
+
+    // 一次拖放会分两步到达：先预览（图标立刻出现），再快照（宿主 stat 与闸门之后的结论）。
+    const stopPreview = bridge.onDroppedEntries((entries) => setPreview(entries))
+    const stopSnapshot = bridge.onSharedList((next) => {
+      setSnapshot(next)
+      // 快照一到预览整批退场：进没进列表由宿主说了算，预览不许赖着不走
+      // （被拒的条目要是留在列表里，就成了「看着共享了、其实没有」）。
+      setPreview([])
     })
+    // 每次挂载都问一次：条目可能被删、可能被别处改过，名单不能靠上次那份缓存。
+    bridge.requestSharedList()
+
+    return () => {
+      stopPreview()
+      stopSnapshot()
+    }
   }, [])
 
   const startAgent = useCallback((agentId: string) => {
@@ -66,6 +109,16 @@ export function App() {
     setDragging(false)
   }
 
+  // 宿主那几行在前（持久化的次序，稳定），预览垫在后面。
+  const rows: readonly SharedRow[] = [
+    ...snapshot.entries.map(
+      (entry): SharedRow => ({ path: entry.path, kind: entry.kind, state: entry.missing ? 'missing' : 'ready' }),
+    ),
+    ...preview
+      .filter((entry) => !snapshot.entries.some((known) => known.path === entry.path))
+      .map((entry): SharedRow => ({ path: entry.path, kind: entry.kind, state: 'pending' })),
+  ]
+
   return (
     <PanelCard
       runningCount={runningIds.length}
@@ -82,27 +135,30 @@ export function App() {
           <h2 className="abx-section-title" id="abx-shared-title">
             共享给全部 agent
           </h2>
-          <span className="abx-section-count">{sharedPaths.length} 项</span>
+          <span className="abx-section-count">{rows.length} 项</span>
         </div>
 
-        {sharedPaths.length > 0 && (
+        {rows.length > 0 && (
           <ul className="abx-list" aria-label="共享条目">
-            {sharedPaths.map((path) => (
-              <li className="abx-list-row" key={path}>
-                <span className="abx-list-icon" aria-hidden="true">
-                  ▤
+            {rows.map((row) => (
+              <li className="abx-list-row" key={row.path} data-state={row.state}>
+                {/* 图标带的是「文件还是目录」这条信息，交给读屏；kind 一律来自宿主。 */}
+                <span className="abx-list-icon" role="img" aria-label={KIND_LABEL[row.kind]}>
+                  {KIND_ICON[row.kind]}
                 </span>
-                <span className="abx-list-name" title={path}>
-                  {fileName(path)}
+                <span className="abx-list-name" title={row.path}>
+                  {fileName(row.path)}
                 </span>
-                {/* 第一版只有只读条目；可写条目来了换徽标，不换布局。 */}
-                <span className="abx-badge">只读</span>
+                <span className="abx-badge">{STATE_BADGE[row.state]}</span>
               </li>
             ))}
           </ul>
         )}
 
-        <DropZone hasEntries={sharedPaths.length > 0} dragging={dragging} />
+        {/* 没进来的那几条不进列表，原因写在共享区下面。 */}
+        <SharedRejectionList rejected={snapshot.rejected} />
+
+        <DropZone hasEntries={rows.length > 0} dragging={dragging} />
       </section>
     </PanelCard>
   )

@@ -18,26 +18,63 @@ export type {
 } from './config'
 
 export {
+  AGENT_CONFIG_TEMPLATE_VARIABLES,
   AGENT_DEFINITIONS,
+  AGENT_IMAGE_UNBUILT,
   ABX_BROKER_ORIGIN_ENV,
   ABX_CELL_ID_ENV,
   ABX_CELL_TOKEN_ENV,
   ABX_UPSTREAM_ID_ENV,
+  AgentManifestError,
   agentConfigFileNames,
+  agentHomeDirNames,
   agentIds,
+  agentImageRef,
+  agentManifestProblems,
   findAgent,
   generatedConfigFiles,
+  renderAgentConfigTemplate,
+  templateVariableNames,
 } from './agents'
 /** 产品名。提示语、默认路径、测试都从这里取，不许各处硬编码。 */
 export const productName = 'abx'
 
-export type { AgentConfigFile, AgentConfigFormat, AgentDefinition } from './agents'
+/**
+ * 舱内那个 home 的默认值（`session.cellHome`）。
+ *
+ * 它出现在两个地方：配置的默认值，以及「把注册表里的 `~/.claude/...` 展开成舱内
+ * 路径」的那一步。两处必须同一个值，所以它是一个导出常量。
+ */
+export { DEFAULT_CELL_HOME } from './schema'
+
+export type {
+  AgentConfigFile,
+  AgentConfigFormat,
+  AgentDefinition,
+  AgentIcon,
+  AgentImage,
+  AgentStatePath,
+} from './agents'
 
 export { expandEnvRefs, expandEnvTree } from './expand-env'
 export type { ExpandResult } from './expand-env'
 
 export { findInlineSecrets } from './inline-secret-guard'
 export type { InlineSecretFinding, InlineSecretReason } from './inline-secret-guard'
+
+export {
+  SHARED_ENTRY_KINDS,
+  parseSharedEntry,
+  sharedEntrySchema,
+} from './shared-entry'
+export type {
+  ParseSharedEntryResult,
+  SharedEntry,
+  SharedEntryKind,
+  SharedEntryRejection,
+  SharedEntryState,
+  SharedListSnapshot,
+} from './shared-entry'
 
 export { normalizeHost, isIpv4Literal, isValidHostname, isValidDomainPattern, parseDomainPattern } from './domain-pattern'
 export type { DomainPattern, ParseDomainPatternResult } from './domain-pattern'

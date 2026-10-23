@@ -4,12 +4,23 @@
 import { app, BrowserWindow, Tray, ipcMain, nativeImage, screen } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parseSharedEntry, type SharedEntry, type SharedEntryRejection, type SharedListSnapshot } from '@abx/contracts'
+import {
+  addSharedEntries,
+  defaultSharedListPath,
+  markMissingEntries,
+  readSharedEntries,
+  resolveSharedMounts,
+  writeSharedEntries,
+} from '@abx/core/session'
 
 /** 面板宽度。与托盘卡片 366 + 左右各 28 的透明阴影留白对齐（见 tray-ui.md）。 */
 const PANEL_WIDTH = 422
 /** 卡片外面的透明留白，专给阴影用。 */
 const PANEL_GUTTER = 28
 const PANEL_MIN_HEIGHT = 120
+/** 托盘槽位尺寸。Linux 托盘按 20–24px 渲染图标，22 是这套主题里最接近的一档。 */
+const TRAY_ICON_SIZE = 22
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 /** 面板产物：`@abx/console` 构建到 `output/panel`，与主进程产物同级。 */
@@ -17,6 +28,30 @@ const PANEL_ENTRY = path.join(here, '../panel/index.html')
 let tray: Tray | null = null
 let panel: BrowserWindow | null = null
 let panelHeight = 320
+
+/**
+ * 共享列表落在哪儿。**只有这里算**，preload 与渲染层都拿不到路径——
+ * 路径由 core 的 `defaultSharedListPath()` 给出（`~/.abx/shared.json`，
+ * 跟着 `ABX_INSTANCES_ROOT` 走），主进程只是决定「用那个算法」。
+ */
+const sharedListPath = defaultSharedListPath()
+
+/**
+ * 上一次没进列表的条目与原因。
+ *
+ * 只在内存里，不落盘：它是「刚刚那一次拖放的结果」，重启之后没有意义。
+ * 被拒的条目**不写进 shared.json**——写进去就成了「面板上看着共享了、实际没有」，
+ * 而下一次打开面板时那一条看起来完全正常。
+ */
+let lastRejected: readonly SharedEntryRejection[] = []
+
+function sharedSnapshot(): SharedListSnapshot {
+  return {
+    // 每次都给宿主现在的判断：条目失效（文件被删）标 missing，但**留在列表里**。
+    entries: markMissingEntries(readSharedEntries(sharedListPath)),
+    rejected: lastRejected,
+  }
+}
 
 function contentHeight(cardHeight: number): number {
   return Math.max(PANEL_MIN_HEIGHT, Math.round(cardHeight) + PANEL_GUTTER * 2)
@@ -83,16 +118,44 @@ function togglePanel(): void {
   panel.show()
 }
 
+/**
+ * 托盘图标。两个平台各取一份，因为「模板图」是 **macOS 独有**的语义：
+ * 带 `Template` 后缀的图由系统按菜单栏明暗自动反色，所以那里只放一张纯黑字形；
+ * 别的平台不做反色，同一张黑字形放到深色托盘上就是隐形的。Linux 用彩色应用图标——
+ * 它是深底白字，深浅两种托盘上都看得见。
+ */
+function trayIcon(): Electron.NativeImage {
+  if (process.platform === 'darwin') {
+    return nativeImage.createFromPath(path.join(here, '../../build/trayTemplate.png'))
+  }
+  // 应用图标是 1024px 的方图，托盘槽位只有 20 出头，先降下来再交给 Tray。
+  return nativeImage
+    .createFromPath(path.join(here, '../../build/icon.png'))
+    .resize({ width: TRAY_ICON_SIZE, height: TRAY_ICON_SIZE, quality: 'best' })
+}
+
 function createTray(): Tray {
-  // 模板图（`Template` 后缀）由 macOS 自动按明暗反色，不需要准备两套资源。
-  const icon = nativeImage.createFromPath(path.join(here, '../../build/trayTemplate.png'))
-  const created = new Tray(icon)
+  const created = new Tray(trayIcon())
   created.on('click', togglePanel)
   // 拖文件到托盘图标：macOS only。这是「共享给全部 agent」的主入口之一。
   created.on('drop-files', (_event, files) => {
     created.emit('abx:share-files', files)
   })
   return created
+}
+
+/**
+ * 渲染层送来的条目。**不信它们**：路径必须过契约的 schema，kind 必须以宿主 stat 为准
+ * （`resolveSharedMounts()` 会 stat，条目上带的那个 kind 只是界面预览）。
+ */
+function parseIncoming(raw: unknown): readonly SharedEntry[] {
+  if (!Array.isArray(raw)) return []
+  const entries: SharedEntry[] = []
+  for (const item of raw) {
+    const parsed = parseSharedEntry(item)
+    if (parsed.ok) entries.push(parsed.entry)
+  }
+  return entries
 }
 
 ipcMain.on('panel:height', (_event, height: unknown) => {
@@ -103,17 +166,49 @@ ipcMain.on('panel:height', (_event, height: unknown) => {
 
 ipcMain.on('panel:hide', () => panel?.hide())
 
-// 拖进面板的文件路径（`preload` 用 `webUtils` 换出来的绝对路径）。
-// 这里**只做「收到了」**：真正把它们挂进共享区属于 mounts 那个作业，
-// 在挂载语义定下来之前，宿主不猜测该怎么处理。
-ipcMain.on('panel:dropped-files', (_event, paths: unknown) => {
-  if (!Array.isArray(paths) || paths.some((item) => typeof item !== 'string')) return
-  console.info(`[abx] tray panel received ${paths.length} dropped path(s)`)
+/** 面板要看当前共享区（刚挂载时问一次）。 */
+ipcMain.handle('shared:list', () => sharedSnapshot())
+
+/**
+ * 拖进来的条目：解析 → 落盘 → 把快照回给面板。
+ *
+ * 这一层只做「列表 + 持久化 + 解析接口」。真正把 `mounts` 交给 `session.create`
+ * 是会话那一条作业：那时它会 `readSharedEntries(sharedListPath)` 再
+ * `resolveSharedMounts()` 一遍——**必须在起容器那一刻重算**，因为
+ * 「加进来时是干净的」不代表「起容器时还是干净的」（目录里可能已经多了个 `.env`）。
+ */
+ipcMain.handle('shared:add', (_event, raw: unknown) => {
+  const incoming = parseIncoming(raw)
+  if (incoming.length === 0) return sharedSnapshot()
+
+  const { mounts, rejected } = resolveSharedMounts(incoming)
+  // 被拒的按**原始路径**排除，不按解析后的路径：软链条目的挂载源是它的目标，
+  // 两个集合的写法不一样，用路径对路径才准确。
+  const rejectedPaths = new Set(rejected.map((item) => item.path))
+  const accepted = incoming.filter((entry) => !rejectedPaths.has(entry.path))
+
+  writeSharedEntries(sharedListPath, addSharedEntries(readSharedEntries(sharedListPath), accepted))
+  lastRejected = rejected
+
+  console.info(
+    `[abx] shared: +${accepted.length} entry(ies) into ${sharedListPath}, ` +
+      `${rejected.length} rejected, mount targets: ${mounts.map((mount) => mount.target).join(', ') || '(none)'}`,
+  )
+  return sharedSnapshot()
 })
 
 app.whenReady().then(() => {
   tray = createTray()
   panel = createPanel()
+  // 无头验证用的开关：`Xvfb` 里没有托盘宿主，`getBounds()` 恒为 0×0，也没东西可点，
+  // 面板就永远不会显示。置 1 时开局直接摊开面板，好让截图与 DOM 转储有东西可看。
+  //
+  // 默认关闭，产品路径一个字节都不变——它是「怎么看到面板」的开关，
+  // 不是「面板长什么样」的开关。
+  if (process.env.ABX_PANEL_SHOW_ON_START === '1') {
+    placePanel(panel)
+    panel.show()
+  }
 })
 
 // 托盘应用：最后一个窗口关掉不等于退出，退出只由「退出」动作触发。

@@ -10,7 +10,7 @@ keywords:
   - Docker
 ---
 
-import { SESSION_IMAGE_FALLBACK } from '../../data/agents'
+import { AGENTS_IMAGE_UNBUILT } from '../../data/agents'
 
 # 常见故障
 
@@ -77,8 +77,12 @@ OSW 不需要凭据，所以生产形态下这条通常不是「缺 Key」，而
 
 ## agent 找不到命令 / 不读配置
 
-- **镜像里没有这个 CLI**：默认镜像 <code>{SESSION_IMAGE_FALLBACK}</code> 不包含 claude / codex / dsh。实际跑之前要换成
-  装好对应 CLI 的镜像（见 [claude / codex / dsh](/agents/available) 的「镜像」一节）。
+- **镜像尚未构建**：<code>{AGENTS_IMAGE_UNBUILT.join(' / ')}</code> 在清单里登记了镜像，
+  但镜像还没建（版本写的是 `unbuilt`），起舱时 Docker 会报找不到镜像。先把对应镜像构建出来
+  （见 [claude / codex / dsh](/agents/available) 的「镜像」一节）。
+- **覆盖成了裸镜像**：`session.image` 是给裸容器验证留的出口；写成只装了 node 的镜像后，
+  里面没有 claude / codex / dsh，舱内会报命令不存在。跑 agent 时不要写 `session.image`，
+  让它落到该 agent 自己的镜像上。
 - **配置落点不对**：agent 只会去它期望的路径找配置；abx 生成的路径与宿主约定一致，别手动改。
 - **dsh 尚未核实**：命令名与配置字段名都缺少权威来源，出错时先按它的文档核对一遍。
 

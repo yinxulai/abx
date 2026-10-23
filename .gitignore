@@ -30,6 +30,13 @@ release
 .eslintcache
 coverage
 .local
+# 官网的本地状态：截图与审计报告。它们是「看一眼」用的产物，体积大、随时重生成，
+# 不进仓库（截图落盘路径见 apps/docs/specs/product/www.md）。
+.state/
+
+# 无头验证的落盘产物（截图、DOM 文本、审计报告）。它们是记录，不是源码：
+# 尺寸随字体与机器变，提交进来只会一次次产生无意义的 diff。
+.state
 
 # 本地跑站时的截图与审计报告：只用于人工核对，不进仓库
 apps/docs/.state/

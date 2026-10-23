@@ -95,3 +95,40 @@ jobs:
       # 当前骨架里还没有包定义 `build`，这条命令是空跑，等第一个真实包落地后自动生效。
       - name: Build
         run: pnpm build
+
+  # 这个 job 回答的是「这些零件接起来还能不能跑」。
+  #
+  # 上面三个 job 全绿也证明不了这件事：单测里每一层都用自己的替身，所以**契约一漂移
+  # 就整片漏过去**。已经真出过一次：一个 lane 给 `stageAgentConfig` 加了必填参数，
+  # 另一个 lane 的驱动还按旧契约调用 —— typecheck 过了（那是个纯 JS 脚本）、
+  # 单测过了（测试传的是自己造的路径）、build 过了，真跑起来直接崩在
+  # `mkdirSync(undefined)`，容器一个都没起。
+  #
+  # 只跑两个**不需要任何凭据**的：
+  #   - `e2e-local`  容器是假的，但配置解析 / broker / 凭据注入 / 出口白名单 /
+  #                  审计落盘 / 会话编排 / 拆除旁路检查全是真的，不需要 docker；
+  #   - `e2e-docker` 容器、网络、地址解析是真的，只验「舱内能不能连上舱面」。
+  # `e2e-agent-claude` **不进 CI**：它要从宿主 `~/.claude/settings.json` 读真网关地址
+  # 与真密钥，CI 上既不该有也不该配。它留在开发机上手动跑。
+  e2e:
+    name: End to end
+    needs: [typecheck, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      # 这两个脚本直接跑 TS 源码（各自用 `node --import` 挂一个 resolve 钩子），
+      # 不读任何构建产物，所以不经过 turbo，也不该开 turbo-cache。
+      - name: Set up environment
+        uses: ./.github/actions/setup
+        with:
+          turbo-cache: 'false'
+
+      - name: Run the local end-to-end script
+        run: bash packages/toolkit/scripts/e2e-local.sh
+
+      # 脚本在 docker 不可用时也返回 0 并写明原因，所以 runner 环境差异不会造成假红；
+      # 但「舱内连不上舱面」这种真问题会真红。
+      - name: Run the docker end-to-end script
+        run: bash packages/toolkit/scripts/e2e-docker.sh

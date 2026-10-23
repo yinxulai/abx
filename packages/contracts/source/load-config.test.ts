@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { DEFAULT_CELL_HOME } from './schema'
 import { parseConfig } from './load-config'
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url))
@@ -289,6 +290,33 @@ describe('其他形状校验', () => {
     // 默认 local 等于默认没有沙箱。这条断言钉的是「默认安全」这个性质。
     const config = configOf(minimalConfig())
     expect(config.session.backend).toBe('docker')
+  })
+
+  it('不写 session.image 时是 null——镜像由所选 agent 的清单决定', () => {
+    // 这里**不许**再出现一个全局默认镜像：默认成 `node:22-slim` 的话，
+    // `abx open claude` 会起一个没有 claude 命令的空壳，而会话看起来是起来了。
+    const config = configOf(minimalConfig())
+    expect(config.session.image).toBeNull()
+  })
+
+  it('session.image 写了就不能是空串——空串是「以为配了、其实没有」', () => {
+    const issues = issuesOf({ session: { image: '' }, ...minimalConfig() })
+    expect(issues[0]?.path).toBe('session.image')
+  })
+
+  it('cellHome 默认是舱内那个 home，不是宿主 home', () => {
+    // 这个值决定了注册表里的 `~/.claude/settings.json` 展开到哪儿。默认成宿主
+    // home 的话，生成的配置会落到舱内 agent 根本不会读的地方——而它在宿主上
+    // 看起来完全正常，是最难发现的那种错。
+    const config = configOf(minimalConfig())
+    expect(config.session.cellHome).toBe(DEFAULT_CELL_HOME)
+    expect(config.session.cellHome).toBe('/home/node')
+  })
+
+  it('cellHome 必须是绝对路径——相对路径在舱内没有意义', () => {
+    const issues = issuesOf({ session: { cellHome: 'home/node' }, ...minimalConfig() })
+    expect(issues[0]?.path).toBe('session.cellHome')
+    expect(issues[0]?.message).toContain('/home/node')
   })
 
   it('一次报出多个问题，而不是修一个跑一次', () => {

@@ -6,9 +6,9 @@
  * 1. **导航与文件对得上**：`clarify.ts` 里声明的每一页都有中文 MDX，反过来中文 MDX
  *    也都出现在导航里；站内链接都能落到某个真实页面。少一个文件、链接写错一个 slug，
  *    站点不会报错，只会安静地 404——所以必须由测试来喊。
- * 2. **文档数据不跟代码漂移**：agent 的名字、命令、配置落点、镜像默认值只能有两处来源
- *    ——清单（`packages/contracts/source/agents.ts`）与 schema 默认值。页面里的
- *    Markdown 数据（路径、镜像名）在这里逐条对照清单校验。
+ * 2. **文档数据不跟代码漂移**：agent 的名字、命令、配置落点、镜像与历史目录只有一个
+ *    来源——清单（`packages/contracts/source/agents.ts`）。页面里的 Markdown 数据
+ *    （路径、镜像名）在这里逐条对照清单校验。
  * 3. **不该进使用者文档的东西不进**：明文凭据、内部术语（`cellId` / `lease`）。
  *
  * 译制进度表也在 `source/README.md`，本文件对照它检查英文文件是否存在，
@@ -18,17 +18,17 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { AGENT_DEFINITIONS, type AgentDefinition } from '@abx/contracts/agents'
+import {
+  AGENT_DEFINITIONS,
+  AGENT_IMAGE_UNBUILT,
+  agentImageRef,
+  agentManifestProblems,
+} from '@abx/contracts/agents'
+import { abxConfigSchema } from '@abx/contracts/schema'
 import { describe, expect, it } from 'vitest'
 
 import clarifyConfig from '../clarify'
-import {
-  AGENT_COUNT,
-  AGENT_DOCS,
-  IMAGES_DECLARED,
-  SESSION_IMAGE_FALLBACK,
-  STATE_PATHS_DECLARED,
-} from './data/agents'
+import { AGENT_COUNT, AGENT_DOCS, AGENTS_IMAGE_UNBUILT } from './data/agents'
 
 const sourceDir = dirname(fileURLToPath(import.meta.url))
 const docsDir = resolve(sourceDir, '..')
@@ -106,8 +106,9 @@ const credentialNeighbours = [
   '~/.dsh',
   // 举例说明「不该给 agent 的东西」时用的路径，与 agent 数据无关。
   '~/.ssh',
-  // abx 自己在宿主上的持久化目录。
+  // abx 自己在宿主上的持久化目录，以及按实例存的 agent 历史。
   '~/.abx',
+  '~/.abx/instances',
 ]
 const knownHostPaths = new Set<string>([
   ...AGENT_DEFINITIONS.flatMap((agent) => agent.configFiles.map((file) => file.path)),
@@ -191,29 +192,74 @@ describe('文档数据与清单一致', () => {
     })
   })
 
-  it('镜像与历史目录的状态如实反映清单', () => {
+  it('镜像与历史目录都来自每个 agent 自己的清单条目', () => {
     AGENT_DEFINITIONS.forEach((definition, index) => {
-      const raw = definition as AgentDefinition & {
-        readonly image?: string
-        readonly statePaths?: readonly string[]
-      }
       const doc = AGENT_DOCS[index]
-      expect(doc?.image).toBe(raw.image ?? null)
-      expect(doc?.statePaths).toEqual(raw.statePaths ?? [])
-      // 清单还没有 per-agent 镜像时，文档只能说回退镜像；有了就必须改文档。
-      expect(IMAGES_DECLARED).toBe(AGENT_DEFINITIONS.every((agent) => 'image' in agent))
-      expect(STATE_PATHS_DECLARED).toBe(AGENT_DEFINITIONS.every((agent) => 'statePaths' in agent))
+      // 镜像取自这一条的 `image.repository` / `image.version`，不是任何全局兜底值。
+      expect(doc?.image.repository).toBe(definition.image.repository)
+      expect(doc?.image.version).toBe(definition.image.version)
+      expect(doc?.image.reference).toBe(agentImageRef(definition))
+      expect(doc?.image.built).toBe(definition.image.version !== AGENT_IMAGE_UNBUILT)
+      // 历史目录取自这一条的 `statePaths`（含挂载权限）。
+      expect(doc?.statePaths).toEqual(definition.statePaths)
     })
+    // 「哪些 agent 的镜像还没构建」也由清单现算，页面不自己判断。
+    expect(AGENTS_IMAGE_UNBUILT).toEqual(
+      AGENT_DEFINITIONS.filter((agent) => agent.image.version === AGENT_IMAGE_UNBUILT).map((agent) => agent.id),
+    )
   })
 
-  it('默认镜像取自 schema 默认值', () => {
-    expect(SESSION_IMAGE_FALLBACK).toBe('node:22-slim')
+  it('没有全局默认镜像，镜像只能来自 agent 自己的条目', () => {
+    // 配置里不写 `session.image` 时它就是 `null`（不是某个镜像名）：
+    // 没有全局默认值，起舱用的是所选 agent 自己的那一条。
+    expect(abxConfigSchema.parse({}).session.image).toBeNull()
+
     for (const file of mdxFiles) {
-      // 镜像名只能经 `SESSION_IMAGE_FALLBACK` 注入，不许手抄常量。
-      expect(readFileSync(file.path, 'utf8'), `${file.path} 手抄了镜像名`).not.toContain('node:22-slim')
+      const text = readFileSync(file.path, 'utf8')
+      // 镜像名只能经数据模块注入，不许手抄常量；裸镜像也不许再作为「默认」出现。
+      expect(text, `${file.path} 手抄了裸镜像`).not.toContain('node:22-slim')
+      for (const definition of AGENT_DEFINITIONS) {
+        expect(text, `${file.path} 手抄了镜像 ${definition.image.repository}`).not.toContain(
+          definition.image.repository,
+        )
+      }
     }
-    for (const slug of ['limits/troubleshooting', 'limits/limitations']) {
-      expect(readMdx('zh', slug)).toContain('SESSION_IMAGE_FALLBACK')
+  })
+
+  it('镜像为空或未钉住版本时，清单守卫会拒绝（文档不另写一份实现）', () => {
+    const base = AGENT_DEFINITIONS.find((agent) => agent.id === 'claude')
+    // 没有基准条目这条断言就失去了意义：宁可失败，也不要拿 undefined 拼出一条假清单。
+    if (base === undefined) throw new Error('清单里没有 claude，无法验证镜像守卫。')
+
+    // 真清单本身必须过得了同一个守卫；它同时也是 `pnpm lint` 的判据。
+    expect(agentManifestProblems()).toEqual([])
+
+    const emptyVersion = agentManifestProblems([
+      { ...base, image: { repository: base.image.repository, version: '' } },
+    ])
+    expect(emptyVersion.join('\n')).toContain('image.version 是空的')
+
+    const unpinned = agentManifestProblems([
+      { ...base, image: { repository: base.image.repository, version: 'latest' } },
+    ])
+    expect(unpinned.join('\n')).toContain('image.version 是 latest')
+
+    const emptyRepository = agentManifestProblems([
+      { ...base, image: { repository: ' ', version: base.image.version } },
+    ])
+    expect(emptyRepository.join('\n')).toContain('image.repository 是空的')
+  })
+
+  it('未构建的镜像写成「尚未构建」，不是「尚未指定」', () => {
+    for (const file of mdxFiles) {
+      const text = readFileSync(file.path, 'utf8')
+      expect(text, `${file.path} 把「未构建」写成了「未指定」`).not.toContain('尚未指定')
+      expect(text, `${file.path} 把「未构建」写成了「还没指定」`).not.toContain('还没指定')
+    }
+    // 页面上的「哪些镜像还没建」由数据模块现算，不是手写一张名单。
+    for (const slug of ['agents/available', 'limits/troubleshooting', 'limits/limitations']) {
+      const text = readMdx('zh', slug)
+      expect(text, `${slug} 没有引用数据模块的未构建名单`).toContain('AGENTS_IMAGE_UNBUILT')
     }
   })
 

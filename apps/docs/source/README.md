@@ -56,11 +56,12 @@ pnpm --filter @abx/docs audit:ui http://127.0.0.1:5220
 
 ## 数据不要手抄
 
-agent 的名字、命令、配置落点、上游、状态都来自
-`packages/contracts/source/agents.ts`；镜像默认值来自 `packages/contracts/source/schema.ts`。
-页面通过 `source/data/agents.ts` 读它们，不在这里再抄一份：
+agent 的名字、命令、配置落点、上游、状态、镜像与历史目录都来自
+`packages/contracts/source/agents.ts`。页面通过 `source/data/agents.ts` 读它们，不在这里再抄一份：
 
 - `agents/available` 的表格全部由 `AGENT_DOCS` 渲染；
+- 镜像**按 agent 给**，没有全局默认值；哪些镜像还没构建由 `AGENTS_IMAGE_UNBUILT` 现算，
+  页面上写「尚未构建」而不是「尚未指定」；
 - `inside/config` 的示例路径取自清单；
 - 除上述页面之外出现的路径、镜像名等 Markdown 数据，由 `docs.test.ts` 对照清单校验。
 

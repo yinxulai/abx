@@ -8,7 +8,7 @@ keywords:
   - 未验证
 ---
 
-import { SESSION_IMAGE_FALLBACK } from '../../data/agents'
+import { AGENTS_IMAGE_UNBUILT } from '../../data/agents'
 
 # 明确不做的边界
 
@@ -47,8 +47,8 @@ import { SESSION_IMAGE_FALLBACK } from '../../data/agents'
 | 能力 | 现在是什么样 |
 |---|---|
 | 公开发布的安装包 | 没有。只能从源码运行或自行打包；产物是 ad-hoc 签名、未公证 |
-| 每个 agent 自己的镜像 | 清单里还没有这一项；统一用 `session.image` 的默认镜像 <code>{SESSION_IMAGE_FALLBACK}</code>，它**不包含**任何 agent 的 CLI |
-| 跨舱保留 agent 历史 | 清单里还没有历史目录（`statePaths`）；舱退出后 agent 自己的会话历史会丢 |
+| 每个 agent 自己的镜像 | 清单已按 agent 登记；claude 的镜像有定义，<code>{AGENTS_IMAGE_UNBUILT.join(' / ')}</code> 的**镜像尚未构建**（版本写的是 `unbuilt`），起舱会直接失败 |
+| 清理某一份实例历史 | 历史按实例落在宿主上；还没有「删除某个实例」的命令，只能手动删 `~/.abx/instances/<实例>/` |
 | 生产形态只接 OSW | 仍在落地；示例配置还保留三个直连上游作为开发期能力 |
 | 共享区 / 取回区的完整挂载语义 | 面板能接住拖放并显示条目，真正的挂载与出舱确认仍在接入 |
 | 舱面来源网段校验 | 进行中，见上一节 |

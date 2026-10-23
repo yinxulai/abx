@@ -8,7 +8,7 @@ keywords:
   - agent 清单
 ---
 
-import { AGENT_COUNT, AGENT_DOCS, IMAGES_DECLARED, SESSION_IMAGE_FALLBACK, STATE_PATHS_DECLARED } from '../../data/agents'
+import { AGENT_COUNT, AGENT_DOCS, AGENTS_IMAGE_UNBUILT } from '../../data/agents'
 
 # claude / codex / dsh
 
@@ -74,27 +74,67 @@ abx 只为标着「生成」的文件写内容；标着「只登记」的文件�
 
 ## 镜像
 
-{IMAGES_DECLARED ? (
-  <p>每个 agent 使用清单里登记的自有镜像，各自装好自己的 CLI。</p>
-) : (
+镜像**按 agent 给**：清单里每条定义带自己的 `image.repository` 与 `image.version`，
+起舱用的就是所选 agent 的那一条，各自装好自己的 CLI。配置项 `session.image` 只是可选的
+**覆盖口**（跑裸容器做挂载 / 网络验证时用），不写也没有全局默认值。
+
+<table>
+  <thead>
+    <tr>
+      <th>agent</th>
+      <th>镜像</th>
+      <th>状态</th>
+    </tr>
+  </thead>
+  <tbody>
+    {AGENT_DOCS.map((agent) => (
+      <tr key={agent.id}>
+        <td><code>{agent.id}</code></td>
+        <td><code>{agent.image.built ? agent.image.reference : agent.image.repository}</code></td>
+        <td>{agent.image.built ? '已构建' : '尚未构建'}</td>
+      </tr>
+    ))}
+  </tbody>
+</table>
+
+{AGENTS_IMAGE_UNBUILT.length > 0 ? (
   <p>
-    清单里<strong>还没有</strong>登记每个 agent 自己的镜像。起舱时统一使用配置项 <code>session.image</code>
-    的默认值：<code>{SESSION_IMAGE_FALLBACK}</code>。这个默认镜像不包含三个 agent 的命令行，
-    所以实际跑之前必须换成装好对应 CLI 的镜像。每个 agent 各自装 CLI 的镜像仍在清单化中。
+    <strong>{AGENTS_IMAGE_UNBUILT.join(' / ')} 的镜像尚未构建</strong>：清单里登记了仓库名，
+    版本写的是 <code>unbuilt</code>。镜像构建出来之前，起这两个 agent 会当场失败——Docker
+    找不到镜像。这是有意的：比起起一个没有对应命令的空壳、看起来还挺正常，直接失败更容易发现。
   </p>
-)}
+) : null}
+
+claude 的镜像定义在 `images/agents/claude/`，版本与镜像里装的 CLI 版本是同一个值：
+构建脚本从这个值打标签，不在两处各写一遍。
 
 ## 历史目录
 
-{STATE_PATHS_DECLARED ? (
-  <p>清单已登记每个 agent 要跨舱保留的历史目录；abx 按实例把它们挂到宿主的持久化目录上。</p>
-) : (
-  <p>
-    清单里<strong>还没有</strong>登记历史目录，因此当前起舱不会挂任何持久化目录：agent
-    自己的会话历史随舱销毁。任务目录、共享区、取回区与审计仍会保留，见
-    <a href="/inside/history">历史留在哪里</a>。
-  </p>
-)}
+清单给每个 agent 登记了它在舱内写历史的目录（`statePaths`）。abx 按**实例**把这个目录以
+`rw` 挂到宿主上，所以默认「再开一次 claude」接的是上一次那份历史：
+
+<table>
+  <thead>
+    <tr>
+      <th>agent</th>
+      <th>舱内历史目录</th>
+      <th>挂载</th>
+    </tr>
+  </thead>
+  <tbody>
+    {AGENT_DOCS.map((agent) => (
+      <tr key={agent.id}>
+        <td><code>{agent.id}</code></td>
+        <td><code>{agent.statePaths.map((statePath) => statePath.path).join(' + ')}</code></td>
+        <td><code>{agent.statePaths.map((statePath) => statePath.mode).join(' + ')}</code></td>
+      </tr>
+    ))}
+  </tbody>
+</table>
+
+宿主侧落在 `~/.abx/instances/<实例>/<agent id>/`（`ABX_INSTANCES_ROOT` 可覆盖），
+**不是**你的 `~/.claude`：实例目录由 abx 创建、初始为空，登录凭据不会被送进舱。
+`--instance <id>` 可以开一份平行历史。细节见[历史留在哪里](/inside/history)。
 
 ## 三个名字对得上
 

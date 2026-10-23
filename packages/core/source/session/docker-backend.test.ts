@@ -10,8 +10,10 @@
  */
 
 import { EventEmitter } from 'node:events'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { agentConfigFileNames } from '@abx/contracts'
 import type { SandboxSpec } from './backend'
 import { buildDockerArgs, containerName, isExecutableOnPath } from './docker-backend'
@@ -24,8 +26,10 @@ function spec(overrides: Partial<SandboxSpec> = {}): SandboxSpec {
     cellId: 'claude-20261023-ab12cd',
     agentId: 'claude',
     command: ['claude'],
+    allocateTty: true,
     taskDir: TASK_DIR,
     workdir: '/workspace',
+    cellHome: '/home/node',
     env: { ANTHROPIC_AUTH_TOKEN: 'abx-placeholder-anthropic', ANTHROPIC_BASE_URL: 'http://172.17.0.1:8789/u/anthropic' },
     forbiddenEnvNames: ['ANTHROPIC_API_KEY'],
     limits: { memory: '2g', pids: 256, cpus: 2 },
@@ -117,9 +121,32 @@ describe('buildDockerArgs', () => {
     expect(args.some((arg) => arg.includes('--network=host'))).toBe(false)
   })
 
+  it('调用方有终端时分配 TTY', () => {
+    expect(argsFor({ allocateTty: true })).toContain('--tty')
+    // 默认就是交互态，避免以后有人在 spec() 里改掉默认值而把「有终端」测丢。
+    expect(argsFor()).toContain('--tty')
+  })
+
+  it('调用方没有终端时不带 --tty，但 --interactive 仍然在', () => {
+    // 托盘（管道 spawn）、CI、脚本都没有终端。带上 --tty 时 docker 会直接
+    // 拒绝起容器：cannot attach stdin to a TTY-enabled container because
+    // stdin is not a terminal——不是降级，是起不来。
+    const args = argsFor({ allocateTty: false })
+    expect(args).not.toContain('--tty')
+    expect(args).toContain('--interactive')
+  })
+
+  it('舱内 home 显式注入，不依赖镜像默认值', () => {
+    // agent 把会话历史写到 `$HOME/.claude/...`，而实例状态目录挂在 cellHome 下面。
+    // 两个值分家 = 往一个没挂载的路径写历史 = 历史照丢，且命令行里看不出来。
+    expect(allFlagValues(argsFor(), '--env')).toContain('HOME=/home/node')
+    expect(allFlagValues(argsFor({ cellHome: '/home/other' }), '--env')).toContain('HOME=/home/other')
+  })
+
   it('环境变量以 --env 注入，且不含被点名禁用的名字', () => {
     const envs = allFlagValues(argsFor(), '--env')
     expect(envs).toEqual([
+      'HOME=/home/node',
       'ANTHROPIC_AUTH_TOKEN=abx-placeholder-anthropic',
       'ANTHROPIC_BASE_URL=http://172.17.0.1:8789/u/anthropic',
     ])
@@ -211,6 +238,96 @@ describe('生成的 agent 配置：逐个文件、只读', async () => {
       }),
     ).rejects.toThrow(/凭据文件/)
     expect(spawned).toBe(false)
+  })
+})
+
+describe('实例状态目录：第二个可写挂载，配置嵌在它里面', async () => {
+  const { createDockerBackend } = await import('./docker-backend')
+
+  const tempDirs: string[] = []
+
+  afterEach(() => {
+    for (const directory of tempDirs) rmSync(directory, { recursive: true, force: true })
+    tempDirs.length = 0
+  })
+
+  /** 一个真实存在的实例状态目录。策略那边是**失败关闭**的，所以必须真的建出来。 */
+  function stateDirFixture(instanceId = 'claude', agentId = 'claude') {
+    const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'abx-docker-')))
+    tempDirs.push(base)
+    const instancesRoot = path.join(base, 'instances')
+    const hostPath = path.join(instancesRoot, instanceId, agentId)
+    mkdirSync(hostPath, { recursive: true })
+    return { base, instancesRoot, stateDir: { hostPath, cellPath: `/home/node/.${agentId}`, agentId } }
+  }
+
+  it('目录以 rw 挂进去，同一个目录里的配置那一格以 ro 盖在上面', async () => {
+    // 这是真实形态：配置**长在**实例目录里，所以它落在可写挂载内部。
+    // docker 的嵌套绑定是「深的目标赢」，两个挂载点必须同时在 argv 里。
+    const { stateDir } = stateDirFixture()
+    const settings = { hostPath: path.join(stateDir.hostPath, 'settings.json'), cellPath: `${stateDir.cellPath}/settings.json` }
+
+    const current = spec({ agentConfigFiles: [settings], stateDirs: [stateDir] })
+    const volumes = allFlagValues(buildDockerArgs(current, MOUNT_POLICY.buildMounts(current.taskDir, current.workdir, [settings], [stateDir])), '--volume')
+
+    expect(volumes).toEqual([
+      `${TASK_DIR}:/workspace:rw`,
+      `${stateDir.hostPath}:${stateDir.cellPath}:rw`,
+      `${settings.hostPath}:${settings.cellPath}:ro`,
+    ])
+    // 状态目录的挂载点必须在配置挂载点的**前面**，否则「深的目标赢」这条规则
+    // 就依赖于 docker 的实现细节而不是顺序。断言顺序比断言集合更安全。
+    expect(volumes.indexOf(`${stateDir.hostPath}:${stateDir.cellPath}:rw`)).toBeLessThan(
+      volumes.indexOf(`${settings.hostPath}:${settings.cellPath}:ro`),
+    )
+  })
+
+  it('起容器前过闸：拿宿主真实的 ~/.claude 当状态目录源，spawn 都不会发生', async () => {
+    let spawned = false
+    const backend = createDockerBackend({
+      spawnProcess: (() => {
+        spawned = true
+        return new EventEmitter()
+      }) as never,
+    })
+    const hostClaude = { hostPath: path.join(homedir(), '.claude'), cellPath: '/home/node/.claude', agentId: 'claude' }
+
+    await expect(
+      backend.create(spec({ stateDirs: [hostClaude] }), { mode: 'pipe', onStdout: () => undefined, onStderr: () => undefined }),
+    ).rejects.toThrow(/不在实例根/)
+    expect(spawned).toBe(false)
+  })
+})
+
+describe('共享条目：只读挂进 /shared，且不计入可写', () => {
+  it('每一条共享条目就是一条 --volume，权限是 ro', () => {
+    const shared = [
+      { source: '/home/dev/projects/notes', target: '/shared/notes', mode: 'ro' as const },
+      { source: '/home/dev/data', target: '/shared/data', mode: 'ro' as const },
+    ]
+    const current = spec({ sharedMounts: shared })
+    const volumes = allFlagValues(
+      buildDockerArgs(current, MOUNT_POLICY.buildMounts(current.taskDir, current.workdir, [], [], shared)),
+      '--volume',
+    )
+
+    expect(volumes).toEqual([
+      `${TASK_DIR}:/workspace:rw`,
+      '/home/dev/projects/notes:/shared/notes:ro',
+      '/home/dev/data:/shared/data:ro',
+    ])
+    // 可写挂载仍然只有任务目录一个：共享是只读的，不该占可写的额度。
+    expect(volumes.filter((volume) => volume.endsWith(':rw'))).toEqual([`${TASK_DIR}:/workspace:rw`])
+  })
+
+  it('目录共享就是一条挂载——1000 个文件也是这一条', () => {
+    // 这条断言防的是「递归展开成单文件挂载」那种改法：它会让 argv 的体积跟着
+    // 目录内容走，而且目录里新增的文件从此不再出现。
+    const shared = [{ source: '/home/dev/projects/notes', target: '/shared/notes', mode: 'ro' as const }]
+    const current = spec({ sharedMounts: shared })
+
+    const args = buildDockerArgs(current, MOUNT_POLICY.buildMounts(current.taskDir, current.workdir, [], [], shared))
+    expect(allFlagValues(args, '--volume')).toHaveLength(2)
   })
 })
 

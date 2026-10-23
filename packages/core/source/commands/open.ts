@@ -15,18 +15,25 @@
 
 import { existsSync, statSync } from 'node:fs'
 import path from 'node:path'
-import { findAgent, agentIds } from '@abx/contracts'
+import { agentIds, agentImageRef, findAgent } from '@abx/contracts'
 import { collectSecretEnvNames } from '../broker/index'
 import {
+  appendSessionRecord,
+  assertInstancesRoot,
+  assertStateDirPolicy,
   buildCellEnv,
-  cellRootFor,
   createBackend,
+  defaultInstancesRoot,
+  ensureInstanceStateDir,
   findRiskyFilesInTaskDir,
   generateCellId,
+  isValidInstanceId,
+  planInstance,
   renderAgentConfig,
   stageAgentConfig,
   toSandboxConfigFiles,
 } from '../session/index'
+import type { InstancePlan, InstanceSessionRecord, SandboxStateDir } from '../session/index'
 import type { CommandOptions } from './options'
 import { CommandError, cellOriginFor, ensureBroker, resolveBackend, resolveCellHost, type CommandContext } from './runtime'
 
@@ -66,9 +73,42 @@ export async function runOpen(input: OpenInput): Promise<number> {
     )
   }
 
+  // 镜像按 agent 给：配置里没写就用清单里那个（`repository:version`）。
+  // 配置里写了就以配置为准——那是「只跑一个裸容器」这类场合的出口，
+  // 它跟某个 agent 无关，所以没道理为它登记一条清单。
+  const image = context.config.session.image ?? agentImageRef(agent)
+
   const backendId = resolveBackend(context.config, options.backend)
   const cellHost = resolveCellHost(context.config, backendId, null)
   const cellId = generateCellId(agent.id)
+  // 舱内的 home 来自配置，**不是**宿主 home：这一处漏传过一次，生成的配置
+  // 落到了宿主的 `~/.claude/`，而舱内 agent 读的是另一个地方。下面每一处用到
+  // 「~」的地方都必须用这个值。
+  const cellHome = context.config.session.cellHome
+
+  // 实例 = 哪一份历史。默认就是 agent 自己，于是「再开一次 claude」接的是上一次
+  // 那份历史——这正是持久化要的效果。它和 cellId 是两回事：cellId 每次运行都是
+  // 新的（那是**审计身份**，复用会让审计里两个会话再也分不开）。
+  //
+  // 非法 id 在这里就报，而不是等拼路径时「顺手 basename 一下」：那样 `../../etc`
+  // 会静默变成 `etc`，用户以为自己开的是另一个实例。
+  if (options.instance !== null && !isValidInstanceId(options.instance)) {
+    throw new CommandError(
+      `不是合法的实例 id：${JSON.stringify(options.instance)}`,
+      '只能用字母、数字、点、下划线、连字符，且以字母或数字开头——它要当目录名用。',
+    )
+  }
+  const instance = planInstance({
+    agent,
+    instanceId: options.instance ?? agent.id,
+    cellHome,
+    instancesRoot: defaultInstancesRoot(context.env),
+  })
+
+  // 实例根先过闸。它来自 `ABX_INSTANCES_ROOT`，而「配成 /home」这种写法会让**整个
+  // 主目录**变成可写挂载源的来源。这一步只解析路径、不碰文件系统，所以干跑也跑它：
+  // 配错了应该在按下回车之前就知道。
+  assertInstancesRoot(instance.instancesRoot)
 
   // 任务目录里如果躺着凭据文件，说一声。不是拦截——目录是用户自己选的，
   // 但舱内拿到的是可写权限，改坏了回不来。
@@ -76,13 +116,26 @@ export async function runOpen(input: OpenInput): Promise<number> {
 
   if (options.dryRun) {
     // 干跑只生成**内容**、不落盘：这时候还没有舱令牌（broker 还没起），
-    // 而清单里要报的是路径，路径不依赖令牌。
+    // 而清单里要报的是路径，路径不依赖令牌。实例目录也一个都不建。
     const plan = renderAgentConfig({
       agentId: agent.id,
       cellOrigin: cellOriginFor(context.config, cellHost),
       upstreamId: upstream.id,
+      cellHome,
     })
-    log(renderPlan({ agentId: agent.id, taskDir, backendId, cellHost, context, cellId, configPaths: plan.files.map((file) => file.cellPath) }))
+    log(
+      renderPlan({
+        agentId: agent.id,
+        taskDir,
+        backendId,
+        cellHost,
+        context,
+        cellId,
+        instance,
+        image,
+        configPaths: plan.files.map((file) => file.cellPath),
+      }),
+    )
     return 0
   }
 
@@ -95,6 +148,26 @@ export async function runOpen(input: OpenInput): Promise<number> {
   }
   for (const name of risky) {
     log(`[abx] 提醒：任务目录里有 ${name}，舱内以可写方式挂载该目录，agent 能读到也能改到它。`)
+  }
+
+  // 实例状态目录：**先建、再解析软链、再校验，最后才往里写东西**。顺序反了就有洞——
+  // 生成的配置就写在里面，等起容器前那道闸才发现路径不对时，文件已经顺着软链
+  // 写到别处去了。所以这一步在所有写入之前，也在起 broker 之前（早失败早退出）。
+  //
+  // 只有 docker 后端需要它：它是**挂载源**。local 后端没有挂载这回事，
+  // 建一个不会有人读的目录只会让人以为 local 也能留下历史。
+  const stateDirs: SandboxStateDir[] = []
+  if (backendId === 'docker') {
+    const stateDir: SandboxStateDir = {
+      // realpath：闸门要判的正是「解析软链之后还在不在实例根里面」。
+      hostPath: ensureInstanceStateDir(instance),
+      cellPath: instance.cellPath,
+      agentId: agent.id,
+    }
+    assertStateDirPolicy({ stateDirs: [stateDir], instancesRoot: instance.instancesRoot, cellHome })
+    stateDirs.push(stateDir)
+  } else {
+    log(`[abx] local 后端不挂载实例目录：这个后端的会话历史不会跨会话保留。`)
   }
 
   const lease = await ensureBroker({ context, backend: backendId, cellHost, log })
@@ -110,17 +183,24 @@ export async function runOpen(input: OpenInput): Promise<number> {
   // 生成配置 → 落盘 → 只读挂进去。**宿主那份 settings.json 一个字都不进舱**：
   // 里面可能写着别家的 key 和别的端点，而同目录还躺着凭据文件（见 session/agent-config.ts）。
   //
+  // 落盘位置是**实例状态目录里面**：那个目录整个 rw 进舱（历史写在里面），
+  // 而这一份文件在它内部再套一层 ro 挂载，所以仍然改不动。
+  //
   // 只在 docker 后端生成：local 后端直接在宿主上跑，没有挂载这回事，
   // 写一份没人读的文件只会让人以为 local 也有那层隔离。
+  //
+  // 写进**解析过软链的那个路径**（也就是挂载源本身）：两处必须是同一个字符串，
+  // 否则「配置文件到底在不在那个可写挂载里面」就变成一件要靠推断的事。
   const staged =
     backendId === 'docker'
       ? stageAgentConfig({
           agentId: agent.id,
-          cellRoot: cellRootFor(cellId),
+          directory: stateDirs[0]?.hostPath ?? instance.stateDir,
           cellOrigin,
           upstreamId: upstream.id,
           cellToken: binding.token,
           tokenInPath: context.config.broker.allowCellTokenInPath,
+          cellHome,
         })
       : null
 
@@ -134,18 +214,25 @@ export async function runOpen(input: OpenInput): Promise<number> {
   })
 
   const backend = createBackend(backendId)
+  const startedAt = new Date().toISOString()
+  // 有没有终端由 CLI 自己判断：交互态给 `--tty`，托盘（管道 spawn）、CI、脚本不给。
+  // 无脑加 `--tty` 会让 docker 直接拒绝起容器——那不是「少了颜色」，是舱根本起不来。
+  const allocateTty = process.stdin.isTTY === true
   const session = await backend.create(
     {
       cellId,
       agentId: agent.id,
       command: [agent.command, ...agent.args],
+      allocateTty,
       taskDir,
       workdir: context.config.session.workdir,
+      cellHome,
       agentConfigFiles: staged === null ? [] : toSandboxConfigFiles(staged),
+      stateDirs,
       env,
       forbiddenEnvNames: collectSecretEnvNames(context.config.upstreams),
       limits: context.config.session.limits,
-      image: context.config.session.image,
+      image,
       user: context.config.session.user,
       network: context.config.session.network,
       tmpfsSizeMb: context.config.session.tmpfsSizeMb,
@@ -155,8 +242,12 @@ export async function runOpen(input: OpenInput): Promise<number> {
 
   log('')
   log(`[abx] 会话 ${cellId}`)
+  log(`[abx] 实例 ${instance.instanceId}（历史目录 ${instance.root}）`)
   log(`[abx] 后端 ${backendId}${lease.spawned ? '（broker 由本次会话启动）' : ''}`)
-  log(`[abx] 任务目录 ${taskDir} → ${context.config.session.workdir}（可写，唯一的可写挂载点）`)
+  log(`[abx] 任务目录 ${taskDir} → ${context.config.session.workdir}（可写）`)
+  for (const dir of stateDirs) {
+    log(`[abx] 实例目录 ${dir.hostPath} → ${dir.cellPath}（可写；历史留在这儿，所以能跨会话）`)
+  }
   for (const file of staged?.files ?? []) {
     log(`[abx] 配置 ${file.hostPath} → ${file.cellPath}（只读；abx 生成，宿主那份不进舱）`)
   }
@@ -167,6 +258,20 @@ export async function runOpen(input: OpenInput): Promise<number> {
   // agent 退出后销毁会话。docker 后端靠 `--rm` 在容器退出的那一刻就销毁了，
   // 这里只需要等它退出；local 后端没有需要销毁的东西。
   const exit = await session.exit
+  // abx 自己的记账：这一次运行（cellId）什么时候开始、什么时候结束、退出码多少，
+  // 追加到实例目录下的流水里。**只在宿主写**——它在 `<实例目录>/sessions.jsonl`，
+  // 而挂进舱的是 `<实例目录>/<agentId>` 那一层，所以舱内看不到它。
+  const record: InstanceSessionRecord = {
+    instanceId: instance.instanceId,
+    cellId,
+    agentId: agent.id,
+    backend: backendId,
+    startedAt,
+    endedAt: new Date().toISOString(),
+    exitCode: exit.code,
+    signal: exit.signal,
+  }
+  appendSessionRecord(instance.sessionLogPath, record)
   // 舱销毁即注销：令牌随会话结束立刻失效，不会留到下一个会话。
   lease.unregisterCell(cellId)
   // 只关掉自己起的那个。接上别人已经在跑的 broker 时不动它——
@@ -176,6 +281,7 @@ export async function runOpen(input: OpenInput): Promise<number> {
   log('')
   if (exit.signal !== null) log(`[abx] agent 被信号 ${exit.signal} 终止`)
   log(`[abx] 会话结束（退出码 ${exit.code ?? '未知'}），容器已随退出销毁。`)
+  log(`[abx] 实例流水：${instance.sessionLogPath}`)
   log(`[abx] 审计流水：abx audit --tail`)
 
   return exit.code ?? 1
@@ -188,6 +294,9 @@ interface RenderPlanInput {
   readonly cellHost: string
   readonly context: CommandContext
   readonly cellId: string
+  readonly instance: InstancePlan
+  /** 这次会话实际会用的镜像（已按「配置优先、清单兜底」算好）。 */
+  readonly image: string
   /** 本来会生成并挂进去的那几个配置文件（只列舱内路径）。 */
   readonly configPaths: readonly string[]
 }
@@ -195,20 +304,25 @@ interface RenderPlanInput {
 function renderPlan(input: RenderPlanInput): string {
   const { context } = input
   const upstream = context.config.upstreams.find((candidate) => candidate.id === findAgent(input.agentId)?.upstreamId)
+  const docker = input.backendId === 'docker'
   return [
     '[abx] --dry-run：下面这些是「本来会做的事」，没有起任何进程。',
-    `  会话 id      ${input.cellId}`,
+    `  会话 id      ${input.cellId}（这次的审计身份，每次都新生成）`,
+    `  实例 id      ${input.instance.instanceId}（哪一份历史；同一个实例再开一次就接着往下写）`,
     `  后端         ${input.backendId}${input.backendId === 'local' ? '（不是沙箱，禁止用于演示）' : ''}`,
-    `  镜像         ${context.config.session.image}`,
+    `  镜像         ${input.image}`,
     `  运行用户     ${context.config.session.user}`,
+    `  舱内 home    ${context.config.session.cellHome}（注入 HOME，也是下面路径里 ~ 展开的地方）`,
     `  资源限额     内存 ${context.config.session.limits.memory} / pids ${context.config.session.limits.pids} / cpus ${context.config.session.limits.cpus}`,
-    `  挂载         ${input.taskDir} → ${context.config.session.workdir}（rw，唯一可写挂载点）`,
-    ...(input.backendId === 'docker'
+    `  挂载         ${input.taskDir} → ${context.config.session.workdir}（可写，rw）`,
+    ...(docker
       ? [
-          `  生成的配置   ${input.configPaths.join('、')}（只读；abx 现写，宿主那份不进舱）`,
+          `  实例目录     ${input.instance.stateDir} → ${input.instance.cellPath}（可写，rw；历史留在这儿，所以能跨会话）`,
+          `  生成的配置   ${input.configPaths.join('、')}（只读，ro；abx 现写，宿主那份不进舱）`,
+          `  实例流水     ${input.instance.sessionLogPath}（只写宿主，不挂进舱）`,
           `  不挂载       /home、用户主目录、docker socket；也不挂任何配置**目录**（同目录有凭据）`,
         ]
-      : []),
+      : [`  实例目录     （local 后端不挂载，历史不会跨会话保留）`]),
     `  宿主面       http://${context.config.broker.host}:${context.config.broker.hostPort}`,
     `  舱面         ${cellOriginFor(context.config, input.cellHost)}`,
     `  上游         ${upstream?.id ?? '(缺失)'} ← ${upstream?.secretEnv ?? upstream?.secretFile ?? '(未配置)'}`,
