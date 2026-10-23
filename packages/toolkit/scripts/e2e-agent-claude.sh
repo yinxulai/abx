@@ -281,10 +281,33 @@ function redact(text) {
 const log = (message) => process.stdout.write(`${redact(message)}\n`)
 const write = (name, value) => writeFileSync(path.join(WORK, name), `${redact(JSON.stringify(value, null, 2))}\n`)
 
-/** 洗掉 CRLF 与 ANSI 控制序列。容器是在 PTY 下跑的，输出里两样都有。 */
+/**
+ * 洗掉容器输出里的传输痕迹。容器是在 PTY 下跑的（`--tty` 是 buildDockerArgs 写死的），
+ * 所以拿到的不是程序原样写出的字节。实测三样：
+ *
+ *   - 换行是 CRLF；
+ *   - 夹着 ANSI 控制序列（颜色、光标）；
+ *   - **流的最前面还有两个字符 `^@`**（0x5E 0x40，两个可打印字符，不是 NUL 字节；
+ *     `script` 不会这么转义，是 docker 客户端在「容器带 `-t`、而它自己的 stdout
+ *     不是终端」时自己写上去的）。
+ *
+ * 第三样最坑：它会粘在容器输出里，而舱内探测的答案就在输出里。实测那一次粘在第一行
+ * 前面，于是「探出来的通告地址」被读成 `^@host.docker.internal`，注入舱内的地址成了
+ * `http://^@host.docker.internal:28889/u/anthropic`。这样还能打通纯属侥幸 ——
+ * URL 语法把开头的 `^` 当成了 userinfo（用户名），host 部分碰巧还是对的。
+ * 而它出现的位置并不固定：另一次同 flag 的容器输出里就一个都没有。所以这里按
+ * 「整条流里凡出现就洗掉」处理，不假设它一定在行首。
+ * 洗掉它不会伤到断言：要比的 nonce 是十六进制，探测结果另有严格的主机名匹配兜着。
+ */
 function strip(text) {
-  // eslint-disable-next-line no-control-regex -- 洗的就是控制字符
-  return text.replaceAll('\r\n', '\n').replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '')
+  return (
+    text
+      .replaceAll('\r\n', '\n')
+      // 两个可打印字符，不是 NUL 字节 —— 所以用字符串替换而不是控制字符正则。
+      .replaceAll('^@', '')
+      // eslint-disable-next-line no-control-regex -- 洗的就是控制字符
+      .replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '')
+  )
 }
 
 // 挂在哪一步了。崩了的时候要能一眼看出是探测、还是生成配置、还是起容器。
@@ -497,7 +520,10 @@ write('probe.json', probe)
 
 const reachable = probe.stdout
   .split('\n')
-  .map((line) => /^(\S+) -> HTTP 401$/.exec(line.trim()))
+  // 这里**故意**用严格的「主机名」字符集去匹配，而不是 `(\S+)`：通告地址要拼进 URL
+  // 交给舱内的 agent，宁可匹配不上（下面会带着原始探测输出失败），也不能把一个带杂质的
+  // 字符串当成主机名收下 —— 上面 strip() 里那个 `^@` 就是这么一路混进来的。
+  .map((line) => /^([A-Za-z0-9._-]+) -> HTTP 401$/.exec(line.trim()))
   .find((match) => match !== null)
 if (reachable === undefined || reachable === null) {
   write('failed.json', { stage: 'probe', probe })
