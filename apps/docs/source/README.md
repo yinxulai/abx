@@ -40,6 +40,20 @@
 2. 建 `source/<code>/` 目录，至少放一页 `index.mdx`；其余页面靠 `missing: 'fallback'` 回退。
 3. 站点级 `title` / `description` 目前是单值（默认语言），新增语言时一并确认是否需要调整。
 
+## 改完页面怎么核对
+
+`pnpm test` 只保证「页面在、链接通、数据和清单一致」；**排版问题它看不见**。窄屏溢出、
+表格被挤变形、控件小于触控目标这些要在真浏览器里量：
+
+```bash
+pnpm --filter @abx/docs build
+python3 -m http.server 5220 --directory apps/docs/output   # 或 pnpm --filter @abx/docs dev
+pnpm --filter @abx/docs audit:ui http://127.0.0.1:5220
+```
+
+它按 `clarify.ts` 里的页面清单逐页跑两个视口，报告落在 `apps/docs/.state/audit/`（已 gitignore），
+有 🔴 就以非零码退出。加了一页记得重跑——清单变了它就多量一页。
+
 ## 数据不要手抄
 
 agent 的名字、命令、配置落点、上游、状态都来自
