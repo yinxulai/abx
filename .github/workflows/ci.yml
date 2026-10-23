@@ -2,7 +2,15 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # `lane/**` 也跑，理由是一条实测出来的：`pull_request` 那条路要求 PR 能算出
+    # 合并提交（`refs/pull/<n>/merge`），而**算不出来的时候 GitHub 直接不跑这条流水线**
+    # ——不报错、不排队，什么提示都没有。lane 分支天生是长期分支，落后 main 二十几个
+    # 提交、有冲突都是常态，于是「推上去了但 CI 一次都没跑」是默认结果，不是意外。
+    #
+    # 代价是同一条分支在 PR 上会再跑一遍（两边的并发组不同，不会互相取消）。
+    # 换来的是「push 一定有结果」——而 Windows 那条 job 是**唯一**能拿到 Windows
+    # 证据的地方，拿不到就等于这次改动没有验过。
+    branches: [main, 'lane/**']
   pull_request:
 
 permissions:
