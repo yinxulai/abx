@@ -8,11 +8,11 @@
  */
 
 import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { findAgent, generatedConfigFiles, AGENT_DEFINITIONS } from '@abx/contracts'
-import { AgentConfigError, cellRootFor, renderAgentConfig, stageAgentConfig, toSandboxConfigFiles } from './agent-config'
+import { DEFAULT_CELL_HOME, findAgent, generatedConfigFiles, AGENT_DEFINITIONS } from '@abx/contracts'
+import { AgentConfigError, renderAgentConfig, stageAgentConfig, toSandboxConfigFiles } from './agent-config'
 import { buildCellEnv } from './env'
 import { MOUNT_POLICY, assertMountPolicy } from './mount-policy'
 
@@ -20,7 +20,7 @@ const CELL_ORIGIN = 'http://host.docker.internal:8789'
 const HOME = '/home/dev'
 
 function render(agentId: string, overrides: Record<string, unknown> = {}) {
-  return renderAgentConfig({ agentId, cellOrigin: CELL_ORIGIN, homeDir: HOME, ...overrides })
+  return renderAgentConfig({ agentId, cellOrigin: CELL_ORIGIN, cellHome: HOME, ...overrides })
 }
 
 function contentOf(agentId: string, overrides: Record<string, unknown> = {}): string {
@@ -143,6 +143,35 @@ describe('renderAgentConfig / 注册表对账', () => {
   })
 })
 
+/**
+ * 这一组钉的是一个真实发生过的 bug：`homeDir` 默认取 `os.homedir()`，
+ * 于是 `open.ts` 忘了传的时候，生成出来的 `cellPath` 落在**宿主** home 下，
+ * 而舱内 agent 只会去读 `$HOME/.claude/settings.json`。
+ *
+ * 上面那些用例全都显式传了 cellHome，所以它们验的是「传对了会怎样」——
+ * 这个 bug 正好从它们的缝里漏过去。这里补的是「默认是什么」。
+ */
+describe('舱内 home 的默认值', () => {
+  it('不传 cellHome 时，生成路径落在舱内 home 下，不是宿主 home 下', () => {
+    const [file] = renderAgentConfig({ agentId: 'claude', cellOrigin: CELL_ORIGIN }).files
+    expect(file?.cellPath).toBe(`${DEFAULT_CELL_HOME}/.claude/settings.json`)
+    // 反面对着断言：宿主 home 一个字符都不该出现在舱内路径里。
+    expect(file?.cellPath.startsWith(`${homedir()}/`)).toBe(false)
+  })
+
+  it('每个 agent 生成的路径都落在舱内 home 下', () => {
+    for (const agent of AGENT_DEFINITIONS) {
+      for (const file of renderAgentConfig({ agentId: agent.id, cellOrigin: CELL_ORIGIN }).files) {
+        expect(file.cellPath.startsWith(`${DEFAULT_CELL_HOME}/`)).toBe(true)
+      }
+    }
+  })
+
+  it('默认值与镜像里 uid 1000 的 home 一致——换镜像时这里会先红', () => {
+    expect(DEFAULT_CELL_HOME).toBe('/home/node')
+  })
+})
+
 describe('stageAgentConfig', () => {
   const directories: string[] = []
 
@@ -151,66 +180,81 @@ describe('stageAgentConfig', () => {
     directories.length = 0
   })
 
-  function cellRoot(): string {
-    const directory = mkdtempSync(path.join(tmpdir(), 'abx-cell-'))
+  /** 一个临时的实例状态目录：`<tmp>/instances/<instanceId>/<agentId>`。 */
+  function stateDir(agentId = 'claude', instanceId = 'claude'): string {
+    const directory = mkdtempSync(path.join(tmpdir(), 'abx-instance-'))
     directories.push(directory)
-    return path.join(directory, 'cells', 'claude-1')
+    return path.join(directory, 'instances', instanceId, agentId)
   }
 
-  it('落到 <cellRoot>/agents/<agentId>/<原文件名>', () => {
-    const root = cellRoot()
-    const staged = stageAgentConfig({ agentId: 'claude', cellOrigin: CELL_ORIGIN, homeDir: HOME, cellRoot: root })
+  it('落在实例状态目录里面，文件名不变', () => {
+    // 落在实例目录里而不是别处，是「配置在可写挂载内部再套一层只读」能成立的前提：
+    // 目录整个 rw 进舱（历史写在里面），这一格在它内部被 ro 挂载盖住。
+    const directory = stateDir()
+    const staged = stageAgentConfig({ agentId: 'claude', cellOrigin: CELL_ORIGIN, cellHome: HOME, directory })
 
-    expect(staged.files.map((file) => file.hostPath)).toEqual([path.join(root, 'agents', 'claude', 'settings.json')])
+    expect(staged.directory).toBe(directory)
+    expect(staged.files.map((file) => file.hostPath)).toEqual([path.join(directory, 'settings.json')])
     expect(readFileSync(staged.files[0]!.hostPath, 'utf8')).toBe(staged.files[0]!.content)
   })
 
-  it('每个 agent 落在自己的子目录里', () => {
-    const root = cellRoot()
+  it('每个 agent 落在自己那一个实例目录里', () => {
     for (const agent of AGENT_DEFINITIONS) {
-      stageAgentConfig({ agentId: agent.id, cellOrigin: CELL_ORIGIN, homeDir: HOME, cellRoot: root })
-    }
-    for (const agent of AGENT_DEFINITIONS) {
-      expect(statSync(path.join(root, 'agents', agent.id)).isDirectory()).toBe(true)
+      const directory = stateDir(agent.id, 'work')
+      stageAgentConfig({ agentId: agent.id, cellOrigin: CELL_ORIGIN, cellHome: HOME, directory })
+      expect(statSync(path.join(directory, `${agentConfigFileNameFor(agent.id)}`)).isFile()).toBe(true)
     }
   })
 
   it('舱内路径与宿主上的原路径一致（D2）', () => {
-    const staged = stageAgentConfig({ agentId: 'codex', cellOrigin: CELL_ORIGIN, homeDir: HOME, cellRoot: cellRoot() })
+    const staged = stageAgentConfig({ agentId: 'codex', cellOrigin: CELL_ORIGIN, cellHome: HOME, directory: stateDir('codex') })
     expect(staged.files[0]?.cellPath).toBe('/home/dev/.codex/config.toml')
   })
 
-  it('cellRootFor 把生成目录钉在 ~/.abx/cells/<cellId> 下', () => {
-    expect(cellRootFor('claude-1', HOME)).toBe('/home/dev/.abx/cells/claude-1')
-  })
-
-  it('cellId 里的目录成分被丢掉，免得生成目录跑到 ~/.abx 外面', () => {
-    expect(cellRootFor('../../etc', HOME)).toBe('/home/dev/.abx/cells/etc')
-  })
-
   it('toSandboxConfigFiles 只带路径，不带内容', () => {
-    const staged = stageAgentConfig({ agentId: 'claude', cellOrigin: CELL_ORIGIN, homeDir: HOME, cellRoot: cellRoot() })
+    const staged = stageAgentConfig({ agentId: 'claude', cellOrigin: CELL_ORIGIN, cellHome: HOME, directory: stateDir() })
     expect(toSandboxConfigFiles(staged)).toEqual([
       { hostPath: staged.files[0]?.hostPath, cellPath: '/home/dev/.claude/settings.json' },
     ])
   })
 
-  it('生成出来的东西能直接过挂载策略：只读单文件', () => {
+  it('生成出来的东西能直接过挂载策略：目录 rw、那一格 ro，两个挂载点并存', () => {
     // 两个模块之间最容易漂的一处：生成器把文件写到 A，策略以为允许的是 B。
-    const root = cellRoot()
-    const staged = stageAgentConfig({ agentId: 'claude', cellOrigin: CELL_ORIGIN, homeDir: HOME, cellRoot: root })
+    // 这里连状态目录一起过一遍，因为它们现在是**嵌套**的（配置在状态目录内部）。
+    const directory = stateDir()
+    const staged = stageAgentConfig({ agentId: 'claude', cellOrigin: CELL_ORIGIN, cellHome: HOME, directory })
     const configFiles = toSandboxConfigFiles(staged)
-    const mounts = MOUNT_POLICY.buildMounts('/home/dev/projects/thing', '/workspace', configFiles)
+    const stateDirs = [{ hostPath: directory, cellPath: '/home/dev/.claude', agentId: 'claude' }]
+    const mounts = MOUNT_POLICY.buildMounts('/home/dev/projects/thing', '/workspace', configFiles, stateDirs)
     expect(() =>
-      assertMountPolicy({ mounts, taskDir: '/home/dev/projects/thing', workdir: '/workspace', agentConfigFiles: configFiles }),
+      assertMountPolicy({
+        mounts,
+        taskDir: '/home/dev/projects/thing',
+        workdir: '/workspace',
+        agentConfigFiles: configFiles,
+        stateDirs,
+        instancesRoot: path.dirname(path.dirname(directory)),
+        homeDir: '/home/dev',
+        cellHome: HOME,
+      }),
     ).not.toThrow()
   })
 
-  it('重跑同一个 cellId 不会因为文件只读而写不进去', () => {
-    const root = cellRoot()
+  it('重跑同一个实例不会因为文件只读而写不进去', () => {
+    const directory = stateDir()
     expect(() => {
-      stageAgentConfig({ agentId: 'claude', cellOrigin: CELL_ORIGIN, homeDir: HOME, cellRoot: root })
-      stageAgentConfig({ agentId: 'claude', cellOrigin: CELL_ORIGIN, homeDir: HOME, cellRoot: root })
+      stageAgentConfig({ agentId: 'claude', cellOrigin: CELL_ORIGIN, cellHome: HOME, directory })
+      stageAgentConfig({ agentId: 'claude', cellOrigin: CELL_ORIGIN, cellHome: HOME, directory })
     }).not.toThrow()
   })
 })
+
+/** 注册表里这个 agent 会生成的那个配置文件名（它只有一份）。 */
+function agentConfigFileNameFor(agentId: string): string {
+  const agent = findAgent(agentId)
+  if (agent === null) throw new Error(`测试里写了不存在的 agent：${agentId}`)
+  const [file] = generatedConfigFiles(agent)
+  const name = file?.path.split('/').at(-1)
+  if (name === undefined) throw new Error(`${agentId} 没有登记会生成的配置文件`)
+  return name
+}

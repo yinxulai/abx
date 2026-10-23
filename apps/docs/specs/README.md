@@ -90,6 +90,7 @@
 | agent 配置与上游接线 | [agent-config.md](./overview/agent-config.md) | 只读挂载生成配置、不挂凭据文件、气闸默认上游 osw、为什么不需要改 osw、agent id 与 osw client key 的对应 |
 | `overview/agent-manifest.md` | Agent 清单：一个 agent 由哪些数据构成（展示 / 持久化目录 / 镜像 / 配置模板） |
 | 核心模块架构 | [architecture.md](./overview/architecture.md) | 目标结构、单向依赖规则、contracts / policy / broker / session / mounts 的边界与接口、安全不变量清单、文件闸口、舱令牌投递、真实 Docker 验证结论 |
+| 实例持久化 | [persistence.md](./overview/persistence.md) | 为什么用宿主目录而不是留着容器、为什么按实例而不是按舱、整目录 rw 而不是子路径白名单、嵌套只读的实测结果、两类可写挂载与四道闸 |
 
 **这两份冲突时**：产品取舍看 `design.md`，技术边界看 `architecture.md`。
 `architecture.md` §17 记录了它对 `design.md` 的修正，§19 记录了实测推翻的假设。

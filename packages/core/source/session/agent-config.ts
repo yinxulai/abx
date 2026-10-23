@@ -24,9 +24,9 @@
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
 import path from 'node:path'
 import {
+  DEFAULT_CELL_HOME,
   findAgent,
   generatedConfigFiles,
   productName,
@@ -61,8 +61,19 @@ export interface RenderAgentConfigOptions {
   /** 舱令牌。只有「配置允许 + 这个 agent 没有别的投递方式」时才会进 URL。 */
   readonly cellToken?: string
   readonly tokenInPath?: boolean
-  /** `~` 展开成哪儿。默认当前用户的主目录，测试里覆盖它。 */
-  readonly homeDir?: string
+  /**
+   * `~` 展开成哪儿。
+   *
+   * **是舱内的 home（`session.cellHome`），不是宿主 home。** 这一条曾经写错过：
+   * 默认取 `os.homedir()`，于是生成出来的 `cellPath` 是
+   * `/home/<宿主用户>/.claude/settings.json`，而舱内 agent 只会去读
+   * `$HOME/.claude/settings.json`（= `/home/node/...`）。挂载参数看上去完全正常，
+   * 「让 agent 走气闸」这件事实际没生效。
+   *
+   * 默认值就是舱内的那个 home，所以「忘了传」得到的是对的答案；要传别的
+   * （例如镜像换了 uid）时显式传。
+   */
+  readonly cellHome?: string
 }
 
 export interface RenderedAgentConfigFile {
@@ -94,10 +105,10 @@ export function renderAgentConfig(options: RenderAgentConfigOptions): RenderedAg
     tokenInPath: options.tokenInPath ?? false,
   })
 
-  const homeDir = options.homeDir ?? homedir()
+  const cellHome = options.cellHome ?? DEFAULT_CELL_HOME
   const files = generatedConfigFiles(agent).map((file) => ({
     fileName: fileNameOf(file.path),
-    cellPath: expandHome(file.path, homeDir),
+    cellPath: expandHome(file.path, cellHome),
     format: file.format,
     content: renderContent(agent, file, baseUrl),
   }))
@@ -106,50 +117,85 @@ export function renderAgentConfig(options: RenderAgentConfigOptions): RenderedAg
 }
 
 /**
- * 一次会话的宿主目录：`~/.abx/cells/<cellId>`。
+ * agent 在舱内的主目录：`<cellHome>/.claude` 这样一段。
  *
- * 选在 `~/.abx/` 下面有两个理由：它跟着 home 走（Docker Desktop 只把 home 下的路径
- * 共享给 VM，见 architecture §19.2），以及它与任务目录天然分开——abx 生成的东西
- * 不该混进用户的项目里。
+ * 从注册表里那几份**会生成**的配置文件的路径推出来，而不是在代码里写死一张
+ * `claude → .claude` 的表：注册表已经是路径的唯一真相，再写一张表就会漂。
+ *
+ * 这个目录同时也是持久化挂载点（见 `instance.ts`）：把整个 agent 主目录挂进去，
+ * 历史才跟着走。所以下面几条都必须拦住——
+ *
+ *   - 配置文件分散在多个目录：只能挂一个，另一个会静默丢历史，不如直接抛；
+ *   - 目录就是舱内 home 本身：那等于把整个 home 变成可写挂载点，挂载面大了一整圈。
  */
-export function cellRootFor(cellId: string, homeDir: string = homedir()): string {
-  // cellId 是我们自己生成的（agent-时间戳-随机后缀），但这一层不假设调用方老实：
-  // 带 `../` 的 id 会把生成目录挪到 `~/.abx/` 外面去。取 basename 就够。
-  return path.join(homeDir, '.abx', 'cells', path.basename(cellId))
+export function agentHomePath(agent: AgentDefinition, cellHome: string = DEFAULT_CELL_HOME): string {
+  const directories = [
+    ...new Set(
+      generatedConfigFiles(agent).map((file) => path.posix.dirname(expandHome(file.path, cellHome))),
+    ),
+  ]
+
+  const directory = directories[0]
+  if (directory === undefined) {
+    throw new AgentConfigError(`agent ${agent.id} 没有登记任何会生成的配置文件，不知道它的舱内主目录在哪。`)
+  }
+  if (directories.length > 1) {
+    throw new AgentConfigError(
+      `agent ${agent.id} 的配置文件分散在多个目录里（${directories.join('、')}）：` +
+        `持久化挂载只能挂一个目录，请先把它们收敛到同一个目录下。`,
+    )
+  }
+  if (directory === cellHome || directory === '/' || directory === '.') {
+    throw new AgentConfigError(
+      `agent ${agent.id} 的配置直接写在舱内 home 根上（${directory}）：` +
+        `那会把整个 home 变成可写挂载点，请让它住在自己的子目录里。`,
+    )
+  }
+
+  return directory
 }
 
 export interface StagedAgentConfigFile extends RenderedAgentConfigFile {
-  /** 宿主上实际写到哪儿：`<cellRoot>/agents/<agentId>/<文件名>`。 */
+  /** 宿主上实际写到哪儿：`<实例状态目录>/<文件名>`。 */
   readonly hostPath: string
 }
 
 export interface StagedAgentConfig {
   readonly agentId: string
-  readonly cellRoot: string
+  /** 写进了哪个目录。就是这次会话的实例状态目录。 */
+  readonly directory: string
   readonly baseUrl: string
   readonly files: readonly StagedAgentConfigFile[]
 }
 
 export interface StageAgentConfigOptions extends RenderAgentConfigOptions {
-  /** 这次会话的目录，约定是 `~/.abx/cells/<cellId>`。 */
-  readonly cellRoot: string
+  /**
+   * 写到哪个目录：`<instancesRoot>/<instanceId>/<agentId>`，也就是**实例状态目录**。
+   *
+   * 由调用方给而不是这一层自己算：那个目录必须先由 `ensureInstanceStateDir()` 建出来、
+   * 再过 `assertStateDirPolicy()` 那几道闸，**然后**才能往里写。这一层只负责写。
+   */
+  readonly directory: string
 }
 
 /**
  * 生成并落盘。
  *
- * 落盘位置是 `<cellRoot>/agents/<agentId>/<原文件名>`：**每个 agent 一个子目录**，
- * 因为同一个 cellId 下不会有第二个 agent，而分开之后「这份配置是谁的」在文件系统上
- * 就是显然的，排查时不用去猜。挂载时挂的是这个目录里的**一个文件**，不是目录。
+ * 落盘位置是**实例状态目录本身**（`<instancesRoot>/<instanceId>/<agentId>/settings.json`），
+ * 而不是另一个地方：那个目录整个以 rw 挂进舱（历史要写在里面），而配置文件就长在
+ * 它里面，于是它天然落在了「可写挂载**内部**」。
+ *
+ * 所以起容器时还要在这个文件上再套一层**只读**挂载（见 `mount-policy.ts` 里
+ * 「生成的配置挂回实例状态目录内部」那条规则）：docker 的嵌套绑定是「深的目标赢」，
+ * 目录整体可写、配置那一格改不动，两件事同时成立。
  *
  * 不把文件权限改成 0444：只读是 `:ro` 挂载参数保证的（见 `docker-backend.ts`），
- * 而改权限会在同一个 cellId 重跑时把自己锁在外面——下一轮写不进去，报的还是一个
- * 跟挂载毫无关系的 EACCES。
+ * 而改权限会让下一轮重写时把自己锁在外面——报的还是一个跟挂载毫无关系的 EACCES。
  */
 export function stageAgentConfig(options: StageAgentConfigOptions): StagedAgentConfig {
   const rendered = renderAgentConfig(options)
-  const directory = path.join(options.cellRoot, 'agents', rendered.agentId)
-  mkdirSync(directory, { recursive: true })
+  const directory = options.directory
+  mkdirSync(directory, { recursive: true, mode: 0o700 })
 
   const files = rendered.files.map((file) => {
     const hostPath = path.join(directory, file.fileName)
@@ -157,7 +203,7 @@ export function stageAgentConfig(options: StageAgentConfigOptions): StagedAgentC
     return { ...file, hostPath }
   })
 
-  return { agentId: rendered.agentId, cellRoot: options.cellRoot, baseUrl: rendered.baseUrl, files }
+  return { agentId: rendered.agentId, directory, baseUrl: rendered.baseUrl, files }
 }
 
 /**

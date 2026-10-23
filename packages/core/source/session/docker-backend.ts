@@ -33,9 +33,12 @@ export function buildDockerArgs(spec: SandboxSpec, mounts: readonly SandboxMount
     // 退出即销毁。这是「不留持久化痕迹」的实现方式——不是靠事后清理，
     // 而是压根不给它留下一个可以被重新启动的容器。
     '--rm',
-    // 交互 + TTY：agent 命令行多半需要。
+    // 交互：stdin 保持可读，任何情况下都要。
     '--interactive',
-    '--tty',
+    // TTY 只在调用方确认自己有终端时才给。`--tty` 要求**启动方**的 stdin 是终端；
+    // 托盘（管道 spawn）、CI、脚本里都不是，这时带上 `--tty` 不是降级，
+    // 而是 docker 直接拒绝起容器（cannot attach stdin to a TTY-enabled container）。
+    ...(spec.allocateTty ? ['--tty'] : []),
     // pid 1 交给 tini，负责回收僵尸进程。
     '--init',
     '--name',
@@ -47,6 +50,14 @@ export function buildDockerArgs(spec: SandboxSpec, mounts: readonly SandboxMount
     // 非 root。
     '--user',
     spec.user,
+    // 舱内的 home 显式注入，不依赖镜像默认值。
+    //
+    // 为什么值得单独一行：agent 的会话历史（`~/.claude/projects/*.jsonl` 之类）
+    // 写在哪，取决于 `HOME`；而实例状态目录挂在哪，取决于配置里的 `cellHome`。
+    // 两个值一旦分家，舱内就会往一个**没挂载**的路径写历史——容器一退，
+    // 历史连同容器一起没，而命令行里看不出任何异常。
+    '--env',
+    `HOME=${spec.cellHome}`,
     '--workdir',
     spec.workdir,
     // 资源限额。
@@ -104,12 +115,21 @@ export function createDockerBackend(options: DockerBackendOptions = {}): Sandbox
       assertNoForbiddenEnv(spec)
 
       const taskDir = path.resolve(spec.taskDir)
-      // 生成好的 agent 配置跟着一起进挂载清单：**每个文件一个只读挂载点**。
-      // 只读与「逐个文件」不是这里的选择，是 `MOUNT_POLICY.buildMounts` 的构造结果——
-      // 这一层没有把它改成 rw 或者改成目录的入口。
+      // 生成好的 agent 配置与实例状态目录跟着一起进挂载清单：配置**每个文件一个
+      // 只读挂载点**，状态目录**一个可写目录挂载点**。形态不是这里的选择，
+      // 是 `MOUNT_POLICY.buildMounts` 的构造结果——这一层没有把配置改成 rw、
+      // 或者把状态目录改成只读的入口。
       const agentConfigFiles = spec.agentConfigFiles ?? []
-      const mounts = MOUNT_POLICY.buildMounts(taskDir, spec.workdir, agentConfigFiles)
-      assertMountPolicy({ mounts, taskDir, workdir: spec.workdir, agentConfigFiles })
+      const stateDirs = spec.stateDirs ?? []
+      const mounts = MOUNT_POLICY.buildMounts(taskDir, spec.workdir, agentConfigFiles, stateDirs)
+      assertMountPolicy({
+        mounts,
+        taskDir,
+        workdir: spec.workdir,
+        agentConfigFiles,
+        stateDirs,
+        cellHome: spec.cellHome,
+      })
 
       const args = buildDockerArgs(spec, mounts)
       const child = spawnProcess(dockerPath, [...args], {
