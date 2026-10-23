@@ -213,7 +213,12 @@ import { pathToFileURL } from 'node:url'
 
 const coreDir = process.env.ABX_CORE_DIR
 const load = async (name) => import(pathToFileURL(path.join(coreDir, `${name}.ts`)).href)
+// `host-platform.ts` 住在 `source/` 根下，不在 `commands/` 里，所以另配一个往上一层找的
+// 加载器（`load()` 认的是命令层那一格）。
+const coreRoot = path.join(coreDir, '..')
+const loadCore = async (name) => import(pathToFileURL(path.join(coreRoot, `${name}.ts`)).href)
 const { resolveContext } = await load('runtime')
+const { requireHostPlatform } = await loadCore('host-platform')
 const { runOpen } = await load('open')
 
 const argv = process.argv.slice(2)
@@ -238,9 +243,17 @@ while (argv.length > 0) {
 }
 
 const log = (message) => process.stdout.write(`${message}\n`)
+// 宿主平台由**宿主层**读一次再传下去（见 core 的 `host-platform.ts`）：core 不自己去读
+// `process.platform`，所以这个夹具得像产品入口那样读一次。产品里那一处是 `apps/app`，
+// 这里是它的等价物——与 `e2e-local.sh` / `e2e-persist.sh` / `e2e-shared.sh` 同一套写法。
 process.exitCode = await runOpen({
   options,
-  context: resolveContext({ cwd: process.cwd(), env: process.env, configPath: options.configPath }),
+  context: resolveContext({
+    cwd: process.cwd(),
+    env: process.env,
+    configPath: options.configPath,
+    platform: requireHostPlatform(process.platform),
+  }),
   log,
 })
 EOF
@@ -500,6 +513,7 @@ const load = async (relative) => import(pathToFileURL(path.join(REPO, relative))
 const { MCP_SHIM_CELL_PATH, findAgent } = await load('packages/contracts/source/index.ts')
 const { startBroker } = await load('packages/core/source/broker/index.ts')
 const { createTransomRuntime } = await load('packages/core/source/commands/runtime.ts')
+const { requireHostPlatform } = await load('packages/core/source/host-platform.ts')
 const { createDockerBackend, buildCellEnv, stageAgentConfig, toSandboxConfigFiles } = await load(
   'packages/core/source/session/index.ts',
 )
@@ -564,8 +578,11 @@ const config = {
 }
 
 const backend = createDockerBackend()
+// 宿主平台：core 不自己去读 `process.platform`，见 `packages/core/source/host-platform.ts`。
+const platform = requireHostPlatform(process.platform)
 const baseSpec = {
   agentId: 'claude',
+  platform,
   allocateTty: false,
   taskDir,
   workdir: '/workspace',
