@@ -5,3 +5,6 @@ packages:
 allowBuilds:
   # esbuild 需要 postinstall 安装对应平台的二进制。
   esbuild: true
+  # electron 的 postinstall 负责下载对应平台的二进制；不放行的话 `pnpm install`
+  # 只会装到一层 JS 壳，`electron` 命令、以及后续的打包都会在运行期才报错。
+  electron: true
