@@ -329,7 +329,7 @@ export const en = {
       },
       drop: {
         title: 'Drag a directory in',
-        body: 'Drop it on the menu bar icon, or on the dashed area in the panel. It becomes a shared item: the agent inside can read it at once, read-only. It works inside that directory, writes what it produces into the outbox of its own cell, and one click puts that in Finder.',
+        body: 'Drop it on the menu bar icon, or on the dashed area in the panel. It becomes a shared item: the agent inside can read it at once, read-only. It works inside that directory, and hands over what it makes: the kinds that are safe to look at (images, PDF, plain text, tables) open right away, the rest (.html, .svg, scripts) only show up in the folder. "Open" means shown to you, not run for you.',
       },
     },
     note: 'Drag and drop uses the native macOS menu bar, which is why the first version is macOS only. When you want things to stop, go to the management panel: "Stop all" at the top stops everything at once — the files in the shared area and the outbox stay where they are, and removing a shared item only unmounts it, never deletes your original.',
