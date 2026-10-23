@@ -75,14 +75,12 @@ export const en = {
   },
   tray: {
     status: 'Airlock running · every credential stays outside',
-    cells: '2 cells',
+    stateRunning: 'Running',
+    stateIdle: 'Not running',
     shared: 'Shared with every agent',
-    sharedCount: '2 items',
+    sharedCount: '{{count}} items',
     readOnly: 'read-only',
-    dropHint: 'Drop a file here → every agent sees it at once',
-    audit: 'Audit log…',
-    stopAll: 'Stop all',
-    quit: 'Quit',
+    dropHint: 'Drop here → every agent sees it at once',
     caption: 'Panel mock-up · drawn from the product spec; the desktop shell is still in progress',
   },
   model: {
