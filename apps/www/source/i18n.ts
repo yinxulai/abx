@@ -36,7 +36,12 @@ export const FALLBACK_LANG: Lang = 'zh'
  * 就不存在「中文表改了、组件里的原文忘了改」这种双份真相。
  */
 export const en = {
+  app: {
+    skipToContent: 'Skip to content',
+  },
   nav: {
+    label: 'Page sections',
+    home: 'Back to the top of the page',
     model: 'Credentials',
     agents: 'Agents',
     start: 'Get started',
