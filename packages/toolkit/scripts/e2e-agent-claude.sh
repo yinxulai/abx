@@ -57,9 +57,6 @@ cleanup() {
   # 连 `--keep`（留给现场复查用）也不例外——留现场是为了看日志与审计，
   # 不是为了把密钥留在磁盘上。
   rm -f "$WORK/gateway.json" 2>/dev/null
-  if [ -n "${CELL_CONTAINER:-}" ]; then
-    docker rm -f "$CELL_CONTAINER" >/dev/null 2>&1 || true
-  fi
   if [ "$KEEP" = "1" ]; then
     printf '\n临时目录保留在 %s（gateway.json 已删）\n' "$WORK"
   else
@@ -290,6 +287,25 @@ function strip(text) {
   return text.replaceAll('\r\n', '\n').replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '')
 }
 
+// 挂在哪一步了。崩了的时候要能一眼看出是探测、还是生成配置、还是起容器。
+let stage = 'init'
+const at = (name) => {
+  stage = name
+  log(`[stage] ${name}`)
+}
+
+// 任何一条失败路径都要过红。
+//
+// 不能只靠「我们记得在每个 catch 里 redact」：配置层的报错信息里就带域名
+// （`域名 X 不在 egress.allow 里`），一个没接住的异常就把它原样打到终端上了。
+// 所以兜底放在进程级：凡是没接住的，先过 redact 再写出去。
+for (const event of ['uncaughtException', 'unhandledRejection']) {
+  process.on(event, (error) => {
+    process.stderr.write(`\n[driver] 在 ${stage} 这一步挂了：\n${redact(error?.stack ?? String(error))}\n`)
+    process.exit(1)
+  })
+}
+
 const core = (name) => pathToFileURL(path.join(REPO, 'packages/core/source', name)).href
 const contracts = () => pathToFileURL(path.join(REPO, 'packages/contracts/source/index.ts')).href
 
@@ -330,6 +346,7 @@ function check(label, condition, detail) {
 }
 
 // ── 1. 配置（真命令层）────────────────────────────────────────────────────
+at('读配置')
 const context = resolveContext({ cwd: REPO, env: process.env, configPath: CONFIG })
 const config = context.config
 const agent = findAgent('claude')
@@ -352,6 +369,7 @@ if (!config.session.image.startsWith('abx-agent-claude')) {
 }
 
 // ── 2. 真 broker ──────────────────────────────────────────────────────────
+at('起 broker')
 const handle = await startBroker({
   config,
   env: process.env,
@@ -466,6 +484,7 @@ for (const host of ${JSON.stringify(CANDIDATES)}) {
 }
 `
 
+at('探测舱面地址')
 log('')
 log('[probe] 从舱内依次探候选地址（探 /healthz 且不带令牌：HTTP 401 = 到了舱面）')
 const probe = await runContainer({
@@ -492,6 +511,7 @@ log('        因为配置里的 broker.cellHost 同时兼着「绑哪儿」和�
 
 // ── 4. 生成的配置挂在哪 vs 舱内 agent 去哪儿找 ────────────────────────────
 // 这一段是**观测**，不是断言通过与否：它要给「HOME 错配」一个直接证据。
+at('生成并落盘 agent 配置')
 const staged = stageAgentConfig({
   agentId: 'claude',
   cellRoot: path.join(WORK, 'cells', cellId),
@@ -519,6 +539,7 @@ touch "$home/.abx-write-probe" 2>/dev/null && echo "ABX-OBS home-writable=yes" |
 echo "ABX-OBS 明细："
 ls -l "$mounted" 2>&1 | sed 's/^/  /'
 `
+at('舱内观测 HOME / 只读')
 const observation = await runContainer({
   label: 'observe',
   cellId: `${cellId}-observe`,
@@ -550,6 +571,7 @@ log('')
 log('[cell] 舱内会拿到的变量（值里没有真凭据：token 是占位符，baseUrl 指向气闸舱面）')
 for (const name of Object.keys(cellEnv).sort()) log(`  ${name} = ${cellEnv[name]}`)
 
+at('跑真 claude')
 const run1 = await runContainer({
   label: 'claude',
   cellId,
@@ -578,6 +600,7 @@ delete negativeEnv.ANTHROPIC_CUSTOM_HEADERS
 
 log('')
 log('[control] 反向对照：挂载不变，只拿掉 ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN')
+at('反向对照')
 const run2 = await runContainer({
   label: 'control',
   cellId: `${cellId}-control`,
@@ -592,6 +615,7 @@ check('拿掉那两个变量后跑不通（说明靠的是环境变量，不是�
 // ── 7. 凭据替换：替身上游那一侧收到了什么 ─────────────────────────────────
 // 真网关不会告诉我们它收到了什么头。所以在同一个 broker 上再配一个本机替身上游，
 // 用**舱内那个占位符**去请求它，看它收到的是占位符还是被换过的真密钥。
+at('凭据替换对照（替身上游）')
 const substitute = await new Promise((resolve) => {
   const received = []
   const server = createServer((request, response) => {
@@ -623,6 +647,7 @@ const substitute = await new Promise((resolve) => {
 write('substitution.json', substitute)
 
 // ── 8. 审计（脱敏副本）────────────────────────────────────────────────────
+at('读审计')
 const auditLines = readAudit(`${WORK}/abx-audit.jsonl`)
 const cellRecords = auditLines.filter((record) => record.cellId === cellId)
 write('audit-summary.json', {
@@ -638,6 +663,7 @@ writeFileSync(
 )
 
 // ── 9. 收尾 ───────────────────────────────────────────────────────────────
+at('收尾')
 handle.unregisterCell(cellId)
 await handle.close()
 
@@ -688,9 +714,14 @@ jget() { # <file> <dotted.path>
   node -e '
 const fs = require("node:fs")
 const [file, expr] = process.argv.slice(1)
-const value = expr.split(".").reduce((acc, key) => (acc === null || acc === undefined ? acc : acc[key]), JSON.parse(fs.readFileSync(file, "utf8")))
+let value
+try {
+  value = expr.split(".").reduce((acc, key) => (acc === null || acc === undefined ? acc : acc[key]), JSON.parse(fs.readFileSync(file, "utf8")))
+} catch {
+  value = undefined // 文件不在就把这里当空值；「为什么不在」由驱动的日志去说
+}
 process.stdout.write(value === undefined || value === null ? "" : String(value))
-' "$WORK/$1" "$2"
+' "$WORK/$1" "$2" 2>/dev/null
 }
 
 step '3. 舱内 claude 真的产出了输出'
@@ -711,7 +742,14 @@ fi
 step '4. 上游（那个网关）真的收到了这次请求'
 
 AUDIT_FACTS="$(node -e '
-const summary = require(process.argv[1])
+const fs = require("node:fs")
+let summary
+try {
+  summary = JSON.parse(fs.readFileSync(process.argv[1], "utf8"))
+} catch {
+  process.stdout.write("读不到 audit-summary.json\n")
+  process.exit(1)
+}
 const hit = summary.records.filter(
   (record) => record.decision === "allowed" && record.status === 200 && record.credentialInjected === true && record.upstreamId === "anthropic",
 )
@@ -738,10 +776,14 @@ step '5. 舱内那个占位符没有出现在上游那一侧'
 
 SUB_AUTH="$(node -e '
 const fs = require("node:fs")
-const file = process.argv[1]
-const data = JSON.parse(fs.readFileSync(file, "utf8"))
-const first = data.received[0] ?? {}
-process.stdout.write(`${data.status}|${first.authorization ?? "(上游一个请求都没收到)"}|${data.placeholder}`)
+let data
+try {
+  data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"))
+} catch {
+  data = null
+}
+const first = data?.received?.[0] ?? {}
+process.stdout.write(`${data?.status ?? "?"}|${first.authorization ?? "(上游一个请求都没收到)"}|${data?.placeholder ?? "?"}`)
 ' "$WORK/substitution.json")"
 SUB_STATUS="${SUB_AUTH%%|*}"
 SUB_REST="${SUB_AUTH#*|}"
