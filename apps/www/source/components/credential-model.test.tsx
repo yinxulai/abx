@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { renderApp, textOf } from '../test-support'
+import { FULL_PAGE_TIMEOUT, renderApp, textOf } from '../test-support'
 
 /**
  * 这一节是产品的立身之本，所以判据不是「有没有这一段」，而是**四条性质一条不少、
@@ -11,7 +11,8 @@ afterEach(cleanup)
 
 const section = () => screen.getByRole('region', { name: /密钥不进舱|Keys do not enter/ })
 
-describe('credential model', () => {
+// 每一条都挂载整页，所以用整页那一档超时（理由见 `test-support.tsx`）。
+describe('credential model', { timeout: FULL_PAGE_TIMEOUT }, () => {
   it('states all four properties of the model', async () => {
     await renderApp('zh')
 

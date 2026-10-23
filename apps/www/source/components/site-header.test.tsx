@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { renderApp, textOf } from '../test-support'
+import { FULL_PAGE_TIMEOUT, renderApp, textOf } from '../test-support'
 
 /**
  * 顶栏的开关都会悄悄腐烂：语言开关点了不换文案、主题开关只改了按钮图标、
@@ -14,7 +14,8 @@ afterEach(cleanup)
 
 const navOf = () => screen.getByRole('navigation', { name: /页面章节|Page sections/ })
 
-describe('site header', () => {
+// 每一条都挂载整页，所以用整页那一档超时（理由见 `test-support.tsx`）。
+describe('site header', { timeout: FULL_PAGE_TIMEOUT }, () => {
   it('switches the page to English and back, for real', async () => {
     await renderApp('zh')
     expect(textOf(screen.getByRole('heading', { level: 1 }))).toContain('隔离舱')
