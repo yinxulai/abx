@@ -330,10 +330,11 @@ Error [ERR_MODULE_NOT_FOUND]: Cannot find module
 脚本在临时目录里放了一个十几行的解析钩子（只做「补 `.ts` / 补 `/index.ts`」），
 用 `node --import` 挂上去。**没有新增依赖，用的全是 node 内置模块。**
 
-> 这也是 `apps/cli` 被删掉之后留下的一处陈旧：`packages/toolkit/scripts/e2e-local.sh`
-> 仍然在调 `node apps/cli/source/index.ts`，而 `apps/` 下已经只有 `app` / `docs` / `www`。
-> 本作业没有改它（不在范围内），但**它现在跑不起来**，谁要用先修它的入口。
-> 另：它的 `ROOT` 算的是 `packages/toolkit`，后面却按仓库根用相对路径，这两处对不上。
+> `e2e-local.sh` 也走了同一条路。它原先调 `node apps/cli/source/index.ts`，而 `apps/cli`
+> 已经在 `c4a49d7` 里删掉了，脚本因此跑不起来；现在它不再找任何命令行入口，而是在临时目录里
+> 生成一个极小的 argv 适配器，直接 import `packages/core/source/commands/` 的
+> `doctor` / `broker` / `open` / `audit`。适配器和钩子都活在 `$TMPDIR` 里，
+> 运行结束就没了——仓库里**不会**因此多出第二个命令行产品。
 
 ---
 
