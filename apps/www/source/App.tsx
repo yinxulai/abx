@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AgentOverview } from './components/agent-overview'
 import { Boundaries } from './components/boundaries'
+import { Changelog } from './components/changelog'
 import { CredentialModel } from './components/credential-model'
 import { DownloadSection } from './components/download-section'
 import { Faq } from './components/faq'
@@ -60,6 +61,7 @@ export const App = () => {
         <GettingStarted />
         <Boundaries />
         <Faq />
+        <Changelog />
         <DownloadSection />
       </main>
 

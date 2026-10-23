@@ -54,6 +54,7 @@ export const en = {
     start: 'Get started',
     boundaries: 'Boundaries',
     faq: 'FAQ',
+    changelog: 'Changelog',
     download: 'Download',
     themeLight: 'Switch to light theme',
     themeDark: 'Switch to dark theme',
@@ -237,6 +238,26 @@ export const en = {
       longLived:
         'You want a long-lived environment that keeps all its state across sessions — cells are disposable.',
     },
+  },
+  changelog: {
+    eyebrow: 'Changelog',
+    title: 'Only what has been released',
+    lead: 'A line gets added here when something actually ships. Nothing has shipped yet, so there is one entry: unreleased.',
+    release: {
+      first: {
+        status: 'unreleased',
+        title: 'What the first version is meant to include',
+        item: {
+          tray: 'A menu bar app: click the icon for the panel, drag files or directories in',
+          airlock: 'The airlock: cell tokens, the egress allowlist, credential substitution, the audit log',
+          agents: 'Minimal configuration generated for three agents (claude / codex / dsh)',
+          cells: 'Starting and destroying cells: shared items mounted read-only, output written to the outbox',
+        },
+        caveat:
+          'This is the scope, not a scoreboard: not all of it is finished, and how far along it is lives in the project roadmap, not here.',
+      },
+    },
+    note: 'The site does not keep a second copy of the progress. How far each piece has got is tracked in the project roadmap, and two progress lists always drift apart. This page answers one question: what was released.',
   },
   faq: {
     eyebrow: 'FAQ',

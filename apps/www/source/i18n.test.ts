@@ -121,6 +121,13 @@ const DYNAMIC_TRANSLATION_KEYS = [
   'faq.item.available.a',
   'faq.item.account.q',
   'faq.item.account.a',
+  'changelog.release.first.status',
+  'changelog.release.first.title',
+  'changelog.release.first.item.tray',
+  'changelog.release.first.item.airlock',
+  'changelog.release.first.item.agents',
+  'changelog.release.first.item.cells',
+  'changelog.release.first.caveat',
 ] as const
 
 describe('官网 i18n', () => {
