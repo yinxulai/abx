@@ -121,13 +121,15 @@ export function createDockerBackend(options: DockerBackendOptions = {}): Sandbox
       // 或者把状态目录改成只读的入口。
       const agentConfigFiles = spec.agentConfigFiles ?? []
       const stateDirs = spec.stateDirs ?? []
-      const mounts = MOUNT_POLICY.buildMounts(taskDir, spec.workdir, agentConfigFiles, stateDirs)
+      const sharedMounts = spec.sharedMounts ?? []
+      const mounts = MOUNT_POLICY.buildMounts(taskDir, spec.workdir, agentConfigFiles, stateDirs, sharedMounts)
       assertMountPolicy({
         mounts,
         taskDir,
         workdir: spec.workdir,
         agentConfigFiles,
         stateDirs,
+        sharedMounts,
         cellHome: spec.cellHome,
       })
 

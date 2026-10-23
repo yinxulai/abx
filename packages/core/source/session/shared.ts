@@ -36,13 +36,11 @@ import {
   FORBIDDEN_INSTANCE_ROOT_SUBDIRS,
   FORBIDDEN_MOUNT_PREFIXES,
   MountPolicyViolation,
+  SHARED_CELL_ROOT,
   isAncestor,
   isUnder,
   matchCredentialFileRule,
 } from './mount-policy'
-
-/** 舱内共享区的根。共享条目一律挂在它下面，别处一个挂载点都不开。 */
-export const SHARED_CELL_ROOT = '/shared'
 
 /**
  * 扫一个目录时最多看多少个条目。

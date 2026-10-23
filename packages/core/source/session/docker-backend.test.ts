@@ -299,6 +299,38 @@ describe('实例状态目录：第二个可写挂载，配置嵌在它里面', a
   })
 })
 
+describe('共享条目：只读挂进 /shared，且不计入可写', () => {
+  it('每一条共享条目就是一条 --volume，权限是 ro', () => {
+    const shared = [
+      { source: '/home/dev/projects/notes', target: '/shared/notes', mode: 'ro' as const },
+      { source: '/home/dev/data', target: '/shared/data', mode: 'ro' as const },
+    ]
+    const current = spec({ sharedMounts: shared })
+    const volumes = allFlagValues(
+      buildDockerArgs(current, MOUNT_POLICY.buildMounts(current.taskDir, current.workdir, [], [], shared)),
+      '--volume',
+    )
+
+    expect(volumes).toEqual([
+      `${TASK_DIR}:/workspace:rw`,
+      '/home/dev/projects/notes:/shared/notes:ro',
+      '/home/dev/data:/shared/data:ro',
+    ])
+    // 可写挂载仍然只有任务目录一个：共享是只读的，不该占可写的额度。
+    expect(volumes.filter((volume) => volume.endsWith(':rw'))).toEqual([`${TASK_DIR}:/workspace:rw`])
+  })
+
+  it('目录共享就是一条挂载——1000 个文件也是这一条', () => {
+    // 这条断言防的是「递归展开成单文件挂载」那种改法：它会让 argv 的体积跟着
+    // 目录内容走，而且目录里新增的文件从此不再出现。
+    const shared = [{ source: '/home/dev/projects/notes', target: '/shared/notes', mode: 'ro' as const }]
+    const current = spec({ sharedMounts: shared })
+
+    const args = buildDockerArgs(current, MOUNT_POLICY.buildMounts(current.taskDir, current.workdir, [], [], shared))
+    expect(allFlagValues(args, '--volume')).toHaveLength(2)
+  })
+})
+
 describe('containerName', () => {
   it('加前缀，便于一眼认出是气闸起的', () => {
     expect(containerName('claude-1')).toBe('abx-claude-1')
