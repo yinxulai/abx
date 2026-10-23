@@ -2,12 +2,29 @@
 
 给 AI coding agent 用的本地隔离沙箱（代号 Airlock）。
 
+## 官网与文档
+
+| | 地址 |
+| --- | --- |
+| **官网** —— 它是什么、怎么用、明确不承诺什么 | <https://abx-www.yinxulai.workers.dev> |
+| **使用手册** —— 按读者的问题分五个 tab | <https://abx-docs.yinxulai.workers.dev> |
+
+两个站点都部署在 Cloudflare，形状是 **Worker + 静态资源**，不是经典 Pages 项目——
+所以部署命令是 `npx wrangler deploy`（配 `[assets]`），而不是 `wrangler pages deploy`
+（配 `pages_build_output_dir`）。写混了不会在构建期报错，只在部署时失败，且报错读起来
+像文件找不到。配置在各目录的 `wrangler.toml`，顶部注释写了这个坑。
+
+官网在**构建期预渲染首屏**，所以关掉 JavaScript 也能读到正文；手册是逐页静态 HTML。
+
 ## 当前状态
 
-**只有基础框架，产品逻辑尚未实现。**
+**进度以 [`apps/docs/roadmap.md`](apps/docs/roadmap.md) 为唯一来源**，那里逐层记录
+「已落地 / 部分 / 未做」。这里只给一句口径，且刻意不铺开——README 抄一份进度，
+迟早会和那份表说的不一样。
 
-仓库里现在能跑通的是一条完整的工具链：依赖安装、静态检查、类型检查、测试。
-沙箱本身（隔离、代理、进程管控）一行都还没写。
+当前：docker 后端的会话编排、共享目录（文件与目录、只读、四道闸）、agent 清单与镜像
+（`claude` / `codex`）、出口默认拒绝与审计、以及本地与容器两套端到端脚本都已落地并有测试。
+`dsh` 的镜像尚未构建，所以那个 agent 现在打不开——面板会直接告诉你原因。
 
 ## 目录结构
 
@@ -16,18 +33,22 @@
 ```
 abx/
 ├── apps/
-│   └── cli/                # @abx/cli —— 命令行入口（占位，尚未实现）
+│   ├── app/                # @abx/app —— Electron 托盘应用（唯一的人机界面）
+│   ├── www/                # @abx/www —— 官网
+│   └── docs/               # @abx/docs —— 使用手册
 ├── packages/
-│   ├── contracts/          # @abx/contracts —— 类型 + zod schema
-│   ├── core/               # @abx/core —— 领域逻辑（占位）
-│   ├── console/            # @abx/console —— Web UI（占位）
+│   ├── contracts/          # @abx/contracts —— 类型 + zod schema，唯一真相
+│   ├── core/               # @abx/core —— broker / policy / session / commands
+│   ├── console/            # @abx/console —— 托盘面板与管理面板（React）
 │   └── toolkit/            # @abx/toolkit —— 工具链，不含任何运行时代码
-│       ├── scripts/        # lint / typecheck / test / version / 包边界校验
+│       ├── scripts/        # lint / typecheck / test / version / 包边界校验 / 端到端
 │       ├── tsconfig.check.json
 │       └── vitest.config.ts
+├── images/
+│   └── agents/             # 每个 agent 一个目录：Dockerfile + README
 ├── .github/
 │   ├── actions/setup/      # CI 共用的 Node + pnpm 安装步骤
-│   └── workflows/ci.yml    # typecheck / lint / test / build
+│   └── workflows/          # ci.yml + 各平台打包
 ├── AGENTS.md
 ├── README.md
 ├── eslint.config.js
@@ -44,9 +65,11 @@ abx/
 | --- | --- |
 | `packages/contracts` | 共享契约：跨包共用的类型与 zod schema。只描述形状，不依赖任何实现。 |
 | `packages/core` | 领域逻辑。broker / policy / session 将来作为本包的内部模块；纯 Node，不含宿主依赖。 |
-| `packages/console` | Web 控制台，将来构建为纯静态产物，只通过管理 API 与核心通信。 |
+| `packages/console` | 面板 UI（React），只跟宿主给的 bridge 说话；浏览器里也能单独打开。 |
 | `packages/toolkit` | 跨包的开发脚本与静态守卫（lint / typecheck / test / version / 包边界）。 |
-| `apps/cli` | 命令行宿主：参数解析与宿主适配，把核心能力跑成前台进程。 |
+| `apps/app` | 托盘应用宿主：系统托盘、面板窗口、拖放与会话 IPC。 |
+| `apps/www` / `apps/docs` | 两个静态站（官网 / 手册），产物部署到 Cloudflare。 |
+| `images/agents` | agent 镜像定义，一个 agent 一个目录。 |
 
 边界由 `packages/toolkit/scripts/check-package-boundaries.mjs` 守着：`packages/*` 不得依赖 `apps/*`。
 
@@ -83,4 +106,4 @@ pnpm test:coverage # 同上，并收集覆盖率
 
 前端与测试栈（React / Vite / jsdom 等）**先落在根 `devDependencies`**，`@abx/console` 本阶段只是占位、不搭应用；这样版本只有一个来源，将来 console 真正开工时不必再谈一次。
 
-尚未引入的具体产品库（electron、drizzle、CodeMirror、Radix 等）见 `AGENTS.md` 的「暂缓未加依赖」一节。
+electron 已引入（`apps/app`）；其余尚未引入的具体产品库见 `AGENTS.md` 的「暂缓未加依赖」一节。
