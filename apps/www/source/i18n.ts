@@ -53,6 +53,33 @@ export const en = {
     language: 'Language',
     status: 'macOS · in progress',
   },
+  hero: {
+    badge: 'AIRLOCK BOX · macOS tray app',
+    title: 'An airlock for your AI coding agent',
+    lead: 'Hand a repository and a few files into a disposable cell and let the agent work inside it the way it would on your machine. It cannot reach your keys, cannot leave the allowlist, and cannot delete your machine.',
+    sub: 'Models and keys stay outside, in OSW. Inside the cell there is one address and one placeholder — ',
+    subAccent: 'nothing worth leaking.',
+    primary: 'See what is inside',
+    secondary: 'How it works',
+    highlightKeys: 'No key enters the cell',
+    highlightEgress: 'Egress denied by default',
+    highlightAudit: 'Everything audited',
+  },
+  tray: {
+    status: 'Airlock running · every credential stays outside',
+    cells: '2 cells',
+    shared: 'Shared with every agent',
+    sharedCount: '2 items',
+    readOnly: 'read-only',
+    dropHint: 'Drop a file here → every agent sees it at once',
+    audit: 'Audit log…',
+    stopAll: 'Stop all',
+    quit: 'Quit',
+    caption: 'Panel mock-up · drawn from the product spec; the desktop shell is still in progress',
+  },
+  footer: {
+    line: 'An airlock for your AI coding agent. The first version is macOS only.',
+  },
 } as const
 
 /** 首次进入优先沿用上次选择，其次按浏览器语言；识别不到就用兜底语言（中文）。 */
