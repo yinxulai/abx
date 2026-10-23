@@ -1,0 +1,76 @@
+{
+  "$comment": [
+    "气闸的配置。这份文件会进仓库，所以里面**不允许出现任何明文密钥**——",
+    "凭据只写引用：secretEnv 是环境变量名，secretFile 是文件路径。",
+    "加载时会扫一遍，键名像秘密或者值长得像已知凭据的，直接拒绝启动。",
+    "字符串里可以用 ${VAR} 或 ${VAR:-默认值} 引用环境变量。"
+  ],
+
+  "broker": {
+    "hostPort": 8788,
+    "cellHost": "${ABX_CELL_HOST:-172.17.0.1}",
+    "cellPort": 8789,
+    "cellTokenEnv": "ABX_CELL_TOKEN",
+    "allowCellTokenInPath": true,
+    "auditPath": "${ABX_AUDIT_PATH:-./abx-audit.jsonl}",
+    "requestTimeoutMs": 120000
+  },
+
+  "egress": {
+    "$comment": [
+      "默认拒绝：只有列在这里的域名才放行，空数组表示全部拒绝。",
+      "三种写法：api.anthropic.com 精确；*.example.com 只含子域；.example.com 含自身与子域。",
+      "下游请求 /u/<upstreamId>/... 时白名单同样生效——不是给域名配了上游就能绕过去。"
+    ],
+    "allow": [
+      { "pattern": "api.anthropic.com", "upstreamId": "anthropic" },
+      { "pattern": "api.openai.com", "upstreamId": "openai" },
+      { "pattern": "*.openai.com", "upstreamId": "openai" },
+      "api.example.com"
+    ]
+  },
+
+  "upstreams": [
+    {
+      "id": "anthropic",
+      "baseUrl": "https://api.anthropic.com",
+      "authHeader": "authorization",
+      "authScheme": "Bearer",
+      "secretEnv": "ANTHROPIC_API_KEY"
+    },
+    {
+      "id": "openai",
+      "baseUrl": "https://api.openai.com",
+      "authHeader": "authorization",
+      "authScheme": "Bearer",
+      "secretEnv": "OPENAI_API_KEY"
+    },
+    {
+      "$comment": "dsh 是占位定义，地址和变量名都还没核实过。用之前先确认。",
+      "id": "dsh",
+      "baseUrl": "https://api.example.com",
+      "authHeader": "authorization",
+      "authScheme": "Bearer",
+      "secretEnv": "DSH_API_KEY"
+    }
+  ],
+
+  "session": {
+    "$comment": [
+      "backend 默认是 docker。想换成 local 的话，先读一遍 packages/session/source/local-backend.ts 顶部那段——",
+      "它不是沙箱，禁止用于演示。",
+      "local 后端下 broker 的舱面会自动改绑 127.0.0.1，不需要改 cellHost。"
+    ],
+    "backend": "docker",
+    "image": "node:22-slim",
+    "user": "1000:1000",
+    "network": "bridge",
+    "workdir": "/workspace",
+    "limits": {
+      "memory": "2g",
+      "pids": 256,
+      "cpus": 2
+    },
+    "tmpfsSizeMb": 64
+  }
+}
