@@ -11,7 +11,6 @@
 
 import { connect } from 'node:net'
 import { readFileSync } from 'node:fs'
-import type { TransomSession } from '../transom/service'
 import {
   ConfigError,
   findConfigFile,
@@ -27,6 +26,11 @@ import {
   readCellTokenFile,
   startBroker,
 } from '../broker/index'
+import { createFileTransomLedger, defaultTransomLedgerPath } from '../transom/ledger'
+import { createTransomMcpHandler, type TransomMcpHandler } from '../transom/mcp'
+import { createSystemOpener, type Opener } from '../transom/opener'
+import { defaultOutboxRoot } from '../transom/outbox'
+import { createTransomService, type TransomSession } from '../transom/service'
 
 export interface CommandContext {
   readonly config: AbxConfig
@@ -151,12 +155,80 @@ export interface CellBinding {
   readonly dedicated: boolean
 }
 
+/** 传递窗在这次运行里的位置。**不含任何凭据**——它只说明「东西会落到哪儿、账记在哪儿」，
+ * 而这两件事是用户需要知道的（他要去看那些文件）。
+ */
+export interface TransomStatus {
+  /** 交付根。每一次会话在它下面一格（见 `outboxDirFor`）。 */
+  readonly outboxRoot: string
+  readonly ledgerPath: string
+  /** 打开文件用的是什么命令；`null` = 这台机器上不知道怎么打开。 */
+  readonly openerName: string | null
+}
+
+/**
+ * 会话结束时能拿到的那一份。
+ *
+ * `close()` 等的是账本的最后几条记录：交付那一步已经 `await` 过账，所以它兜的是
+ * 「进程马上要退出了，别把还在队列里的那一行丢掉」。
+ */
+export interface TransomLease extends TransomStatus {
+  close(): Promise<void>
+}
+
+/** 传递窗在宿主这一侧的运行时：处理器 + 位置。 */
+export interface TransomRuntime extends TransomLease {
+  readonly handler: TransomMcpHandler
+}
+
+export interface TransomRuntimeOptions {
+  readonly env: Readonly<Record<string, string | undefined>>
+  /**
+   * 打开文件的实现。不给就按平台造一个（见 `createSystemOpener`）。
+   *
+   * **可注入是有意的**：它是唯一一处会在宿主上引起副作用的动作，用例里不能真的弹窗。
+   */
+  readonly opener?: Opener | null
+}
+
+/**
+ * 把传递窗在宿主这一侧拼起来：交付根 + 账本 + 打开方式 → 一个 MCP 处理器。
+ *
+ * 交付根与账本都从环境变量取默认值（`ABX_OUTBOX_ROOT` / `ABX_TRANSOM_LEDGER`），
+ * 于是用例不会往开发者真实的 `~/.abx` 里写东西。
+ *
+ * **它不需要任何凭据**：处理器收的会话由调用方从舱令牌解出来（见 `server.ts`），
+ * 这里只管「递给谁、落到哪儿、记在哪儿」。
+ */
+export function createTransomRuntime(options: TransomRuntimeOptions): TransomRuntime {
+  const outboxRoot = defaultOutboxRoot(options.env)
+  const ledgerPath = defaultTransomLedgerPath(options.env)
+  const opener = options.opener === undefined ? createSystemOpener() : options.opener
+  const ledger = createFileTransomLedger(ledgerPath)
+  const service = createTransomService({ outboxRoot, ledger, opener })
+
+  return {
+    handler: createTransomMcpHandler({ service }),
+    outboxRoot,
+    ledgerPath: service.ledgerPath,
+    openerName: opener === null ? null : opener.name,
+    close: () => ledger.close(),
+  }
+}
+
 export interface BrokerLease {
   readonly hostOrigin: string
   readonly cellOrigin: string
   readonly cellToken: string
   /** 是我们起的，还是接上了一个已经在跑的。 */
   readonly spawned: boolean
+  /**
+   * 这次会话的传递窗（`null` = 没有：接上的是别人的 broker）。
+   *
+   * 它只报「东西落到哪儿」，**不带令牌**：舱内那侧用的是这个舱自己的令牌，
+   * 而那一个已经由 `buildCellEnv` 注入给 agent 了，不需要再多一份。
+   */
+  readonly transom: TransomLease | null
   /**
    * 起舱：登记一个舱并拿到它专属的令牌，顺带登记它的传递窗会话。
    *
@@ -196,6 +268,9 @@ export async function ensureBroker(input: EnsureBrokerInput): Promise<BrokerLeas
       cellOrigin,
       cellToken: token,
       spawned: false,
+      // 一个字节都不接：接上的那个 broker 里没有这次会话的交付信息，
+      // 而在这里现造一个只会让人以为「传递窗通了」，实际每一条都会 409。
+      transom: null,
       registerCell: (cellId) => {
         // 注册表在另一个进程里，没有跨进程接口。这里只能退回默认舱，
         // 说清楚是为了让人知道「这个会话的审计身份不是它自己的 id」。
@@ -218,6 +293,18 @@ export async function ensureBroker(input: EnsureBrokerInput): Promise<BrokerLeas
   const token = readLiveToken(input.context, { allowEphemeral: true })
   input.log(`[abx] 启动 broker：${hostOrigin}（舱面 ${cellOrigin}）`)
 
+  // 传递窗在这一侧拼好再交给 broker。放在这里（而不是 broker 内部）是因为它要交付根、
+  // 账本和「怎么打开一个文件」——三样都属于会话编排这一侧；broker 只负责把身份解出来。
+  //
+  // 只在自己起 broker 的那条路上拼：接上别人的 broker 时，那个进程里没有我们的处理器，
+  // 拼了也用不上，还会白建一个交付根目录。
+  const transom = createTransomRuntime({ env: input.context.env })
+  if (transom.openerName === null) {
+    input.log(
+      `[abx] 注意：这台机器上不知道怎么打开文件，传递窗仍然可用——只是递出来的东西要你自己去 ${transom.outboxRoot} 看。`,
+    )
+  }
+
   // 同进程起，不拉子进程。
   //
   // 产品没有命令行，原先那个「拿自己的入口路径再 spawn 一个自己」的做法已经没有入口可指。
@@ -227,6 +314,7 @@ export async function ensureBroker(input: EnsureBrokerInput): Promise<BrokerLeas
     env: input.context.env,
     cellToken: token,
     cellHost: input.cellHost,
+    transom: transom.handler,
     logger: { info: input.log, warn: input.log, error: input.log },
   })
 
@@ -235,6 +323,7 @@ export async function ensureBroker(input: EnsureBrokerInput): Promise<BrokerLeas
     cellOrigin: handle.cellOrigin,
     cellToken: handle.cellToken,
     spawned: true,
+    transom,
     registerCell: (cellId, session) => ({ cellId, token: handle.registerCell(cellId, session), dedicated: true }),
     unregisterCell: (cellId) => handle.unregisterCell(cellId),
     stop: () => handle.close(),
