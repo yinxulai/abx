@@ -30,7 +30,14 @@ export function SharedRejectionList(props: SharedRejectionListProps) {
 
   return (
     <div className="abx-rejected">
-      <p className="abx-rejected-head">{props.rejected.length} 项未加入共享区</p>
+      {/* 「失败 / 被拒」那一行要求危险色 + 图标 + 具体原因（设计体系 §5）：
+          图标不是装饰，它让这行在色觉差异下也读得出是「出错了」而不是「只是灰了一点」。 */}
+      <p className="abx-rejected-head">
+        <span className="abx-rejected-icon" aria-hidden="true">
+          ⚠
+        </span>
+        {props.rejected.length} 项未加入共享区
+      </p>
       <ul className="abx-rejected-list" aria-label="未加入共享区的条目">
         {props.rejected.map((item) => (
           <li className="abx-rejected-row" key={item.path}>
