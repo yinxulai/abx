@@ -1,4 +1,5 @@
 import type { DragEventHandler, ReactNode, RefObject } from 'react'
+import { BrandMark } from './BrandMark'
 
 export interface PanelCardProps {
   /**
@@ -36,9 +37,9 @@ export function PanelCard(props: PanelCardProps) {
       onDrop={props.onDrop}
     >
       <header className="abx-header">
-        <span className="abx-mark" aria-hidden="true">
-          a
-        </span>
+        {/* 左端是**真实的品牌标志**，不是首字母占位（`design-system.md` §5：16px 品牌图标
+            · `abx`）。它 `aria-hidden`，名字由旁边那行 `abx` 承载——图标永不单独承载语义。 */}
+        <BrandMark className="abx-mark" />
         <span className="abx-title">
           {/* 面板是一份独立的文档（宿主里的一个窗口），标题层级从它起步——
               下面的 `共享给全部 agent` 是 `<h2>`，中间不能缺一级。 */}
