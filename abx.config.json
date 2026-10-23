@@ -8,7 +8,7 @@
 
   "broker": {
     "hostPort": 8788,
-    "cellHost": "${ABX_CELL_HOST:-172.17.0.1}",
+    "cellHost": "${ABX_CELL_HOST:-host.docker.internal}",
     "cellPort": 8789,
     "cellTokenEnv": "ABX_CELL_TOKEN",
     "allowCellTokenInPath": true,
