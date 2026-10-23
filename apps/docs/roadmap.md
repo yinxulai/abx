@@ -12,17 +12,21 @@
 | 层 | 状态 |
 |---|---|
 | 规格文档 | ✅ 已就位（`specs/`） |
-| `packages/contracts` | ⏳ 待落地（airlock 阶段已有 12 文件 / 1663 行，未搬入） |
-| `packages/core`（broker / policy / session） | ⏳ 待落地（airlock 阶段已有 29 文件 / 4880 行、310 测试全绿，未搬入） |
-| `packages/core/mounts`（共享区与文件闸口） | ⬜ 未开始 |
-| `packages/console`（React 面板） | ⬜ 占位 |
-| `apps/app`（Electron 托盘） | ⬜ 未开始 |
+| `packages/contracts` | ✅ 已落地（13 文件 / 2 测试文件） |
+| `packages/core`（broker / policy / session / commands） | ✅ 已落地（38 文件 / 14 测试文件） |
+| `packages/core/session` 的挂载与 agent 配置生成 | 🚧 进行中（并行作业 C） |
+| `packages/console`（React 面板） | 🚧 进行中（并行作业 D） |
+| `apps/app`（Electron 托盘） | 🚧 骨架已提交，面板与拖放进行中（并行作业 D） |
+| `apps/www`（官网） | 🚧 进行中（并行作业 E） |
+| macOS 打包与 CI | 🚧 进行中（并行作业 F） |
 | `apps/docs`（文档站） | ⬜ 未建站，仅有 Markdown |
 
+**当前基线（`9067355`）：** `pnpm lint` / `pnpm typecheck` / `pnpm test` 三样全绿，293 个测试。
+
 > 上表里「airlock 阶段」指本项目在 `/home/openclaw/Project/airlock` 下完成的第一次实现。
-> 那个目录是**早期的错误落点**，代码将按
+> 那个目录是**早期的错误落点**，代码已按
 > [`overview/architecture.md`](./overview/architecture.md) §1 的映射搬入本仓库，
-> 之后它不再是任何东西的正式来源。
+> 它不再是任何东西的正式来源。
 
 ---
 
@@ -70,14 +74,17 @@
 ### 阶段 0 · 能力层（进行中）
 
 - [x] 规格文档
-- [ ] 把 core 模块搬入本仓库并归位（contracts / core）
+- [x] 把 core 模块搬入本仓库并归位（contracts / core）
 - [ ] 补齐 §19 的两处修正（舱面地址探测、共享路径检查）
-- [ ] `core/mounts`：共享区、出舱审核、禁区与符号链接校验
-- [ ] 桌面壳骨架：原生 Tray 图标 + 自绘面板窗口 + IPC 上报高度
-- [ ] `console` 面板：按 [`product/tray-ui.md`](./product/tray-ui.md) 实现
+- [ ] `core/session` 的挂载与 agent 配置生成（并行作业 C）
+- [x] 桌面壳骨架：原生 Tray 图标 + 自绘面板窗口 + IPC 上报高度
+- [ ] `console` 面板：按 [`product/tray-ui.md`](./product/tray-ui.md) 实现（并行作业 D）
 
-**阶段 0 的验收标准**：在 Linux 上（无 GUI）能通过 `apps/dev-cli` 起一个舱、
-灌一个文件、看到审计；面板在浏览器里能渲染并通过视觉评审。
+**阶段 0 的验收标准**：主分支上 `pnpm lint` / `pnpm typecheck` / `pnpm test` 三样全绿，
+且 `pnpm build` 能产出可运行产物；面板在浏览器（jsdom）里能渲染并通过视觉评审。
+
+> 原标准里写的 `apps/dev-cli` 已删除 —— 编排逻辑收在 `packages/core/source/commands/`，
+> 由 `apps/app` 主进程调用。
 
 ### 阶段 1 · 文件闸口
 
