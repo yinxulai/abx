@@ -96,6 +96,42 @@ jobs:
       - name: Build
         run: pnpm build
 
+  # 这个 job 回答的是「Windows 上还能不能跑」。
+  #
+  # 它是**唯一**能拿到 Windows 证据的地方：开发机是 Linux，没有第二台能跑 win32 的机器。
+  # 前面那些 ubuntu job 全绿也证明不了这件事——它们跑的是 Linux 的 `path.sep`、
+  # `homedir()`、`/home/...` 前缀，而 Windows 上这三样全都是另一副样子。
+  #
+  # 只跑 lint / typecheck / test / build 四样，**不跑 e2e**：那几个脚本是 bash + docker，
+  # 而 Windows runner 上既没有那套 shell 语义，也不是「在 Windows 上跑产品」要证明的事。
+  # 放在一个 job 里而不是拆成四个，是因为 `pnpm install` 在 Windows runner 上是这几个里
+  # 最慢的一步，拆开等于把它跑四遍。
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    # 与打包流水线同因：默认 6 小时的上限会让一条卡住的下载占满整个下午。
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up environment
+        uses: ./.github/actions/setup
+        with:
+          tool-cache: 'true'
+
+      - name: Run lint
+        run: pnpm lint
+
+      - name: Run typecheck
+        run: pnpm typecheck
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
   # 这个 job 回答的是「这些零件接起来还能不能跑」。
   #
   # 上面三个 job 全绿也证明不了这件事：单测里每一层都用自己的替身，所以**契约一漂移
