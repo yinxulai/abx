@@ -26,11 +26,12 @@
  */
 
 import path from 'node:path'
-import { readFileSync, realpathSync } from 'node:fs'
+import { readFileSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { agentConfigFileNames, agentHomeDirNames } from '@abx/contracts'
-import type { SandboxConfigFile, SandboxMount, SandboxStateDir } from './backend'
+import { MCP_SHIM_CELL_PATH, MCP_SHIM_FILE_NAME, agentConfigFileNames, agentHomeDirNames } from '@abx/contracts'
+import type { SandboxConfigFile, SandboxMount, SandboxRuntimeFile, SandboxStateDir } from './backend'
 import { defaultInstancesRoot } from './instance'
+import { defaultRuntimeRoot } from '../transom/shim'
 
 /**
  * 禁挂前缀：任何挂载源落在这下面都不行。
@@ -108,6 +109,21 @@ function matchesCredentialRule(name: string, rule: string): boolean {
   if (pattern.endsWith('*')) return name.startsWith(pattern.slice(0, -1))
   return name === pattern
 }
+
+/**
+ * 允许挂进舱的**运行时文件**的形状。**今天只有一条，而且它是一张固定的表。**
+ *
+ * 这一类挂载和别的不一样：进舱的东西是**会被执行的东西**（agent 的配置文件里写着
+ * `node <这个路径>`）。所以它不能像共享条目那样「来源由调用方给、形态由闸门核」——
+ * 名字与落点都必须是写死的常量，闸门逐字比对。多一条 = 往舱里多挂一个能跑的脚本，
+ * 必须是一次看得见的改动。
+ *
+ * 这张表也是「shim 的落点为什么必须固定」那条设计的落点：模板是数据，数据里写不出
+ * 运行期算出来的路径，所以落点固定、模板静态、这张表把它钉住。
+ */
+export const RUNTIME_FILE_SHAPES: readonly { readonly fileName: string; readonly cellPath: string }[] = [
+  { fileName: MCP_SHIM_FILE_NAME, cellPath: MCP_SHIM_CELL_PATH },
+]
 
 /**
  * 主目录里这几处**子目录**不许当实例根。
@@ -191,8 +207,10 @@ export interface MountPolicy {
   /**
    * 宿主主目录里的**现成内容**一个都不进舱。
    *
-   * 从主目录下进去的只有两类，都是 abx 自己在 `~/.abx/` 里造出来的：
+   * 从主目录下进去的只有三类，都是 abx 自己在 `~/.abx/` 里造出来的：
    *   - 生成的配置文件：只读、逐个文件、内容是 abx 现写的；
+   *   - 运行时文件 `~/.abx/runtime/<cellId>/abx-mcp-shim.mjs`：只读、单个文件，
+   *     也是 abx 现写的（它是**会跑起来**的那一个，所以形状被一张固定表钉死）；
    *   - 实例状态目录 `~/.abx/instances/<instanceId>/<agentId>`：可写，但**初始为空**，
    *     之后装的全是舱内 agent 自己写下的东西。
    *
@@ -200,7 +218,14 @@ export interface MountPolicy {
    * 一个字节都不进舱。
    */
   readonly mountsHostHome: false
-  buildMounts(taskDir: string, workdir: string, agentConfigFiles?: readonly SandboxConfigFile[], stateDirs?: readonly SandboxStateDir[], sharedMounts?: readonly SandboxMount[]): readonly SandboxMount[]
+  buildMounts(
+    taskDir: string,
+    workdir: string,
+    agentConfigFiles?: readonly SandboxConfigFile[],
+    stateDirs?: readonly SandboxStateDir[],
+    sharedMounts?: readonly SandboxMount[],
+    runtimeFiles?: readonly SandboxRuntimeFile[],
+  ): readonly SandboxMount[]
 }
 
 export const MOUNT_POLICY: MountPolicy = {
@@ -264,8 +289,15 @@ export const MOUNT_POLICY: MountPolicy = {
         '挂载点由 resolveSharedMounts() 算而不是调用方给，是因为这是唯一一类「可以多出来几个」' +
         '的挂载——位置再随便给，就没有一句话能说清舱内到底多了什么。',
     },
+    {
+      requirement: '运行时文件只读、单个文件，且名字与舱内落点逐字等于 RUNTIME_FILE_SHAPES 里那一条',
+      rationale:
+        '这一类进舱的是 abx 自己写的脚本（传递窗的 shim），而 agent 的配置里写着「用 node 跑它」——' +
+        '也就是说它是会执行的东西。所以它的形状不能由调用方决定：改这张表等于往舱里多挂一个' +
+        '能跑的脚本，那必须是一次看得见的改动。',
+    },
   ],
-  buildMounts(taskDir: string, workdir: string, agentConfigFiles: readonly SandboxConfigFile[] = [], stateDirs: readonly SandboxStateDir[] = [], sharedMounts: readonly SandboxMount[] = []) {
+  buildMounts(taskDir: string, workdir: string, agentConfigFiles: readonly SandboxConfigFile[] = [], stateDirs: readonly SandboxStateDir[] = [], sharedMounts: readonly SandboxMount[] = [], runtimeFiles: readonly SandboxRuntimeFile[] = []) {
     return [
       { source: path.resolve(taskDir), target: workdir, mode: 'rw' as const },
       // 实例状态目录：rw，目录形态（这里恰恰**要**目录，见 instance.ts 的解释）。
@@ -273,6 +305,8 @@ export const MOUNT_POLICY: MountPolicy = {
       // 生成的文件逐个挂、只读。这一行是「单文件形态」唯一可能出现的地方，
       // 而它只认文件：每一项的来源是 `stageAgentConfig()` 写出来的那一个路径。
       ...agentConfigFiles.map((file) => ({ source: file.hostPath, target: file.cellPath, mode: 'ro' as const })),
+      // 运行时文件：形态与配置一样是单个只读文件，区别在闸门怎么核（见 RUNTIME_FILE_SHAPES）。
+      ...runtimeFiles.map((file) => ({ source: file.hostPath, target: file.cellPath, mode: 'ro' as const })),
       // 共享条目：形态已经由 `resolveSharedMounts()` 定死（ro + /shared/<名字>），
       // 这里原样带上，下面那道闸会再核一遍「确实是只读、确实挂在共享区里」。
       ...sharedMounts,
@@ -323,6 +357,15 @@ export interface AssertMountPolicyInput {
    * 只读、挂在 `/shared` 下、挂载点互不重复。
    */
   readonly sharedMounts?: readonly SandboxMount[]
+  /**
+   * 这次会话允许只读挂进舱的运行时文件，由 `stageTransomShim()` 写出来。
+   *
+   * 与配置文件名单同一种用法：列进来只是取得「可以过闸」的资格，
+   * 形状还要逐条核（见 `RUNTIME_FILE_SHAPES`）。
+   */
+  readonly runtimeFiles?: readonly SandboxRuntimeFile[]
+  /** 运行时根。缺省取 `ABX_RUNTIME_ROOT` / `~/.abx/runtime`。 */
+  readonly runtimeRoot?: string
   /** 实例根。缺省取 `ABX_INSTANCES_ROOT` / `~/.abx/instances`。 */
   readonly instancesRoot?: string
   /** 舱内 home。给了就顺带核一下状态目录挂在了舱内 home 底下。 */
@@ -421,6 +464,56 @@ export function assertInstancesRoot(instancesRoot: string, homeDir: string = rea
 }
 
 /**
+ * 运行时根（默认 `~/.abx/runtime`）那道闸。
+ *
+ * 它比实例根松，因为它是**只读**挂载源的来源（实例根是可写的），但仍要判：
+ * 它来自 `ABX_RUNTIME_ROOT`，而「把 `ABX_RUNTIME_ROOT` 配成 `/home`」这种写法会
+ * 让主目录里任何一个叫 `abx-mcp-shim.mjs` 的文件取得一张准考证。
+ *
+ * 判据比 `assertInstancesRoot` 少两条（不需要「不得落在敏感子目录下」那一套），
+ * 多一条**它必须真的存在、而且是个目录**：往舱里挂一个不存在的来源，
+ * docker 会替你造一个空目录，而舱内那个 shim 是一个跑不起来的空文件——
+ * 那种失败看起来像「传递窗坏了」，实际上只是路径配错了。
+ */
+export function assertRuntimeRoot(runtimeRoot: string, homeDir: string = realpathOrResolve(homedir())): string {
+  if (!path.isAbsolute(runtimeRoot)) {
+    throw new MountPolicyViolation(`运行时根必须是绝对路径：${runtimeRoot}`)
+  }
+  if (runtimeRoot.split(path.sep).includes('..')) {
+    throw new MountPolicyViolation(`运行时根里不允许出现 ..：${runtimeRoot}`)
+  }
+
+  const root = realpathOrResolve(runtimeRoot)
+
+  if (root === path.parse(root).root) {
+    throw new MountPolicyViolation(`拒绝把 ${root} 当运行时根：它是文件系统的根。`)
+  }
+  if (root === homeDir || isAncestor(root, homeDir)) {
+    throw new MountPolicyViolation(
+      `拒绝把 ${root} 当运行时根：它是宿主 home（${homeDir}）本身或者是它的上级。` +
+        `运行时文件是 abx 自己写的脚本，来源必须收在 ~/.abx/runtime 这样的地方。`,
+    )
+  }
+  if (DANGEROUS_TASK_DIRS.includes(root)) {
+    throw new MountPolicyViolation(`拒绝把 ${root} 当运行时根：它本身就是一个敏感位置。`)
+  }
+
+  const prefix = FORBIDDEN_MOUNT_PREFIXES.find(
+    (candidate) => candidate !== homeDir && !isAncestor(candidate, homeDir) && isUnder(root, candidate),
+  )
+  if (prefix !== undefined) {
+    throw new MountPolicyViolation(`拒绝把 ${root} 当运行时根：它落在禁挂前缀 ${prefix} 里。`)
+  }
+
+  const rule = matchCredentialFileRule(root)
+  if (rule !== null) {
+    throw new MountPolicyViolation(`拒绝把 ${root} 当运行时根：它命中凭据文件名规则 ${rule}。`)
+  }
+
+  return root
+}
+
+/**
  * 一个状态目录的四道闸。顺序是**便宜的先判、结论最具体的先说**。
  *
  *   1. 字面路径必须在实例根**之下** —— 挡住「直接拿宿主的 `~/.claude` 当状态目录」；
@@ -511,6 +604,10 @@ export function assertMountPolicy(input: AssertMountPolicyInput): void {
   assertConfigFileAllowList(configFiles)
   const allowedConfigSources = new Map(configFiles.map((file) => [file.hostPath, file]))
 
+  const runtimeFiles = input.runtimeFiles ?? []
+  if (runtimeFiles.length > 0) assertRuntimeFileAllowList(runtimeFiles, input.runtimeRoot, input.homeDir)
+  const allowedRuntimeSources = new Map(runtimeFiles.map((file) => [file.hostPath, file]))
+
   const stateDirs = input.stateDirs ?? []
   // 状态目录那组闸先跑：它们判的是「来源本身能不能信」，比逐条挂载的检查更根本。
   // 没有状态目录时**不跑**：实例根的默认值跟着跑命令的人的主目录走，在没有状态
@@ -559,6 +656,14 @@ export function assertMountPolicy(input: AssertMountPolicyInput): void {
     const allowedStateDir = allowedStateDirs.get(path.resolve(mount.source))
     if (allowedStateDir !== undefined) {
       assertStateDirMount(mount, allowedStateDir)
+      continue
+    }
+
+    // 运行时文件也必须排在禁挂前缀**前面**：它住在 `~/.abx/runtime/` 下面，
+    // 而 `/home` 正是前缀名单里的一条。名单放行只是准考证，形状与来源在下面逐条核。
+    const allowedRuntime = allowedRuntimeSources.get(mount.source)
+    if (allowedRuntime !== undefined) {
+      assertRuntimeFileMount(mount, allowedRuntime)
       continue
     }
 
@@ -624,7 +729,8 @@ export function assertMountPolicy(input: AssertMountPolicyInput): void {
     const isConfigFile = allowedConfigSources.has(mount.source)
     const isStateDir = allowedStateDirs.has(path.resolve(mount.source))
     const isShared = allowedSharedMounts.has(mount.target)
-    if (!isTaskDir && !isConfigFile && !isStateDir && !isShared) {
+    const isRuntimeFile = allowedRuntimeSources.has(mount.source)
+    if (!isTaskDir && !isConfigFile && !isStateDir && !isShared && !isRuntimeFile) {
       throw new MountPolicyViolation(
         `除任务目录 ${taskDir}、实例状态目录、abx 生成的配置文件与用户显式共享的条目外不允许有别的挂载源，实际是 ${mount.source}`,
       )
@@ -632,6 +738,78 @@ export function assertMountPolicy(input: AssertMountPolicyInput): void {
     if (isTaskDir && mount.target !== workdir) {
       throw new MountPolicyViolation(`除工作目录 ${workdir} 外不允许有别的挂载点，实际是 ${mount.target}`)
     }
+  }
+}
+
+/**
+ * 运行时文件那几张证：来源在运行时根里、名字与落点逐字对得上表、只读、是个真文件。
+ *
+ * 这四张一起看才成立。少了「来源在运行时根里」，任何一个叫 `abx-mcp-shim.mjs`
+ * 的文件都能进舱；少了「逐字对得上表」，调用方就能把这个能跑的东西挂到任意位置
+ * （比如挂成 `/usr/local/bin/node`）；少了「是个文件」，一个目录会被挂到那个文件名上。
+ */
+function assertRuntimeFileAllowList(files: readonly SandboxRuntimeFile[], runtimeRoot: string | undefined, homeDir: string | undefined): void {
+  const root = assertRuntimeRoot(runtimeRoot ?? defaultRuntimeRoot(), homeDir ?? realpathOrResolve(homedir()))
+
+  for (const file of files) {
+    if (!path.isAbsolute(file.hostPath) || !path.isAbsolute(file.cellPath)) {
+      throw new MountPolicyViolation(`运行时文件只能用绝对路径：${file.hostPath} → ${file.cellPath}`)
+    }
+
+    const shape = RUNTIME_FILE_SHAPES.find((candidate) => candidate.fileName === path.basename(file.hostPath))
+    if (shape === undefined) {
+      throw new MountPolicyViolation(
+        `拒绝把 ${file.hostPath} 当运行时文件挂进舱：这一类只允许 ${
+          RUNTIME_FILE_SHAPES.map((candidate) => candidate.fileName).join(' / ')
+        }（abx 自己写的脚本）。` + `多一种就是往舱里多挂一个能跑的东西，那必须是一次看得见的改动。`,
+      )
+    }
+    if (file.cellPath !== shape.cellPath) {
+      throw new MountPolicyViolation(
+        `运行时文件必须挂回它自己的位置：${file.hostPath} 应挂到 ${shape.cellPath}，实际是 ${file.cellPath}。` +
+          `落点是写死的——agent 的配置里写着用 node 跑这个路径，挂到别处等于没挂。`,
+      )
+    }
+
+    // 来源必须真的在运行时根里。字面判一次就够：运行时根刚过过闸，
+    // 而这个文件是 abx 自己刚写下去的（`stageTransomShim`），不是用户给的路径。
+    if (!isUnder(path.resolve(file.hostPath), root)) {
+      throw new MountPolicyViolation(
+        `拒绝把 ${file.hostPath} 当运行时文件挂进舱：它不在运行时根 ${root} 之下。` +
+          `这一类挂载的来源只能是 abx 自己在运行时根里写出来的那一个文件。`,
+      )
+    }
+
+    // 必须真的是个文件。挂一个不存在的来源时 docker 会替你造一个空目录，
+    // 于是舱内那个 shim 变成一个空文件——失败现场看起来像「传递窗坏了」。
+    let isFile = false
+    try {
+      isFile = statSync(file.hostPath).isFile()
+    } catch {
+      isFile = false
+    }
+    if (!isFile) {
+      throw new MountPolicyViolation(
+        `运行时文件 ${file.hostPath} 不是一个存在的文件：挂一个不存在的来源，docker 会替你造一个空目录，` +
+          `而舱内那个脚本跑不起来。写它的那一步（stageTransomShim）应当先跑过。`,
+      )
+    }
+  }
+}
+
+/** 运行时文件挂载的形状：只读、挂回表里那个落点。 */
+function assertRuntimeFileMount(mount: SandboxMount, file: SandboxRuntimeFile): void {
+  if (mount.mode !== 'ro') {
+    throw new MountPolicyViolation(
+      `运行时文件只能只读挂载，${mount.source} 被要求以 ${mount.mode} 挂进去：` +
+        `它是 abx 写的一份脚本，舱内改它没有任何意义（下次起容器会重写），` +
+        `而可写意味着舱内能改掉宿主要跑的那份代码。`,
+    )
+  }
+  if (mount.target !== file.cellPath) {
+    throw new MountPolicyViolation(
+      `运行时文件必须挂回它自己的位置：${mount.source} 应挂到 ${file.cellPath}，实际是 ${mount.target}。`,
+    )
   }
 }
 
