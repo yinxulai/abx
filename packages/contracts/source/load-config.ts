@@ -1,5 +1,5 @@
 /**
- * 读配置：JSON 文件 → 环境变量展开 → 形状校验 → 交叉校验。
+ * 读配置：JSON 文件 → 环境变量展开 → schema 校验 → 交叉校验。
  *
  * 顺序是有讲究的：
  *
@@ -11,50 +11,27 @@
  *      展开后才是数字，形状校验放在前面会把所有带引用的配置全判错。
  *   3. 交叉校验放最后：它要同时看到 upstreams 和 egress 才能发现「上游没进白名单」
  *      这种配置错误。
+ *
+ * 形状校验本身在 `schema.ts`（那份 zod schema 是配置的唯一真相），这里只负责
+ * 把它接进管线：**一次收集全部问题**，而不是遇到第一个就抛。
  */
 
 import { findInlineSecrets } from './inline-secret-guard'
 import { expandEnvTree } from './expand-env'
 import { parseDomainPattern } from './domain-pattern'
 import { ConfigError, IssueCollector, type ConfigIssue } from './issues'
-import { readBoolean, readInt, readNumber, readObject, readOptionalString, readString } from './readers'
-import type {
-  AbxConfig,
-  BrokerConfig,
-  EgressRule,
-  ResourceLimits,
-  SandboxBackendId,
-  SessionConfig,
-  Upstream,
-} from './config'
+import { abxConfigSchema, tryParseUrl } from './schema'
+import type { AbxConfig, EgressRule, Upstream } from './config'
+import type { z } from 'zod'
 
-export const DEFAULT_CONFIG: AbxConfig = {
-  broker: {
-    // 宿主面不校验令牌，所以只能待在回环上，这个值不给配。
-    host: '127.0.0.1',
-    hostPort: 8788,
-    // docker 网桥的网关地址。local 后端下由 CLI 覆盖成 127.0.0.1。
-    cellHost: '172.17.0.1',
-    cellPort: 8789,
-    cellTokenEnv: 'ABX_CELL_TOKEN',
-    allowCellTokenInPath: true,
-    auditPath: './abx-audit.jsonl',
-    requestTimeoutMs: 120_000,
-  },
-  egress: [],
-  upstreams: [],
-  session: {
-    // 默认必须是 docker。默认 local 等于默认没有沙箱，
-    // 而「默认不安全」是这类工具最不该有的性质。
-    backend: 'docker',
-    image: 'node:22-slim',
-    user: '1000:1000',
-    network: 'bridge',
-    workdir: '/workspace',
-    limits: { memory: '2g', pids: 256, cpus: 2 },
-    tmpfsSizeMb: 64,
-  },
-}
+/**
+ * 可运行的最小默认值。
+ *
+ * 从 schema 自己推出来（`parse({})`），而不是另写一份常量：另写一份就是第二个真相，
+ * 「schema 改了这里不改」这种现象迟早会出现。顺带还兼一道自检——默认值要是有哪一项
+ * 过不了 schema，import 这个模块就会当场炸，而不是在某个字段上悄悄变成 `undefined`。
+ */
+export const DEFAULT_CONFIG: AbxConfig = abxConfigSchema.parse({})
 
 export type LoadConfigResult =
   | { readonly ok: true; readonly config: AbxConfig }
@@ -63,6 +40,13 @@ export type LoadConfigResult =
 export interface ParseConfigOptions {
   readonly env: Readonly<Record<string, string | undefined>>
 }
+
+/**
+ * 只取交叉校验要用的那两段。
+ *
+ * 用 `pick` 而不是另写一个小 schema：规则只有一份，改了那份这里自动跟着改。
+ */
+const crossCheckSectionsSchema = abxConfigSchema.pick({ upstreams: true, egress: true })
 
 /**
  * 从一棵已经 `JSON.parse` 过的树里读出配置。
@@ -90,22 +74,26 @@ export function parseConfig(raw: unknown, options: ParseConfigOptions): LoadConf
     issues.add('<root>', `配置引用了环境变量 \${${name}}，但它没有值，也没有写 \${${name}:-默认值}`)
   }
 
-  const root = readObject(issues, '', expanded.value)
-  if (root === null) return { ok: false, issues: issues.issues }
+  // 步骤 3：形状。schema 默认遇错即抛，而这里要的是一次收齐，所以走 `safeParse`
+  // 自己遍历 `error.issues`。
+  const parsed = abxConfigSchema.safeParse(expanded.value)
 
-  // 步骤 3：形状。
-  const broker = parseBroker(issues, root['broker'])
-  const upstreams = parseUpstreams(issues, root['upstreams'])
-  const egress = parseEgress(issues, root['egress'])
-  const session = parseSession(issues, root['session'])
+  if (!parsed.success) {
+    collectZodIssues(issues, parsed.error)
 
-  // 步骤 4：交叉校验。任何一段没解析出来就跳过——在残缺的数据上再报一次错，
-  // 只会产生一堆由前一个错派生出来的噪音。
-  if (upstreams !== null && egress !== null) crossCheck(issues, upstreams, egress)
+    // 步骤 4：交叉校验。broker / session 有错不该把「上游没在 egress.allow 里」
+    // 这条一起吞掉——恰恰是它解释了「配置看起来齐全、请求却全部 403」。
+    // 所以那两段单独再跑一遍：它们各自成立时，交叉校验就有意义。
+    const sections = crossCheckSectionsSchema.safeParse(expanded.value)
+    if (sections.success) crossCheck(issues, sections.data.upstreams, sections.data.egress)
 
+    return { ok: false, issues: issues.issues }
+  }
+
+  crossCheck(issues, parsed.data.upstreams, parsed.data.egress)
   if (!issues.ok) return { ok: false, issues: issues.issues }
 
-  return { ok: true, config: { broker, upstreams, egress, session } as AbxConfig }
+  return { ok: true, config: parsed.data }
 }
 
 export interface LoadConfigOptions extends ParseConfigOptions {
@@ -139,239 +127,71 @@ export function loadConfigOrThrow(options: LoadConfigOptions): AbxConfig {
   return result.config
 }
 
-function parseBroker(issues: IssueCollector, value: unknown): BrokerConfig | null {
-  const defaults = DEFAULT_CONFIG.broker
-  if (value === undefined) return defaults
+// ---------------------------------------------------------------------------
+// zod 的问题 → 配置问题
+// ---------------------------------------------------------------------------
 
-  const object = readObject(issues, 'broker', value)
-  if (object === null) return null
-
-  const hostPort = readInt(issues, 'broker.hostPort', object['hostPort'] ?? defaults.hostPort, { min: 1, max: 65535 })
-  const cellPort = readInt(issues, 'broker.cellPort', object['cellPort'] ?? defaults.cellPort, { min: 1, max: 65535 })
-  const cellHost = readString(issues, 'broker.cellHost', object['cellHost'] ?? defaults.cellHost)
-  const cellTokenEnv = readString(issues, 'broker.cellTokenEnv', object['cellTokenEnv'] ?? defaults.cellTokenEnv, {
-    pattern: /^[A-Za-z_][A-Za-z0-9_]*$/,
-    patternHint: '要写环境变量名，不是令牌本身',
-  })
-  const allowCellTokenInPath = readBoolean(
-    issues,
-    'broker.allowCellTokenInPath',
-    object['allowCellTokenInPath'] ?? defaults.allowCellTokenInPath,
-  )
-  const auditPath = readString(issues, 'broker.auditPath', object['auditPath'] ?? defaults.auditPath)
-  const requestTimeoutMs = readInt(
-    issues,
-    'broker.requestTimeoutMs',
-    object['requestTimeoutMs'] ?? defaults.requestTimeoutMs,
-    { min: 1 },
-  )
-
-  // 两个面绑同一个地址端口，第二个 listen 会 EADDRINUSE，而报错只会在启动时才出现。
-  if (hostPort !== null && cellPort !== null && hostPort === cellPort) {
-    issues.add('broker.cellPort', `不能和 broker.hostPort 相同（都是 ${hostPort}）`)
-  }
-
-  if (
-    hostPort === null ||
-    cellPort === null ||
-    cellHost === null ||
-    cellTokenEnv === null ||
-    allowCellTokenInPath === null ||
-    auditPath === null ||
-    requestTimeoutMs === null
-  ) {
-    return null
-  }
-
-  return {
-    host: defaults.host,
-    hostPort,
-    cellHost,
-    cellPort,
-    cellTokenEnv,
-    allowCellTokenInPath,
-    auditPath,
-    requestTimeoutMs,
+/**
+ * 把 zod 的问题全部映射成 `ConfigIssue`。
+ *
+ * 报错的形状（`path` 加 `message`）保持迁移前那一套：`path` 是人手写配置时看到的
+ * 位置（`upstreams[0].baseUrl`），`message` 是中文的一句话。`ConfigError` /
+ * `renderIssues` 的输出因此一个字都没变。
+ */
+function collectZodIssues(issues: IssueCollector, error: z.ZodError): void {
+  for (const issue of error.issues) {
+    for (const mapped of mapIssue(issue, [])) issues.add(mapped.path, mapped.message)
   }
 }
 
-function parseUpstreams(issues: IssueCollector, value: unknown): Upstream[] | null {
-  if (value === undefined) return []
-  if (!Array.isArray(value)) {
-    issues.add('upstreams', '期望一个数组')
-    return null
+function mapIssue(issue: z.core.$ZodIssue, prefix: readonly PropertyKey[]): readonly ConfigIssue[] {
+  const path = [...prefix, ...issue.path]
+
+  // `egress.allow` 的每一项都允许「字符串」和「对象」两种写法；两种都没对上时
+  // zod 不各报一条，而是把两条分支的报错一起挂在这条 `invalid_union` 上。
+  if (issue.code === 'invalid_union') {
+    return pickBranch(issue.errors).flatMap((branchIssue) => mapIssue(branchIssue, path))
   }
 
-  const output: Upstream[] = []
-  value.forEach((item, index) => {
-    const path = `upstreams[${index}]`
-    const object = readObject(issues, path, item)
-    if (object === null) return
-
-    const id = readString(issues, `${path}.id`, object['id'], {
-      pattern: /^[a-z0-9][a-z0-9-]*$/,
-      patternHint: '只能用小写字母、数字和连字符，且以字母或数字开头（它会出现 URL 里）',
-    })
-    const baseUrl = readString(issues, `${path}.baseUrl`, object['baseUrl'])
-    const authHeader = readString(issues, `${path}.authHeader`, object['authHeader'], {
-      pattern: /^[A-Za-z0-9-]+$/,
-      patternHint: '要写 HTTP 头的名字，例如 authorization',
-    })
-    const authScheme = readOptionalString(issues, `${path}.authScheme`, object['authScheme'])
-    const secretEnv = readOptionalString(issues, `${path}.secretEnv`, object['secretEnv'], {
-      pattern: /^[A-Za-z_][A-Za-z0-9_]*$/,
-      patternHint: '要写环境变量名，不是密钥本身',
-    })
-    const secretFile = readOptionalString(issues, `${path}.secretFile`, object['secretFile'])
-
-    if (baseUrl !== null) {
-      const parsed = tryParseUrl(baseUrl)
-      if (parsed === null) {
-        issues.add(`${path}.baseUrl`, `不是合法的 URL：${JSON.stringify(baseUrl)}`)
-      } else if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        issues.add(`${path}.baseUrl`, `只支持 http / https，实际是 ${parsed.protocol}`)
-      }
-    }
-
-    // 凭据来源必须恰好一个。两个都写，读代码的人无法判断哪个生效；
-    // 一个都不写，这个上游转发出去就是匿名请求，多半不是本意。
-    if (secretEnv === null && secretFile === null) {
-      issues.add(path, '必须提供 `secretEnv`（环境变量名）或 `secretFile`（文件路径）之一')
-    }
-    if (secretEnv !== null && secretFile !== null) {
-      issues.add(path, '`secretEnv` 和 `secretFile` 只能写一个')
-    }
-
-    if (id === null || baseUrl === null || authHeader === null) return
-    output.push({ id, baseUrl, authHeader, authScheme, secretEnv, secretFile })
-  })
-
-  const duplicated = findDuplicates(output.map((upstream) => upstream.id))
-  for (const id of duplicated) issues.add('upstreams', `上游 id 重复：${id}`)
-
-  return output
+  return [{ path: renderPath(path), message: issue.message }]
 }
 
 /**
- * 读 `egress` 段。
+ * 从 union 的分支里挑一条来报。
  *
- * 白名单挂在 `egress.allow` 下而不是直接放在 `egress`，是为了给以后留位置：
- * `egress` 迟早要有 `deny`、`proxy`、`maxBodyBytes` 这些兄弟字段，而
- * 「egress 本身就是一个数组」这个形状一旦定下来就改不动了。
+ * 挑**错得更深**的那条：`{ "pattern": 5 }` 走对象分支能报到 `.pattern` 上、
+ * 走字符串分支只能报到整项上，前者才指得准。一样深时取前一条——那正是按输入类型
+ * 该走的那条（字符串输入对应字符串分支），报出来的也是用户真正需要看的那句话。
  */
-function parseEgress(issues: IssueCollector, value: unknown): EgressRule[] | null {
-  if (value === undefined) {
-    // 不写就是空名单。空名单的语义是全部拒绝，不是全部放行——
-    // 这条默认值本身就是一道防线，值得写一行注释钉住。
-    return []
-  }
-
-  const section = readObject(issues, 'egress', value)
-  if (section === null) return null
-
-  const allow = section['allow']
-  if (allow === undefined) return []
-  if (!Array.isArray(allow)) {
-    issues.add('egress.allow', '期望一个数组')
-    return null
-  }
-
-  const output: EgressRule[] = []
-  allow.forEach((item, index) => {
-    const path = `egress.allow[${index}]`
-
-    // 两种写法：`"api.example.com"` 和 `{ "pattern": "...", "upstreamId": "..." }`。
-    // 前者够用且短，后者才需要绑凭据。
-    if (typeof item === 'string') {
-      const pattern = validatePattern(issues, path, item)
-      if (pattern !== null) output.push({ pattern, upstreamId: null })
-      return
+function pickBranch(branches: readonly (readonly z.core.$ZodIssue[])[]): readonly z.core.$ZodIssue[] {
+  let picked: readonly z.core.$ZodIssue[] = []
+  let deepest = -1
+  for (const branch of branches) {
+    const depth = Math.max(-1, ...branch.map((issue) => issue.path.length))
+    if (depth > deepest) {
+      deepest = depth
+      picked = branch
     }
-
-    const object = readObject(issues, path, item)
-    if (object === null) return
-    const rawPattern = readString(issues, `${path}.pattern`, object['pattern'])
-    const upstreamId = readOptionalString(issues, `${path}.upstreamId`, object['upstreamId'])
-    const pattern = rawPattern === null ? null : validatePattern(issues, `${path}.pattern`, rawPattern)
-    if (pattern === null) return
-    output.push({ pattern, upstreamId })
-  })
-
-  const duplicated = findDuplicates(output.map((rule) => rule.pattern))
-  for (const pattern of duplicated) issues.add('egress.allow', `域名重复：${pattern}`)
-
-  return output
-}
-
-function validatePattern(issues: IssueCollector, path: string, raw: string): string | null {
-  const result = parseDomainPattern(raw)
-  if (!result.ok) {
-    issues.add(path, result.reason)
-    return null
   }
-  // 存归一化之后的形式：匹配时不必再解析一次，也避免 `EXAMPLE.com` 和
-  // `example.com` 在配置里看起来是两条规则。
-  return raw.trim().toLowerCase()
+  return picked
 }
 
-function parseSession(issues: IssueCollector, value: unknown): SessionConfig | null {
-  const defaults = DEFAULT_CONFIG.session
-  if (value === undefined) return defaults
-
-  const object = readObject(issues, 'session', value)
-  if (object === null) return null
-
-  const backend = parseBackend(issues, object['backend'] ?? defaults.backend)
-  const image = readString(issues, 'session.image', object['image'] ?? defaults.image)
-  const user = readString(issues, 'session.user', object['user'] ?? defaults.user)
-  const network = readString(issues, 'session.network', object['network'] ?? defaults.network)
-  const workdir = readString(issues, 'session.workdir', object['workdir'] ?? defaults.workdir, {
-    pattern: /^\//,
-    patternHint: '必须是舱内的绝对路径，例如 /workspace',
-  })
-  const tmpfsSizeMb = readInt(issues, 'session.tmpfsSizeMb', object['tmpfsSizeMb'] ?? defaults.tmpfsSizeMb, {
-    min: 1,
-  })
-  const limits = parseLimits(issues, object['limits'])
-
-  if (
-    backend === null ||
-    image === null ||
-    user === null ||
-    network === null ||
-    workdir === null ||
-    tmpfsSizeMb === null ||
-    limits === null
-  ) {
-    return null
+/** `['upstreams', 0, 'baseUrl']` → `upstreams[0].baseUrl`，与迁移前的写法一致。 */
+function renderPath(path: readonly PropertyKey[]): string {
+  let rendered = ''
+  for (const segment of path) {
+    if (typeof segment === 'number') {
+      rendered += `[${segment}]`
+      continue
+    }
+    rendered = rendered === '' ? String(segment) : `${rendered}.${String(segment)}`
   }
-
-  return { backend, image, user, network, workdir, limits, tmpfsSizeMb }
+  return rendered
 }
 
-function parseBackend(issues: IssueCollector, value: unknown): SandboxBackendId | null {
-  if (value === 'docker' || value === 'local') return value
-  issues.add('session.backend', `只支持 "docker" 或 "local"，实际是 ${JSON.stringify(value)}`)
-  return null
-}
-
-function parseLimits(issues: IssueCollector, value: unknown): ResourceLimits | null {
-  const defaults = DEFAULT_CONFIG.session.limits
-  if (value === undefined) return defaults
-
-  const object = readObject(issues, 'session.limits', value)
-  if (object === null) return null
-
-  const memory = readString(issues, 'session.limits.memory', object['memory'] ?? defaults.memory, {
-    pattern: /^\d+[bkmgBKMG]?$/,
-    patternHint: 'docker 的写法，例如 2g / 512m',
-  })
-  const pids = readInt(issues, 'session.limits.pids', object['pids'] ?? defaults.pids, { min: 1 })
-  const cpus = readNumber(issues, 'session.limits.cpus', object['cpus'] ?? defaults.cpus, { min: 0.01 })
-
-  if (memory === null || pids === null || cpus === null) return null
-  return { memory, pids, cpus }
-}
+// ---------------------------------------------------------------------------
+// 交叉校验
+// ---------------------------------------------------------------------------
 
 /**
  * 交叉校验。
@@ -410,24 +230,6 @@ function matchesPatternForValidation(host: string, pattern: string): boolean {
   if (parsed.pattern.kind === 'exact') return host === parsed.pattern.host
   if (parsed.pattern.kind === 'subdomains') return host.endsWith(`.${parsed.pattern.host}`)
   return host === parsed.pattern.host || host.endsWith(`.${parsed.pattern.host}`)
-}
-
-function tryParseUrl(value: string): URL | null {
-  try {
-    return new URL(value)
-  } catch {
-    return null
-  }
-}
-
-function findDuplicates(values: readonly string[]): readonly string[] {
-  const seen = new Set<string>()
-  const duplicated = new Set<string>()
-  for (const value of values) {
-    if (seen.has(value)) duplicated.add(value)
-    seen.add(value)
-  }
-  return [...duplicated]
 }
 
 function describeError(error: unknown): string {
