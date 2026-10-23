@@ -152,6 +152,10 @@ export ABX_TEST_PROMPT="$PROMPT"
 export ABX_TEST_AGENT_IMAGE="$IMAGE"
 # 替身上游用的假密钥：以 FAKE- 开头，写死在脚本里也无所谓（它就是个哨兵串）。
 export ABX_E2E_FAKE_KEY='FAKE-UPSTREAM-KEY-e2e-agent-0000-not-real'
+# 实例根（`defaultInstancesRoot` 认的那个环境变量）。实例状态目录是个 **rw 挂载源**，
+# 所以它必须落在 docker 能挂的路径下 —— 也就是 $WORK 里。用默认的 ~/.abx/instances
+# 会有两个坏处：往开发机真实的实例目录里写东西，以及跑完得记得去清理它。
+export ABX_INSTANCES_ROOT="$WORK/instances"
 
 # ── 1. 临时配置 ───────────────────────────────────────────────────────────
 # 形状与 abx.config.json 一样，只改了几处：上游指向宿主上正在用的那个网关、
@@ -256,6 +260,7 @@ cat > "$DRIVER" <<'EOF'
 import { spawn, spawnSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
+import { homedir } from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -335,19 +340,27 @@ const contracts = () => pathToFileURL(path.join(REPO, 'packages/contracts/source
 const { resolveContext } = await import(core('commands/runtime.ts'))
 const { startBroker, collectSecretEnvNames, generateCellToken } = await import(core('broker/index.ts'))
 const {
+  assertInstancesRoot,
+  assertStateDirPolicy,
   buildCellEnv,
-  cellRootFor,
   containerName,
   createDockerBackend,
   buildDockerArgs,
+  defaultInstancesRoot,
+  ensureInstanceStateDir,
   generateCellId,
   MOUNT_POLICY,
+  planInstance,
   stageAgentConfig,
   toSandboxConfigFiles,
 } = await import(core('session/index.ts'))
 const { findAgent } = await import(contracts())
 
 const TASK_DIR = path.join(WORK, 'task')
+// 宿主 home。它在这份驱动里只用来做一件事：**记住那条老路径叫什么名字**，
+// 好断言它没有变成舱内的挂载目标（`~` 展开成宿主 home 是那个已修好的 bug）。
+const HOST_HOME = homedir()
+const HOST_HOME_SETTINGS = path.join(HOST_HOME, '.claude', 'settings.json')
 
 /** 逐行读审计 JSONL；读不到就返回空数组（「没有记录」由断言去说话）。 */
 function readAudit(file) {
@@ -391,6 +404,40 @@ if (!config.session.image.startsWith('abx-agent-claude')) {
   throw new Error(`session.image 是 ${config.session.image}，不是本任务构建的那个 agent 镜像`)
 }
 
+// 舱内那个 home，**不是宿主 home**。下面每一处用到 home 的地方都用这个值：
+// 生成配置时展开 `~` 用它，起容器时 `HOME=` 注入的也是它。
+const cellHome = config.session.cellHome
+
+// ── 1b. 实例状态目录：建 → 过闸 → 之后才往里写东西 ────────────────────────
+// 顺序**照抄** `packages/core/source/commands/open.ts`（那是权威参考）：
+//
+//   planInstance（只算路径，不碰文件系统）
+//     → assertInstancesRoot（实例根自己先过闸）
+//       → ensureInstanceStateDir（真建出来，返回 realpath）
+//         → assertStateDirPolicy（那几道闸）
+//           → stageAgentConfig({ directory, ... })（最后才往里写）
+//
+// 「先建、再解析软链、再校验、最后才写」这个顺序不能反：生成的配置就写在状态目录
+// 里面，等起容器前那道闸才发现路径不对时，文件已经顺着软链写到别处去了。
+// 实例根来自 `ABX_INSTANCES_ROOT`（shell 里指到 $WORK 下），所以这段不需要额外参数。
+at('建实例状态目录')
+const instance = planInstance({
+  agent,
+  // 实例 = 哪一份历史。默认就是 agent 自己：再开一次 claude 接的是上一次那份历史。
+  instanceId: agent.id,
+  cellHome,
+  instancesRoot: defaultInstancesRoot(process.env),
+})
+assertInstancesRoot(instance.instancesRoot)
+const stateDir = {
+  hostPath: ensureInstanceStateDir(instance),
+  cellPath: instance.cellPath,
+  agentId: agent.id,
+}
+assertStateDirPolicy({ stateDirs: [stateDir], instancesRoot: instance.instancesRoot, cellHome })
+log(`[instance] 实例 ${instance.instanceId} · 状态目录 ${stateDir.hostPath} → ${stateDir.cellPath}（rw；历史留在这儿）`)
+log(`[instance] 舱内 home （session.cellHome）${cellHome} · 宿主 home ${HOST_HOME}（不进舱，也不当挂载目标）`)
+
 // ── 2. 真 broker ──────────────────────────────────────────────────────────
 at('起 broker')
 const handle = await startBroker({
@@ -428,15 +475,23 @@ const dockerBackend = createDockerBackend({
   spawnProcess: (command, args, options) => spawn(command, args, { ...options, stdio: ['inherit', 'pipe', 'pipe'] }),
 })
 
-/** 用同一套 flag 起一个容器，把输出收回来。probe / 观测 / 两次 agent 运行都走这里。 */
-async function runContainer({ label, cellId: id, command, env, configFiles }) {
+/** 用同一套 flag 起一个容器，把输出收回来。probe / 观测 / 三次 agent 运行都走这里。 */
+async function runContainer({ label, cellId: id, command, env, configFiles, stateDirs = [stateDir] }) {
   const spec = {
     cellId: id,
     agentId: 'claude',
     command,
+    // 调用方有没有终端，是调用方的事：`--tty` 要求**启动方**的 stdin 是终端，
+    // 无脑加上去 docker 会直接拒绝起容器。这里照抄 open.ts 的判据。
+    allocateTty: process.stdin.isTTY === true,
     taskDir: TASK_DIR,
     workdir: config.session.workdir,
+    // 舱内 home：`HOME=` 注入的就是它，而配置里 `~` 展开的也是它。两个值必须
+    // 来自同一处（`session.cellHome`）——分家过一次，表现是 `HOME=undefined`。
+    cellHome,
     agentConfigFiles: configFiles ?? [],
+    // 实例状态目录跟着每次起容器一起挂（rw）：它就是持久化的那个挂载点。
+    stateDirs,
     env: env ?? {},
     forbiddenEnvNames: collectSecretEnvNames(config.upstreams),
     limits: config.session.limits,
@@ -448,9 +503,24 @@ async function runContainer({ label, cellId: id, command, env, configFiles }) {
 
   // 先把参数打出来：这一串就是 core 真正交给 docker 的东西（buildDockerArgs 是纯函数，
   // 这里算出来的和 create() 里算出来的逐字相同，下面还会断言一次挂载确实一致）。
-  const mounts = MOUNT_POLICY.buildMounts(TASK_DIR, spec.workdir, spec.agentConfigFiles)
+  const mounts = MOUNT_POLICY.buildMounts(TASK_DIR, spec.workdir, spec.agentConfigFiles, spec.stateDirs)
   const argv = buildDockerArgs(spec, mounts)
   log(`  [docker] $ docker ${argv.join(' ')}`)
+
+  // 两条 argv 卫生断言。第一条是这次踩到的那个坑的直接守卫：`HOME=undefined` 当时
+  // 就在 argv 里明晃晃地躺着，而它看起来只是「一个普通的环境变量」，没人会盯着看。
+  // 所以判据不写成「HOME 对不对」，而是「整串里根本不许出现 undefined」——
+  // 将来某个新字段忘了传时，这条也会跟着响。
+  check(
+    `docker argv 里没有任何 undefined（${label}）`,
+    !argv.some((argument) => argument.includes('undefined')),
+    argv.filter((argument) => argument.includes('undefined')).join(' ') || '干净',
+  )
+  check(
+    `docker argv 注入的 HOME 来自 session.cellHome（${label}）`,
+    argv.includes(`HOME=${cellHome}`),
+    `HOME=${cellHome}`,
+  )
 
   const stdout = []
   const stderr = []
@@ -535,35 +605,69 @@ log(`[probe] 探出来的通告地址：${cellOrigin}`)
 log(`[probe] 注意：绑定地址是 ${config.broker.cellHost}，通告地址是 ${advertiseHost} —— 两者不同，`)
 log('        因为配置里的 broker.cellHost 同时兼着「绑哪儿」和「告诉舱连哪儿」两个职责。')
 
-// ── 4. 生成的配置挂在哪 vs 舱内 agent 去哪儿找 ────────────────────────────
-// 这一段是**观测**，不是断言通过与否：它要给「HOME 错配」一个直接证据。
+// ── 4. 生成的配置挂在哪儿 vs 舱内 agent 去哪儿找 ──────────────────────────
+// 这一段是「HOME 错配不许回来」的守卫。它要证明的是**正命题**：配置就挂在舱内
+// agent 真正会去读的那个位置（`<cellHome>/.claude/settings.json`），而且里面
+// 装的确实是 abx 生成的东西；同时证明**反命题**：宿主 home 那条老路径
+// （`~` 展开成宿主 home 的产物）既不在这儿，也不再是舱内的挂载目标。
 at('生成并落盘 agent 配置')
 const staged = stageAgentConfig({
   agentId: 'claude',
-  cellRoot: path.join(WORK, 'cells', cellId),
+  // 写进**实例状态目录本身**：那个目录整个 rw 进舱（历史写在里面），
+  // 而配置文件长在它里面，于是天然落在「可写挂载内部」，下面对它再套一层 ro。
+  directory: stateDir.hostPath,
   cellOrigin,
   upstreamId: upstream.id,
   cellToken,
   tokenInPath: config.broker.allowCellTokenInPath,
+  // `~` 展开成舱内的 home。这一处漏传过一次（当时默认取宿主 home），
+  // 于是挂载参数看上去完全正常，而 agent 一个字节都读不到。
+  cellHome,
 })
 const configFiles = toSandboxConfigFiles(staged)
+const agentReadsSettings = `${cellHome}/.claude/settings.json`
 log('')
 log('[staged] abx 现生成的配置（宿主路径 → 舱内路径，只读逐个文件挂载）')
 for (const file of staged.files) log(`  ${file.hostPath} → ${file.cellPath}`)
-log(`[staged] 宿主上生成目录的规则 cellRootFor('${cellId}') = ${cellRootFor(cellId)}（按当前用户的 home 算）`)
+log(`[staged] 落盘在实例状态目录里：${staged.directory}`)
+log(`[staged] 舱内 agent 会去读的位置：${agentReadsSettings}`)
+log(`[staged] 宿主 home 那条老路径（HOME 错配的产物）：${HOST_HOME_SETTINGS} —— 不再是舱内挂载目标`)
+
+check(
+  '生成的配置落在舱内 agent 真正会读的位置上',
+  staged.files.length === 1 && staged.files[0].cellPath === agentReadsSettings,
+  staged.files.map((file) => file.cellPath).join(', '),
+)
+check(
+  '生成的配置的舱内落点不是宿主 home 那条老路径',
+  staged.files.every((file) => file.cellPath !== HOST_HOME_SETTINGS),
+  `宿主 home 那条是 ${HOST_HOME_SETTINGS}`,
+)
 
 const OBSERVE_JS = `
-home="$(getent passwd "$(id -u)" | cut -d: -f6)"
-mounted="${configFiles[0]?.cellPath ?? '(none)'}"
+settings="$HOME/.claude/settings.json"
+legacy="${HOST_HOME_SETTINGS}"
 echo "ABX-OBS uid=$(id -u)"
-echo "ABX-OBS home=$home"
-echo "ABX-OBS mounted=$mounted"
-[ -f "$mounted" ] && echo "ABX-OBS mounted-exists=yes" || echo "ABX-OBS mounted-exists=no"
-echo "ABX-OBS agent-reads=$home/.claude/settings.json"
-[ -f "$home/.claude/settings.json" ] && echo "ABX-OBS agent-reads-exists=yes" || echo "ABX-OBS agent-reads-exists=no"
-touch "$home/.abx-write-probe" 2>/dev/null && echo "ABX-OBS home-writable=yes" || echo "ABX-OBS home-writable=no"
+echo "ABX-OBS passwd-home=$(getent passwd "$(id -u)" | cut -d: -f6)"
+echo "ABX-OBS HOME=$HOME"
+echo "ABX-OBS agent-reads=$settings"
+[ -f "$settings" ] && echo "ABX-OBS agent-reads-exists=yes" || echo "ABX-OBS agent-reads-exists=no"
+# 内容是不是 abx 生成的那一份：只认那个端点，以及那个占位符（绝不是凭据）。
+node -e '
+const fs = require("node:fs")
+let doc = {}
+try { doc = JSON.parse(fs.readFileSync(process.argv[1], "utf8")) } catch {}
+const env = doc.env ?? {}
+console.log("ABX-OBS agent-reads-base-url=" + (env.ANTHROPIC_BASE_URL ?? "(none)"))
+console.log("ABX-OBS agent-reads-token-env=" + (env.ANTHROPIC_AUTH_TOKEN ?? "(none)"))
+' "$settings" 2>&1
+echo "ABX-OBS legacy-host-home=$legacy"
+[ -e "$legacy" ] && echo "ABX-OBS legacy-exists=yes" || echo "ABX-OBS legacy-exists=no"
+# 顺带看一眼：$HOME 本身在 --read-only 下不可写，可写的只有挂进去的 .claude 那一格。
+touch "$HOME/.abx-write-probe" 2>/dev/null && echo "ABX-OBS home-writable=yes" || echo "ABX-OBS home-writable=no"
+touch "$settings" 2>/dev/null && echo "ABX-OBS settings-writable=yes" || echo "ABX-OBS settings-writable=no"
 echo "ABX-OBS 明细："
-ls -l "$mounted" 2>&1 | sed 's/^/  /'
+ls -l "$settings" 2>&1 | sed 's/^/  /'
 `
 at('舱内观测 HOME / 只读')
 const observation = await runContainer({
@@ -615,28 +719,66 @@ log(`[cell] 退出码 ${run1.exitCode}${run1.timedOut ? '（超时，容器已�
 check('舱内 claude 正常退出', run1.exitCode === 0 && !run1.timedOut, `exit=${run1.exitCode}`)
 check('舱内 claude 真的产出了模型输出（随机串回来了）', run1.stdout.includes(NONCE), `nonce=${NONCE}`)
 
-// ── 6. 反向对照：把 abx 注入的两个变量拿掉 ────────────────────────────────
-// 挂载原样保留。如果这次也能跑通，说明起作用的是那份**生成的 settings.json**；
-// 如果跑不通（预期），说明这条路是靠**环境变量**通的——配合第 4 步的挂载路径，
-// 就是「HOME 错配、配置读不到」的直接证据。
-const negativeEnv = { ...cellEnv }
-delete negativeEnv.ANTHROPIC_BASE_URL
-delete negativeEnv.ANTHROPIC_AUTH_TOKEN
-delete negativeEnv.ANTHROPIC_CUSTOM_HEADERS
+// ── 6. 功能对照：那份生成的配置到底有没有被 agent 读进去 ──────────────────
+// 第 4 步证的是「文件挂在那个位置上」，这一步证的是**它真的被读进去用了**。
+//
+// 原来的这一步是反向对照：「把 ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN 拿掉，
+// 如果跑不通，说明起作用的是环境变量、不是配置」。配置挂在宿主 home 那个 bug
+// 修好之后，这条断言的前提没了 —— 配置现在**就在** agent 会读的位置上，
+// 拿掉环境变量它照样能读到。所以这里改成一对**能区分因果**的对照：
+//
+//   A（配置在）：只拿掉那两个变量，保留 ANTHROPIC_CUSTOM_HEADERS（舱令牌那个头）
+//               → 期望**跑通**。跑通只可能来自那份生成的 settings.json。
+//   B（配置不在）：同一份环境，但配置文件和实例目录都不挂 → 期望**跑不通**。
+//               它排除掉「A 是因为别的原因通的」。注意 B 必须把实例目录也拿掉：
+//               生成的配置就长在那个目录里面，只去掉 `configFiles` 等于没去掉。
+//
+// 两个一起才说明「这条链是靠那份配置通的」，而这恰好是 HOME 错配那个 bug
+// 在功能层面的样子：当年配置挂在宿主的 home 下，A 就会失败。
+const configOnlyEnv = { ...cellEnv }
+delete configOnlyEnv.ANTHROPIC_BASE_URL
+delete configOnlyEnv.ANTHROPIC_AUTH_TOKEN
 
 log('')
-log('[control] 反向对照：挂载不变，只拿掉 ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN')
-at('反向对照')
+log('[control] A：拿掉 ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN，保留舱令牌头，配置照挂')
+at('功能对照 A（只挂配置）')
 const run2 = await runContainer({
-  label: 'control',
-  cellId: `${cellId}-control`,
+  label: 'control-config-only',
+  cellId: `${cellId}-control-a`,
   command: [agent.command, ...agent.args, '-p', PROMPT],
-  env: negativeEnv,
+  env: configOnlyEnv,
   configFiles,
 })
-log(`[control] 退出码 ${run2.exitCode}`)
+log(`[control] A 退出码 ${run2.exitCode}`)
 for (const line of `${run2.stdout}${run2.stderr}`.trimEnd().split('\n')) log(`  ${line}`)
-check('拿掉那两个变量后跑不通（说明靠的是环境变量，不是挂进去的配置）', !run2.stdout.includes(NONCE))
+check(
+  '只靠挂进去的配置也能跑通（说明这份配置真的被 agent 读进去了）',
+  run2.stdout.includes(NONCE),
+  `exit=${run2.exitCode} nonce=${NONCE}`,
+)
+
+log('')
+log('[control] B：同样的环境，配置与实例目录都不挂')
+at('功能对照 B（不挂配置）')
+const run3 = await runContainer({
+  label: 'control-no-config',
+  cellId: `${cellId}-control-b`,
+  command: [agent.command, ...agent.args, '-p', PROMPT],
+  env: configOnlyEnv,
+  configFiles: [],
+  // **实例目录也得一起拿掉**，只拿掉 `configFiles` 是没用的：生成的那份配置
+  // 就长在实例状态目录里面（`<stateDir>/settings.json`），把目录自己挂进去，
+  // 配置跟着一起进舱了 —— 第一次跑这条对照时它就是这么「通」的，
+  // 看着像「不挂配置也能通」，其实是配置换了个入口进来。
+  stateDirs: [],
+})
+log(`[control] B 退出码 ${run3.exitCode}`)
+for (const line of `${run3.stdout}${run3.stderr}`.trimEnd().split('\n')) log(`  ${line}`)
+check(
+  '不挂配置就跑不通（排除掉「A 是别的原因通的」）',
+  !run3.stdout.includes(NONCE),
+  `exit=${run3.exitCode}`,
+)
 
 // ── 7. 凭据替换：替身上游那一侧收到了什么 ─────────────────────────────────
 // 真网关不会告诉我们它收到了什么头。所以在同一个 broker 上再配一个本机替身上游，
@@ -694,7 +836,8 @@ handle.unregisterCell(cellId)
 await handle.close()
 
 write('cell-run.json', run1)
-write('control.json', run2)
+write('control-a-config-only.json', run2)
+write('control-b-no-config.json', run3)
 write('report.json', {
   cellId,
   nonce: NONCE,
@@ -702,7 +845,18 @@ write('report.json', {
   cellOrigin,
   image: config.session.image,
   staged: staged.files.map((file) => ({ hostPath: file.hostPath, cellPath: file.cellPath })),
-  hostHome: cellRootFor(cellId),
+  // 「HOME 错配不许回来」守卫要用的那几个事实：舱内 home、agent 会去读的位置、
+  // 宿主 home 那条老路径，以及真正交给 docker 的那串挂载目标。
+  cellHome,
+  agentReadsSettings,
+  hostHome: HOST_HOME,
+  hostHomeSettingsPath: HOST_HOME_SETTINGS,
+  stagedCellPath: staged.files[0]?.cellPath ?? null,
+  // 舱内唯一能拿到的那个假 token（不是凭据）：shell 拿它核对配置里装的是不是占位符。
+  placeholderToken: agent.placeholderToken,
+  stateDirHostPath: stateDir.hostPath,
+  stateDirCellPath: stateDir.cellPath,
+  mountTargets: run1.mounts.map((mount) => mount.target),
   auditRecordsForCell: cellRecords.length,
   checks: results,
 })
@@ -827,7 +981,7 @@ esac
 # 所以上面那两条断言（模型输出 + 审计 200）本身也是「占位符没被发出去」的旁证。
 note '真网关那边没法直接看它收到了什么；「占位符没带过去」靠的是上面两件事：替身实测 + 真网关 200'
 
-step '6. 观测：舱内 agent 到底读不读得到那份生成的配置（HOME 错配）'
+step '6. 回归守卫：生成的配置挂在舱内 agent 真正会读的位置（HOME 错配不许回来）'
 
 OBS="$WORK/observe.stdout.txt"
 jget observe.json stdout > "$OBS"
@@ -835,32 +989,90 @@ grep '^ABX-OBS' "$OBS" | grep -v '明细' | while IFS= read -r line; do raw "$li
 printf '  %s\n' '（明细：）'
 grep -v '^ABX-OBS' "$OBS" | while IFS= read -r line; do raw "$line"; done
 
-CELL_HOME="$(sed -n 's/^ABX-OBS home=//p' "$OBS")"
-MOUNTED="$(sed -n 's/^ABX-OBS mounted=//p' "$OBS")"
+CELL_HOME_ENV="$(sed -n 's/^ABX-OBS HOME=//p' "$OBS")"
 AGENT_READS="$(sed -n 's/^ABX-OBS agent-reads=//p' "$OBS")"
-MOUNTED_EXISTS="$(sed -n 's/^ABX-OBS mounted-exists=//p' "$OBS")"
 AGENT_READS_EXISTS="$(sed -n 's/^ABX-OBS agent-reads-exists=//p' "$OBS")"
+AGENT_READS_BASE_URL="$(sed -n 's/^ABX-OBS agent-reads-base-url=//p' "$OBS")"
+AGENT_READS_TOKEN="$(sed -n 's/^ABX-OBS agent-reads-token-env=//p' "$OBS")"
+LEGACY="$(sed -n 's/^ABX-OBS legacy-host-home=//p' "$OBS")"
+LEGACY_EXISTS="$(sed -n 's/^ABX-OBS legacy-exists=//p' "$OBS")"
 HOME_WRITABLE="$(sed -n 's/^ABX-OBS home-writable=//p' "$OBS")"
+SETTINGS_WRITABLE="$(sed -n 's/^ABX-OBS settings-writable=//p' "$OBS")"
 
-[ "$MOUNTED_EXISTS" = "yes" ] && ok "abx 生成的配置确实挂进了舱：$MOUNTED" || fail "挂载点上没有配置：$MOUNTED"
-[ "$AGENT_READS_EXISTS" = "no" ] && ok "但 agent 会去找的位置是空的：$AGENT_READS" || fail "agent 会去找的位置居然有配置：$AGENT_READS"
-if [ "$MOUNTED" != "$AGENT_READS" ]; then
-  ok "两个路径不一样：挂载点 $MOUNTED ≠ 舱内 HOME $CELL_HOME 下的 $AGENT_READS"
+# 期望值全部来自驱动写下的 report.json，**不在 shell 里另算一遍**：
+# 两边各算一次的话，哪天路径规则改了，这里会跟着一起错，守卫就白设了。
+CELL_HOME_CFG="$(jget report.json cellHome)"
+EXPECTED_READS="$(jget report.json agentReadsSettings)"
+EXPECTED_BASE_URL="$(jget report.json cellOrigin)/u/anthropic"
+PLACEHOLDER_CFG="$(jget report.json placeholderToken)"
+HOST_HOME_SETTINGS="$(jget report.json hostHomeSettingsPath)"
+STAGED_CELL_PATH="$(jget report.json stagedCellPath)"
+MOUNT_TARGETS="$(jget report.json mountTargets)"
+
+# 正命题一：舱内 agent 真正会读的那个位置上有配置。
+if [ "$AGENT_READS_EXISTS" = "yes" ] && [ "$AGENT_READS" = "$EXPECTED_READS" ]; then
+  ok "舱内 agent 会读的位置上有配置：$AGENT_READS（HOME=$CELL_HOME_ENV，来自 session.cellHome=$CELL_HOME_CFG）"
 else
-  fail '两个路径居然一样，这条观测的前提不成立'
+  fail "舱内 agent 会读的位置（$EXPECTED_READS）上没有配置：exists=${AGENT_READS_EXISTS:-（空）}，实际读到 ${AGENT_READS:-（空）}"
 fi
-[ "$HOME_WRITABLE" = "no" ] && note "顺带观测：舱内 HOME=$CELL_HOME 在 --read-only 下不可写（claude -p 仍然跑通了）"
 
-step '7. 反向对照：拿掉 abx 注入的那两个变量，同样的挂载会不会自己生效'
-
-CTRL_OUT="$WORK/control.stdout.txt"
-jget control.json stdout > "$CTRL_OUT"
-CTRL_EXIT="$(jget control.json exitCode)"
-raw "退出码 ${CTRL_EXIT:-（空）} · stdout：$(cat "$CTRL_OUT" | tr '\n' ' ')"
-if grep -q "$NONCE" "$CTRL_OUT"; then
-  fail '拿掉那两个变量后居然还能跑通 —— 那么起作用的是挂进去的配置，不是环境变量'
+# 正命题二：里面装的确实是 abx 生成的那一份 —— 端点指向气闸舱面，token 是占位符。
+if [ "$AGENT_READS_BASE_URL" = "$EXPECTED_BASE_URL" ]; then
+  ok "内容是 abx 生成的：ANTHROPIC_BASE_URL 指向气闸舱面 $EXPECTED_BASE_URL"
 else
-  ok '拿掉 ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN 之后跑不通，说明这条路是靠环境变量通的'
+  fail "配置内容不对：读到的端点是 ${AGENT_READS_BASE_URL:-（空）}，期望 $EXPECTED_BASE_URL"
+fi
+if [ -n "$PLACEHOLDER_CFG" ] && [ "$AGENT_READS_TOKEN" = "$PLACEHOLDER_CFG" ]; then
+  ok "配置里装的是占位符（$PLACEHOLDER_CFG），不是真凭据"
+else
+  fail "配置里的 token 不是那个占位符：${AGENT_READS_TOKEN:-（空）}"
+fi
+
+# 反命题一：宿主 home 那条老路径不再是舱内挂载目标（这才是当年那个 bug 的形态）。
+case "$MOUNT_TARGETS" in
+  *"$HOST_HOME_SETTINGS"*)
+    fail "宿主 home 那条老路径又成了挂载目标：$HOST_HOME_SETTINGS（本次挂载目标：$MOUNT_TARGETS）"
+    ;;
+  *)
+    ok "本次挂载目标里没有宿主 home 那条路径（$HOST_HOME_SETTINGS）：$MOUNT_TARGETS"
+    ;;
+esac
+if [ -n "$STAGED_CELL_PATH" ] && [ "$STAGED_CELL_PATH" != "$HOST_HOME_SETTINGS" ]; then
+  ok "生成的配置的舱内落点不是宿主 home 那条路径：$STAGED_CELL_PATH"
+else
+  fail "生成的配置又落到宿主 home 那条路径上了：${STAGED_CELL_PATH:-（空）}"
+fi
+
+# 反命题二：舱内那条老路径下什么都没有（它既不是挂载点，镜像里也没有这个文件）。
+if [ "$LEGACY_EXISTS" = "no" ]; then
+  ok "舱内 ${LEGACY:-宿主 home 那条路径} 下没有配置"
+else
+  fail "舱内宿主 home 那条路径下有东西：${LEGACY:-（空）}"
+fi
+
+[ "$HOME_WRITABLE" = "no" ] && note "顺带观测：舱内 HOME=$CELL_HOME_ENV 本身在 --read-only 下不可写"
+[ "$SETTINGS_WRITABLE" = "no" ] && note '顺带观测：配置那一格是只读挂载，舱内改不动（目录整体 rw、配置那一格 ro）'
+
+step '7. 功能对照：拿掉 abx 注入的端点变量，只靠挂进去的配置还通不通'
+
+CTRL_A_OUT="$WORK/control-a.stdout.txt"
+jget control-a-config-only.json stdout > "$CTRL_A_OUT"
+CTRL_A_EXIT="$(jget control-a-config-only.json exitCode)"
+raw "A（配置照挂，只拿掉端点变量）退出码 ${CTRL_A_EXIT:-（空）} · stdout：$(cat "$CTRL_A_OUT" | tr '\n' ' ')"
+if grep -q "$NONCE" "$CTRL_A_OUT"; then
+  ok '只靠挂进去的那份配置也能跑通 —— 配置真的被 agent 读进去了（HOME 错配那种形态会在这里失败）'
+else
+  fail '只挂配置就跑不通 —— 那么起作用的是环境变量，不是挂进去的那份配置'
+fi
+
+CTRL_B_OUT="$WORK/control-b.stdout.txt"
+jget control-b-no-config.json stdout > "$CTRL_B_OUT"
+CTRL_B_EXIT="$(jget control-b-no-config.json exitCode)"
+raw "B（同样环境，配置与实例目录都不挂）退出码 ${CTRL_B_EXIT:-（空）} · stdout：$(cat "$CTRL_B_OUT" | tr '\n' ' ')"
+if grep -q "$NONCE" "$CTRL_B_OUT"; then
+  fail '不挂配置居然也跑通了 —— 那么 A 通过的原因不是那份配置'
+else
+  ok '不挂配置就跑不通（排除了「A 是别的原因通的」）'
 fi
 
 # ── 结论 ──────────────────────────────────────────────────────────────────
