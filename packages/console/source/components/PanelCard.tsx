@@ -16,8 +16,8 @@ export interface PanelCardProps {
 /**
  * 面板本体：一张 366 宽、圆角带阴影的卡片，也是拖放的落点。
  *
- * 外观（圆角 10、双层阴影、`foreground/.14` 边框）逐条来自
- * `apps/docs/specs/product/tray-ui.md` §2.4；数字写进 CSS 变量，不在这里硬编码。
+ * 外观（圆角 10、双层阴影、装饰性分隔线那种 `--border` 边框）逐条来自
+ * `apps/docs/specs/product/design-system.md`；数字写进 CSS 变量，不在这里硬编码。
  * 高度不写死：卡片由内容撑开，`useReportHeight` 量完交给宿主。
  */
 export function PanelCard(props: PanelCardProps) {
