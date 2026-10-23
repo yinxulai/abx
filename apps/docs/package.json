@@ -10,6 +10,8 @@
     "dev": "clarify dev",
     "build": "clarify build",
     "preview": "clarify preview",
+    "check": "clarify check",
+    "audit:ui": "node ./scripts/audit-ui.mjs",
     "deploy": "wrangler deploy",
     "deploy:dry-run": "wrangler deploy --dry-run",
     "dev:worker": "wrangler dev"
