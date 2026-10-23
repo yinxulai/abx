@@ -15,6 +15,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { SessionConfig } from '@abx/contracts'
 import { makeConfig, makeUpstream } from '@abx/contracts/test-support'
+import { RUNNING_PLATFORM } from '../test-support'
 import type { CommandOptions } from './options'
 import { runOpen } from './open'
 import { CommandError, type CommandContext } from './runtime'
@@ -44,7 +45,13 @@ function context(env: Readonly<Record<string, string | undefined>> = {}, session
     }),
     configPath: '/tmp/abx.config.json',
     env,
-    cwd: '/tmp',
+    // 任务目录默认就是 cwd，而 `runOpen` 真的会 `existsSync` 它——所以这里必须是
+    // 一个真存在、且每个平台都有的目录。写死 `/tmp` 的话 Windows 上会解析成
+    // `D:\tmp`，于是每条用例先撞上「任务目录不存在」。
+    cwd: tmpdir(),
+    // 平台由宿主层给（`apps/app` 里读一次 `process.platform`）；测试里给的就是
+    // 跑测试这台机器。
+    platform: RUNNING_PLATFORM,
   }
 }
 
@@ -198,7 +205,8 @@ describe('runOpen：镜像还没构建', () => {
       }),
       configPath: '/tmp/abx.config.json',
       env,
-      cwd: '/tmp',
+      cwd: tmpdir(),
+      platform: RUNNING_PLATFORM,
     }
   }
 

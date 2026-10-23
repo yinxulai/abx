@@ -42,6 +42,59 @@ export function parseHostPlatform(value: unknown): HostPlatform | null {
 }
 
 /**
+ * 宿主平台不认识。**启动阶段就抛**，什么都别做。
+ *
+ * 它不是一句内部断言：这是用户会看到的第一句话（也是唯一一句），所以要写明白
+ * 「你在什么系统上、我们支持什么、现在能做什么」，而不是等某个闸门在几十行之后
+ * 报一句「路径不合法」——那句话对着一个正确配置只会让人去改配置。
+ */
+export class UnsupportedHostPlatformError extends Error {
+  readonly platform: string
+
+  constructor(platform: unknown) {
+    const shown = typeof platform === 'string' ? platform : JSON.stringify(platform)
+    super(
+      `abx 不支持这个系统：${shown}。支持的是 ${HOST_PLATFORMS.join(' / ')}` +
+        `（macOS 是发布平台，Windows 与 Linux 也能跑）。\n` +
+        `不在这里硬跑是有原因的：文件系统隔离那套规则每个平台一套，` +
+        `没有规则的平台上一道闸门都不会生效——而它不会报错，只会让隔离悄悄消失。\n` +
+        `要在这台机器上做验证，可以只用不碰隔离的那部分（例如 pnpm test 与 doctor 的配置检查）。`,
+    )
+    this.name = 'UnsupportedHostPlatformError'
+    this.platform = shown
+  }
+}
+
+/**
+ * 把外面来的平台值（通常是 `process.platform`）变成平台，认不出就抛。
+ *
+ * **这是 `process.platform` 唯一该被读到的地方**，而且它只在宿主层调用：
+ * `apps/app`、e2e 驱动、测试夹具。领域层（`packages/core` 的其余部分）一律收
+ * `HostPlatform` 参数，不自己去读环境——那样才能在 Linux 上把 win32 的规则跑一遍。
+ */
+export function requireHostPlatform(value: unknown): HostPlatform {
+  const platform = parseHostPlatform(value)
+  if (platform === null) throw new UnsupportedHostPlatformError(value)
+  return platform
+}
+
+/**
+ * 宿主路径里有没有 `..` 那一段。
+ *
+ * 放在这里而不是各处自己切一遍，是因为**切错分隔符的后果是静默的**：Windows 上
+ * `/` 与 `\` 都是分隔符，只切 `rules.path.sep`（那边是 `\`）的话，
+ * `C:/Users/../Windows` 会被当成一个普通名字，`..` 那道闸门整个失效——不报错、
+ * 不抛异常，只是不再拦人。三个调用点（挂载清单、实例根、状态目录）用的是同一条判据，
+ * 所以它必须只有一份实现。
+ *
+ * POSIX 上 `\` 不是分隔符，多切一个只会更严不会更松；而路径是用户拖进来的，
+ * 来源平台不一定跟宿主一样，所以两边一起切正好。
+ */
+export function hasParentSegment(value: string): boolean {
+  return value.split(/[/\\]/).includes('..')
+}
+
+/**
  * 禁挂前缀：任何挂载源落在这下面都不行（POSIX 那一份）。
  *
  * 每一条都对应一类具体的逃逸：
@@ -158,16 +211,25 @@ export interface HostPathRules {
   /** 这条路径本身就是一个「不许当根用」的位置（文件系统根、系统目录……）。 */
   isDangerousRoot(candidate: string): boolean
   /**
-   * 这条路径能不能当**可写挂载源的根**（实例根就是它）。不能就是理由，可以就是 `null`。
+   * 这条宿主路径落在禁挂规则里吗——**但罩住 home 的那些规则除外**。
    *
-   * 为什么它不能由 `matchForbiddenMountSource()` 直接顶替：**默认实例根就落在主目录
-   * 下面**（`~/.abx/instances`），而「主目录不许挂」正是禁挂名单里的一条。所以这一问
-   * 必须带上 `homeDir`，把**罩住 home 的那条规则让开**——让开之后剩下的照旧一条不放
-   * （`~/.ssh/instances` 这类由 `FORBIDDEN_INSTANCE_ROOT_SUBDIRS` 另外拦，见 mount-policy）。
+   * 命中就返回理由（人话），没命中就是 `null`。这是整套规则里**唯一一处「让路」**，
+   * 所以它单独一个方法，而不是散在调用方。两处用到它，两处都必须让：
    *
-   * 这是唯一一处「让路」，所以它单独一个方法，而不是散在调用方。
+   *   - **实例根**：默认值 `~/.abx/instances` 就落在主目录下面，而「主目录不许挂」
+   *     正是禁挂名单里的一条。不让路的话，默认配置第一次跑就被自己的闸门拒了。
+   *   - **共享源**：用户要共享的东西本来就住在主目录下面，不让路的话共享功能整个不能用。
+   *
+   * 让路的判据是「这条规则**罩住** home」（home 就是它，或者在它下面），
+   * 不是「这条规则等于某个写死的路径」——写死的那份在系统盘不是 `C:` 的 Windows
+   * 上会变成一条永不生效的空操作，而它不报错。
+   *
+   * @param extraPrefixes 只对这一次判定成立的前缀。共享那一侧用它补上 `/run`、
+   *   `/private/etc` 这类「软链之后才看得见」的位置（见 `session/shared.ts`）。
+   *   **Windows 上这个参数被忽略**：那几条都是 POSIX 路径形状，在那边没有对应物，
+   *   而 Windows 的禁挂判定本来就不走前缀名单。
    */
-  instanceRootViolation(candidate: string, homeDir: string): string | null
+  forbiddenSourceViolation(candidate: string, homeDir: string, extraPrefixes?: readonly string[]): string | null
 }
 
 function posixMatchForbiddenMountSource(source: string): string | null {
@@ -179,19 +241,15 @@ function posixMatchForbiddenMountSource(source: string): string | null {
   )
 }
 
-/**
- * 这条路径是不是「主目录或它的上级」。
- *
- * 让路的判据不是「等于 home」，而是「**罩住** home」：`/home` 与 `/home/dev` 都要让，
- * 因为默认实例根 `/home/dev/.abx/instances` 落在两者下面。
- */
+/** 这条路径是不是「主目录或它的上级」。让路的判据不是「等于 home」而是「罩住 home」。 */
 function posixCoversHome(candidate: string, homeDir: string): boolean {
   return homeDir === candidate || homeDir.startsWith(`${candidate}${path.posix.sep}`)
 }
 
-function posixInstanceRootViolation(candidate: string, homeDir: string): string | null {
-  const prefix = POSIX_FORBIDDEN_MOUNT_PREFIXES.find(
-    (rule) => !posixCoversHome(rule, homeDir) && (candidate === rule || candidate.startsWith(`${rule}${path.posix.sep}`)),
+function posixForbiddenSourceViolation(candidate: string, homeDir: string, extraPrefixes: readonly string[] = []): string | null {
+  const prefix = [...POSIX_FORBIDDEN_MOUNT_PREFIXES, ...extraPrefixes].find(
+    (rule) =>
+      !posixCoversHome(rule, homeDir) && (candidate === rule || candidate.startsWith(`${rule}${path.posix.sep}`)),
   )
   return prefix === undefined ? null : `它落在禁挂前缀 ${prefix} 里`
 }
@@ -270,18 +328,40 @@ function windowsMatchForbiddenMountSource(source: string): string | null {
   return windowsMatch(source)?.label ?? null
 }
 
-function windowsInstanceRootViolation(candidate: string, homeDir: string): string | null {
+function windowsForbiddenSourceViolation(candidate: string, homeDir: string): string | null {
   const matched = windowsMatch(candidate)
   if (matched === null) return null
-  // 默认实例根 `C:\Users\me\.abx\instances` 正好落在 `C:\Users` 这条规则里，所以
-  // 罩住 home 的规则要让路——同样是按形状算，不按某个写死的盘符。
+  // 默认实例根 `C:\Users\me\.abx\instances`、用户自己的 `C:\Users\me\notes`，
+  // 两者都正好落在 `C:\Users` 这条规则里，所以罩住 home 的规则要让路——
+  // 同样是按形状算，不按某个写死的盘符（系统盘不是 C: 的机器上照样成立）。
   const home = normalizeWindowsPath(homeDir)
   if (matched.prefix !== null && (home === matched.prefix || home.startsWith(`${matched.prefix}\\`))) return null
   return `它落在禁挂规则 ${matched.label} 里`
 }
 
+/**
+ * Windows 上「这个位置本身不许当根用」。
+ *
+ * **判的是整段相等，不是前缀。** 这一点跟 `matchForbiddenMountSource` 完全不同，
+ * 混起来会出大事：`C:\Users` 不能当挂载源（那是所有用户的家），但
+ * `C:\Users\dev\.abx\instances` 恰恰是**默认实例根**——判前缀的话默认配置第一次
+ * 跑就被自己的闸门拒了。POSIX 那份 `POSIX_DANGEROUS_TASK_DIRS` 也是这个语义
+ * （`includes`，整段相等），这里跟它对齐。
+ *
+ * 算得上「本身就是系统位置」的只有三种形状：
+ *   - 盘根 `C:\`；
+ *   - 盘的根下一层里那几个保留目录，`C:\Windows`、`C:\Users`……；
+ *   - UNC 的共享根本身 `\\主机\共享`（它下面某一层可以是正常项目目录）。
+ */
 function windowsIsDangerousRoot(candidate: string): boolean {
-  return windowsMatch(candidate) !== null
+  const normalized = normalizeWindowsPath(candidate)
+  if (normalized === '') return false
+  if (/^[a-z]:\\$/.test(normalized)) return true
+  if (/^\\\\[^\\]+\\[^\\]+$/.test(normalized)) return true
+  const reserved = /^[a-z]:\\([^\\]+)$/.exec(normalized)
+  if (reserved === null) return false
+  const name = reserved[1] ?? ''
+  return WINDOWS_RESERVED_ROOT_DIRS.some((entry) => entry.toLowerCase() === name)
 }
 
 const RULES: Readonly<Record<HostPlatform, HostPathRules>> = {
@@ -294,7 +374,7 @@ const RULES: Readonly<Record<HostPlatform, HostPathRules>> = {
     dockerSocketPath: POSIX_DOCKER_SOCKET_PATH,
     matchForbiddenMountSource: posixMatchForbiddenMountSource,
     isDangerousRoot: (candidate) => POSIX_DANGEROUS_TASK_DIRS.includes(candidate),
-    instanceRootViolation: posixInstanceRootViolation,
+    forbiddenSourceViolation: posixForbiddenSourceViolation,
   },
   darwin: {
     platform: 'darwin',
@@ -308,7 +388,7 @@ const RULES: Readonly<Record<HostPlatform, HostPathRules>> = {
     dockerSocketPath: POSIX_DOCKER_SOCKET_PATH,
     matchForbiddenMountSource: posixMatchForbiddenMountSource,
     isDangerousRoot: (candidate) => POSIX_DANGEROUS_TASK_DIRS.includes(candidate),
-    instanceRootViolation: posixInstanceRootViolation,
+    forbiddenSourceViolation: posixForbiddenSourceViolation,
   },
   win32: {
     platform: 'win32',
@@ -319,7 +399,7 @@ const RULES: Readonly<Record<HostPlatform, HostPathRules>> = {
     dockerSocketPath: WINDOWS_DOCKER_PIPE_PATH,
     matchForbiddenMountSource: windowsMatchForbiddenMountSource,
     isDangerousRoot: windowsIsDangerousRoot,
-    instanceRootViolation: windowsInstanceRootViolation,
+    forbiddenSourceViolation: windowsForbiddenSourceViolation,
   },
 }
 

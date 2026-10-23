@@ -10,6 +10,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { RUNNING_PLATFORM } from '../test-support'
 import { CellTokenRegistry } from './registry'
 import { CELL_PATH_PREFIX, extractCellToken } from './route'
 import {
@@ -106,6 +107,13 @@ describe('带前缀的令牌照样走通各处', () => {
     // 落盘的就是令牌本身，前后没有多出别的字符（读回来时 trim 掉的只有换行）。
     expect(readFileSync(filePath, 'utf8').trim()).toBe(token)
     // 令牌文件是这次会话的凭据，权限不能放宽。
-    expect(statSync(filePath).mode & 0o777).toBe(0o600)
+    if (RUNNING_PLATFORM === 'win32') {
+      // Windows 上没有 POSIX 权限位，`mode` 里只剩「只读」那一位（值是 `statSync`
+      // 合成的，写死数字等于在断言 Node 的内部实现）。能验的是同一件事的另一半：
+      // 这个文件**不是只读的**——闸门要能重写它。
+      expect(statSync(filePath).mode & 0o200).not.toBe(0)
+    } else {
+      expect(statSync(filePath).mode & 0o777).toBe(0o600)
+    }
   })
 })

@@ -17,6 +17,7 @@
 import { accessSync, constants, existsSync } from 'node:fs'
 import path from 'node:path'
 import { listWildcardPatterns, type AbxConfig } from '@abx/contracts'
+import type { HostPlatform } from '../host-platform'
 import { probeDocker, probeUserNamespaces, isExecutableOnPath, MOUNT_POLICY, DANGEROUS_HOST_ENV_NAMES } from '../session/index'
 import { isPortOpen, resolveBackend, resolveCellHost, type CommandContext } from './runtime'
 import type { CommandOptions } from './options'
@@ -71,9 +72,9 @@ export async function collectChecks(context: CommandContext, options: CommandOpt
   return [
     checkNode(),
     checkBackend(backend),
-    await checkDocker(backend),
+    await checkDocker(backend, context.platform),
     checkUserNamespaces(),
-    checkBubblewrap(),
+    checkBubblewrap(context.platform),
     await checkPort('宿主面端口', config.broker.host, config.broker.hostPort),
     await checkPort('舱面端口', cellHost, config.broker.cellPort),
     checkCellHost(cellHost, backend),
@@ -111,8 +112,8 @@ function checkBackend(backend: string): Check {
   }
 }
 
-async function checkDocker(backend: string): Promise<Check> {
-  const probe = await probeDocker()
+async function checkDocker(backend: string, platform: HostPlatform): Promise<Check> {
+  const probe = await probeDocker(platform)
   if (probe.available) {
     return { name: 'docker', status: 'ok', detail: probe.detail }
   }
@@ -139,8 +140,8 @@ function checkUserNamespaces(): Check {
   }
 }
 
-function checkBubblewrap(): Check {
-  const present = isExecutableOnPath('bwrap')
+function checkBubblewrap(platform: HostPlatform): Check {
+  const present = isExecutableOnPath('bwrap', platform)
   return {
     name: 'bubblewrap',
     status: 'ok',

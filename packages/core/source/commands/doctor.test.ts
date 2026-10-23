@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { makeConfig, makeEgressRule, makeUpstream } from '@abx/contracts/test-support'
+import { RUNNING_PLATFORM } from '../test-support'
 import type { CommandOptions } from './options'
 import type { CommandContext } from './runtime'
 import { collectChecks, findDangerousHostEnv } from './doctor'
@@ -10,6 +11,10 @@ function context(overrides: Parameters<typeof makeConfig>[0] = {}, env: Record<s
     configPath: '/tmp/abx.config.json',
     env,
     cwd: '/tmp',
+    // 这几条命令的用例不碰文件系统，只验编排与文案，所以 cwd / configPath 用固定
+    // 字符串就够（doctor 只把它们打印出来）。平台倒是必须给：它决定路径规则，
+    // 而路径规则决定「哪些配置被判成危险」。跑测试这台机器就是它。
+    platform: RUNNING_PLATFORM,
   }
 }
 

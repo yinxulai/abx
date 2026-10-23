@@ -4,10 +4,12 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { SharedEntry } from '@abx/contracts'
+import { RUNNING_PLATFORM, RUNNING_RULES, RUNNING_VOCABULARY } from '../test-support'
 import { MountPolicyViolation } from './mount-policy'
 import {
   MAX_REPORTED_CREDENTIAL_FILES,
   resolveSharedMounts,
+  sanitizeSharedName,
   sharedSourceViolationReason,
   type ResolveSharedMountsOptions,
 } from './shared'
@@ -18,13 +20,35 @@ import {
  *
  * 每个用例都在自己的临时目录里跑，而且 home 与实例根都显式传进去——
  * 绝不能让用例跟着跑测试的那个人的主目录走。
+ *
+ * **用例分两类**：要碰文件系统的那部分跟着 `RUNNING_*` 走（真实系统调用模拟不了），
+ * 纯字符串的那部分（名字消毒、macOS 的 `/private/...`）在哪个平台上都跑同一套断言。
  */
 
 let work: string
 
+const isWindows = RUNNING_PLATFORM === 'win32'
+
 /** 宿主 home 就是临时目录本身，于是「主目录下面」这件事在用例里是可造的。 */
 function options(overrides: Partial<ResolveSharedMountsOptions> = {}): ResolveSharedMountsOptions {
-  return { homeDir: work, instancesRoot: path.join(work, 'instances'), ...overrides }
+  return {
+    platform: RUNNING_PLATFORM,
+    homeDir: work,
+    instancesRoot: path.join(work, 'instances'),
+    ...overrides,
+  }
+}
+
+/**
+ * 这个平台上真实存在的一处禁挂位置。
+ *
+ * 写死 `/etc` 在 Windows 上会解析成 `<当前盘>:\etc`——那里什么都没有，
+ * 于是失败理由变成「找不到」而不是「禁挂」。断言照样会绿，验的东西却换了一个，
+ * 所以位置必须按平台取。
+ */
+function runningForbiddenDir(): string {
+  if (!isWindows) return '/etc'
+  return RUNNING_VOCABULARY.join(RUNNING_VOCABULARY.fsRoot, 'ProgramData')
 }
 
 function resolve(entries: readonly SharedEntry[], overrides: Partial<ResolveSharedMountsOptions> = {}) {
@@ -108,11 +132,23 @@ describe('resolveSharedMounts · 挂载形态', () => {
   })
 
   it('名字消毒：不合法的 basename 用 shared-<序号> 兜底', () => {
-    const weird = path.join(work, 'bad\u0001name')
-    mkdirSync(weird)
+    // 这一条**故意**不走文件系统。想造一个名字里带控制字符的目录，在 Windows 上
+    // 是做不到的（0x00–0x1f 在那边是非法文件名字符，`mkdirSync` 直接抛），
+    // 于是这条规则只在 POSIX 上验得到——而它必须三个平台都成立。
+    // 所以直接问那个纯函数，序号也顺手钉住「跟着条目在这一批里的位置走」。
+    for (const [index, weird] of ['/home/dev/bad\u0001name', '/home/dev/\u007f', '/home/dev/notes\u0000.md'].entries()) {
+      expect(sanitizeSharedName(weird, index)).toBe(`shared-${index + 1}`)
+    }
+  })
 
-    const { mounts } = resolve([directoryEntry(weird)])
-    expect(mounts[0]?.target).toBe('/shared/shared-1')
+  it('名字消毒：正常名字原样通过，两个平台的路径都切得对', () => {
+    // 共享条目是拖进来的，来源平台不一定跟宿主一样，所以 `\` 也要切。
+    expect(sanitizeSharedName('/home/dev/notes', 0)).toBe('notes')
+    expect(sanitizeSharedName('D:\\projects\\notes', 0)).toBe('notes')
+    expect(sanitizeSharedName('C:\\Users\\dev\\my notes', 0)).toBe('my notes')
+    // `.` 与 `..` 当不了挂载点的一段。
+    expect(sanitizeSharedName('/home/dev/.', 0)).toBe('shared-1')
+    expect(sanitizeSharedName('/home/dev/..', 0)).toBe('shared-1')
   })
 
   it('舱内共享区根可以换，但默认是 /shared', () => {
@@ -138,9 +174,15 @@ describe('resolveSharedMounts · kind 以宿主为准', () => {
     expect(lying.mounts).toEqual([{ source: file, target: '/shared/design.md', mode: 'ro' }])
   })
 
-  it('设备文件（既不是普通文件也不是目录）拒绝', () => {
-    // 套接字、设备文件都能被 stat 出来，但都不能当共享源：前者是别的进程的接口，
-    // 后者是内核的。判据是 isFile / isDirectory，两者都不成立就拒。
+  // 套接字、设备文件都能被 stat 出来，但都不能当共享源：前者是别的进程的接口，
+  // 后者是内核的。判据是 isFile / isDirectory，两者都不成立就拒。
+  //
+  // **这一条只在 POSIX 上跑**：Windows 上没有可移植的办法造出一个「既不是文件
+  // 也不是目录」的文件系统对象（套接字在那边是命名管道 `\\.\pipe\...`，不是磁盘上
+  // 的一个路径）。删掉断言换绿不是选项，所以这里是**只在能造出这种对象的平台上验**，
+  // 而且是 `skipIf` 而不是悄悄 `return`——跳过了就得在报告里看得见。
+  // 判据本身不认平台（`kindOf` 只看 isFile / isDirectory），在 win32 上一样生效。
+  it.skipIf(isWindows)('套接字（既不是普通文件也不是目录）拒绝', () => {
     const socket = path.join(work, 'agent.sock')
     const server = createServer()
     server.listen(socket)
@@ -286,27 +328,34 @@ describe('resolveSharedMounts · 不能当共享源的地方', () => {
     expect(reason).toContain('身份')
   })
 
-  it('禁挂前缀里的东西照样拒绝：/etc、/root、/var/run', () => {
-    for (const source of ['/etc', '/root', '/var/run']) {
+  it('禁挂名单里的东西照样拒绝：系统目录、主目录之外的那几处', () => {
+    // 位置按平台取：写死 `/etc` 在 Windows 上会解析成 `<当前盘>:\etc`，
+    // 那里什么都没有，于是理由变成「找不到」——断言照样绿，验的东西却换了。
+    const sources = isWindows
+      ? [RUNNING_VOCABULARY.systemDir, runningForbiddenDir()]
+      : ['/etc', '/root', '/var/run']
+    for (const source of sources) {
       const { mounts, rejected } = resolve([{ path: source, kind: 'directory' }])
       expect(mounts).toEqual([])
-      expect(rejected[0]?.reason).toContain('禁挂前缀')
+      // POSIX 那份名单说的是「禁挂前缀」，Windows 那份判的是形状、说的是「禁挂规则」。
+      // 共同的那一段是「禁挂」——断言停在这里，不去钉每一侧的原话。
+      expect(rejected[0]?.reason).toContain('禁挂')
     }
   })
 
-  it('docker socket 的父目录（/var/run）被拒', () => {
+  it.skipIf(isWindows)('docker socket 的父目录（/var/run）被拒', () => {
     // 这一条只有判**字面路径**才拦得住：/var/run 在多数 Linux 上是 /run 的软链，
     // 解析之后前缀名单里一个都对不上（见下一个用例）。
     const reason = resolve([directoryEntry('/var/run')]).rejected[0]?.reason ?? ''
     expect(reason).toContain('/var/run')
   })
 
-  it('指向 /var/run 的链接也被拒——解析后落在 /run，那也是 docker socket 的父目录', () => {
+  it.skipIf(isWindows)('指向 /var/run 的链接也被拒——解析后落在 /run，那也是 docker socket 的父目录', () => {
     const link = path.join(work, 'run-like')
     symlinkSync('/var/run', link)
 
     const reason = resolve([directoryEntry(link)]).rejected[0]?.reason ?? ''
-    expect(reason).toContain('禁挂前缀')
+    expect(reason).toContain('禁挂')
     expect(reason).toContain('/run')
   })
 
@@ -314,10 +363,17 @@ describe('resolveSharedMounts · 不能当共享源的地方', () => {
     // 这条只能在纯字符串这一层测：Linux 上没有 /private，造不出这样的路径。
     // 但它是 V1 唯一目标平台上的真实逃逸——`ln -s /etc ~/link` 拖进来，
     // 解析之后是 /private/etc，而前缀名单里写的是 /etc。
+    //
+    // 判据里要显式给 `darwin`：这几条 `/private/...` 是 macOS 专有的形状，
+    // 换成 linux 也成立（两边共用 POSIX 名单），换成 win32 就是另一套规则了。
     for (const resolved of ['/private/etc', '/private/etc/passwd', '/private/var/run/docker.sock']) {
-      expect(sharedSourceViolationReason(resolved, { homeDir: '/Users/alain', instancesRoot: '/Users/alain/.abx/instances' })).toContain(
-        '禁挂前缀',
-      )
+      expect(
+        sharedSourceViolationReason(resolved, {
+          platform: 'darwin',
+          homeDir: '/Users/alain',
+          instancesRoot: '/Users/alain/.abx/instances',
+        }),
+      ).toContain('禁挂')
     }
   })
 
@@ -344,19 +400,32 @@ describe('resolveSharedMounts · 不能当共享源的地方', () => {
 })
 
 describe('resolveSharedMounts · 符号链接', () => {
+  /*
+   * 这一组要在临时目录里真造软链，所以目标必须是**这台机器上真的存在**的目录：
+   * 指到不存在的地方，理由就变成「找不到」，「按目标判定」这件事就没验到。
+   * 目标按平台取——POSIX 上 `/etc`，Windows 上系统盘里那个保留目录。
+   *
+   * `symlinkSync` 的第三个参数是链接类型：POSIX 上忽略，Windows 上必填
+   * （目标可能还不存在，靠它才知道要建的是目录链接还是文件链接）。
+   */
+  const sensitiveTarget = isWindows ? RUNNING_VOCABULARY.systemDir : '/etc'
+
   it('链接指向敏感目录时按**目标**判定被拒，并在理由里说明是链接', () => {
     const link = path.join(work, 'innocent')
-    symlinkSync('/etc', link)
+    symlinkSync(sensitiveTarget, link, 'dir')
 
     const reason = resolve([directoryEntry(link)]).rejected[0]?.reason ?? ''
 
     expect(reason).toContain('符号链接')
-    expect(reason).toContain('禁挂前缀')
+    expect(reason).toContain('禁挂')
   })
 
-  it('链接指向主目录外的 home 时不放行（链接不能用来绕前缀）', () => {
+  it('链接指向别的用户的家时不放行（链接不能用来绕前缀）', () => {
+    // 「所有用户的家」在 POSIX 上是 `/root`，在 Windows 上是 `C:\Users` 那一层
+    // （`C:\Users\dev` 的下一个上级）。两个平台上它都是禁挂名单里的一条。
+    const othersHomes = isWindows ? RUNNING_RULES.path.dirname(RUNNING_VOCABULARY.home) : '/root'
     const link = path.join(work, 'elsewhere')
-    symlinkSync('/root', link)
+    symlinkSync(othersHomes, link, 'dir')
 
     expect(resolve([directoryEntry(link)]).mounts).toEqual([])
   })
@@ -364,7 +433,7 @@ describe('resolveSharedMounts · 符号链接', () => {
   it('链接指向合法目录时挂的是**解析后**的路径，不是链接本身', () => {
     const real = makeDirectory('real-notes', ['a.md'])
     const link = path.join(work, 'shortcut')
-    symlinkSync(real, link)
+    symlinkSync(real, link, 'dir')
 
     const { mounts, rejected } = resolve([directoryEntry(link)])
 
@@ -374,7 +443,7 @@ describe('resolveSharedMounts · 符号链接', () => {
 
   it('悬空的链接被拒，理由仍然说明它是链接', () => {
     const link = path.join(work, 'dangling')
-    symlinkSync(path.join(work, 'nowhere'), link)
+    symlinkSync(path.join(work, 'nowhere'), link, 'dir')
 
     const reason = resolve([directoryEntry(link)]).rejected[0]?.reason ?? ''
     expect(reason).toContain('符号链接')

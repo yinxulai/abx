@@ -131,7 +131,7 @@ export async function runOpen(input: OpenInput): Promise<number> {
   // 实例根先过闸。它来自 `ABX_INSTANCES_ROOT`，而「配成 /home」这种写法会让**整个
   // 主目录**变成可写挂载源的来源。这一步只解析路径、不碰文件系统，所以干跑也跑它：
   // 配错了应该在按下回车之前就知道。
-  assertInstancesRoot(instance.instancesRoot)
+  assertInstancesRoot({ instancesRoot: instance.instancesRoot, platform: context.platform })
 
   // 任务目录里如果躺着凭据文件，说一声。不是拦截——目录是用户自己选的，
   // 但舱内拿到的是可写权限，改坏了回不来。
@@ -187,7 +187,12 @@ export async function runOpen(input: OpenInput): Promise<number> {
       cellPath: instance.cellPath,
       agentId: agent.id,
     }
-    assertStateDirPolicy({ stateDirs: [stateDir], instancesRoot: instance.instancesRoot, cellHome })
+    assertStateDirPolicy({
+      platform: context.platform,
+      stateDirs: [stateDir],
+      instancesRoot: instance.instancesRoot,
+      cellHome,
+    })
     stateDirs.push(stateDir)
   } else {
     log(`[abx] local 后端不挂载实例目录：这个后端的会话历史不会跨会话保留。`)
@@ -245,6 +250,7 @@ export async function runOpen(input: OpenInput): Promise<number> {
     {
       cellId,
       agentId: agent.id,
+      platform: context.platform,
       command: [agent.command, ...agent.args],
       allocateTty,
       taskDir,

@@ -8,6 +8,7 @@
  */
 
 import type { ResourceLimits, SandboxBackendId } from '@abx/contracts'
+import type { HostPlatform } from '../host-platform'
 
 export interface SandboxMount {
   /** 宿主上的绝对路径。 */
@@ -65,6 +66,14 @@ export interface SandboxSpec {
   /** 这次会话的 id。会出现在容器名、审计和容器标签里。 */
   readonly cellId: string
   readonly agentId: string
+  /**
+   * 宿主是什么系统。
+   *
+   * 后端起容器前要自己再过一遍 `assertMountPolicy`，而那份闸门判的路径规则
+   * 每个平台都不一样，所以它必须知道这件事。**必填**：由宿主层读一次
+   * `process.platform` 传下来，后端不自己去读——理由见 `../host-platform.ts`。
+   */
+  readonly platform: HostPlatform
   /** 舱内要跑的命令，argv 形式。 */
   readonly command: readonly string[]
   /**

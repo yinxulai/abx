@@ -184,45 +184,45 @@ describe('linux / darwin 的禁挂判定', () => {
   }
 })
 
-describe('实例根的禁挂判定（唯一一处「让路」）', () => {
+describe('禁挂判定里唯一一处「让路」', () => {
   it('POSIX：默认实例根在主目录下面，罩住 home 的前缀让路', () => {
     const rules = hostPathRulesFor('linux')
-    expect(rules.instanceRootViolation('/home/dev/.abx/instances', POSIX_HOME)).toBeNull()
+    expect(rules.forbiddenSourceViolation('/home/dev/.abx/instances', POSIX_HOME)).toBeNull()
   })
 
   it('POSIX：让路只让罩住 home 的那一条，别的照旧不放', () => {
     const rules = hostPathRulesFor('linux')
-    expect(rules.instanceRootViolation('/etc/instances', POSIX_HOME)).toContain('禁挂前缀')
-    expect(rules.instanceRootViolation('/var/run/instances', POSIX_HOME)).toContain('禁挂前缀')
-    expect(rules.instanceRootViolation('/root/instances', POSIX_HOME)).toContain('禁挂前缀')
+    expect(rules.forbiddenSourceViolation('/etc/instances', POSIX_HOME)).toContain('禁挂前缀')
+    expect(rules.forbiddenSourceViolation('/var/run/instances', POSIX_HOME)).toContain('禁挂前缀')
+    expect(rules.forbiddenSourceViolation('/root/instances', POSIX_HOME)).toContain('禁挂前缀')
   })
 
   it('win32：默认实例根在主目录下面，同样让路——判据按形状，不按盘符', () => {
     const rules = hostPathRulesFor('win32')
-    expect(rules.instanceRootViolation('C:\\Users\\dev\\.abx\\instances', WIN_HOME)).toBeNull()
+    expect(rules.forbiddenSourceViolation('C:\\Users\\dev\\.abx\\instances', WIN_HOME)).toBeNull()
     // 系统盘不是 C: 的机器上，同一个形状照样让路。写死 `C:\Users` 的名单在这里会误杀。
-    expect(rules.instanceRootViolation('D:\\Users\\dev\\.abx\\instances', 'D:\\Users\\dev')).toBeNull()
+    expect(rules.forbiddenSourceViolation('D:\\Users\\dev\\.abx\\instances', 'D:\\Users\\dev')).toBeNull()
   })
 
   it('win32：让路只让罩住 home 的那一条', () => {
     const rules = hostPathRulesFor('win32')
-    expect(rules.instanceRootViolation('D:\\Windows\\instances', WIN_HOME)).toContain('D:\\Windows')
-    expect(rules.instanceRootViolation('C:\\ProgramData\\instances', WIN_HOME)).not.toBeNull()
+    expect(rules.forbiddenSourceViolation('D:\\Windows\\instances', WIN_HOME)).toContain('D:\\Windows')
+    expect(rules.forbiddenSourceViolation('C:\\ProgramData\\instances', WIN_HOME)).not.toBeNull()
     // 盘根罩得住任何人，但它自己不是 home，所以照旧拒。
-    expect(rules.instanceRootViolation('C:\\', WIN_HOME)).not.toBeNull()
+    expect(rules.forbiddenSourceViolation('C:\\', WIN_HOME)).not.toBeNull()
   })
 
   it('win32：UNC 没有「前缀」这回事，所以无路可让', () => {
     const rules = hostPathRulesFor('win32')
-    expect(rules.instanceRootViolation('\\\\server\\share\\instances', WIN_HOME)).not.toBeNull()
+    expect(rules.forbiddenSourceViolation('\\\\server\\share\\instances', WIN_HOME)).not.toBeNull()
   })
 
   it('win32：home 就在被点名的那一层时也让路，但只让那一层', () => {
     const rules = hostPathRulesFor('win32')
     // home 恰好是 `C:\Users`（少见但合法）——那时 `C:\Users` 这条规则罩住它。
-    expect(rules.instanceRootViolation('C:\\Users\\.abx\\instances', 'C:\\Users')).toBeNull()
+    expect(rules.forbiddenSourceViolation('C:\\Users\\.abx\\instances', 'C:\\Users')).toBeNull()
     // 而 `C:\Windows` 与被让路的规则无关，照旧拒。
-    expect(rules.instanceRootViolation('C:\\Windows\\instances', 'C:\\Users')).not.toBeNull()
+    expect(rules.forbiddenSourceViolation('C:\\Windows\\instances', 'C:\\Users')).not.toBeNull()
   })
 })
 
@@ -242,5 +242,27 @@ describe('危险根判定', () => {
     }
     expect(rules.isDangerousRoot('C:\\dev\\project')).toBe(false)
     expect(rules.isDangerousRoot('D:\\projects\\thing')).toBe(false)
+  })
+
+  it('win32：判的是整段相等，不是前缀——否则默认实例根会被自己拒掉', () => {
+    // `C:\Users` 不能当挂载源，但 `C:\Users\dev\.abx\instances` 正是**默认实例根**。
+    // 这两件事必须分开：`matchForbiddenMountSource` 判前缀（拦住整棵树），
+    // `isDangerousRoot` 判整段（只拦住那个位置本身）。混起来的话，
+    // Windows 上默认配置第一次跑就被自己的闸门拒了。
+    const rules = hostPathRulesFor('win32')
+    for (const candidate of [
+      'C:\\Users\\dev',
+      'C:\\Users\\dev\\.abx\\instances',
+      'C:\\Users\\dev\\projects\\thing',
+      'C:\\Windows\\System32',
+      'D:\\Program Files\\app',
+      '\\\\server\\share\\project',
+    ]) {
+      expect(rules.isDangerousRoot(candidate), candidate).toBe(false)
+    }
+    // 而它们**当挂载源**的时候照样要拦——两件事，两个结论。
+    for (const candidate of ['C:\\Users\\dev', 'C:\\Windows\\System32', '\\\\server\\share\\project']) {
+      expect(rules.matchForbiddenMountSource(candidate), candidate).not.toBeNull()
+    }
   })
 })

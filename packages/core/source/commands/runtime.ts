@@ -26,12 +26,26 @@ import {
   readCellTokenFile,
   startBroker,
 } from '../broker/index'
+import type { HostPlatform } from '../host-platform'
 
 export interface CommandContext {
   readonly config: AbxConfig
   readonly configPath: string
   readonly env: Readonly<Record<string, string | undefined>>
   readonly cwd: string
+  /**
+   * 宿主是什么系统。
+   *
+   * 命令层不自己去读 `process.platform`：那个值只在**宿主层**（`apps/app`、
+   * 或者测试/e2e 驱动）读一次，再顺着这里往下传。理由见 `../host-platform.ts`——
+   * 开发机是 Linux，「Windows 上的规则对不对」只能靠把平台当参数传进来才验得了。
+   *
+   * 类型是 `HostPlatform` 而不是 `NodeJS.Platform`：外面那个值可能是一台我们没有
+   * 规则的系统（`freebsd`），那种情况下正确的做法是**在进入这里之前就拒绝**，
+   * 而不是带着一个「认不出」的值走到闸门附近才发现。转换那一步是
+   * `requireHostPlatform()`。
+   */
+  readonly platform: HostPlatform
 }
 
 export class CommandError extends Error {
@@ -49,6 +63,11 @@ export interface ResolveContextInput {
   readonly cwd: string
   readonly env: Readonly<Record<string, string | undefined>>
   readonly configPath: string | null
+  /**
+   * 宿主是什么系统，由宿主层读 `process.platform` 之后经 `requireHostPlatform()`
+   * 转成这个值。**必填且不设默认**：忘了传得到的不是「按 Linux 算」，而是编译不过。
+   */
+  readonly platform: HostPlatform
 }
 
 export function resolveContext(input: ResolveContextInput): CommandContext {
@@ -77,6 +96,7 @@ export function resolveContext(input: ResolveContextInput): CommandContext {
     configPath: found.path,
     env: input.env,
     cwd: input.cwd,
+    platform: input.platform,
   }
 }
 

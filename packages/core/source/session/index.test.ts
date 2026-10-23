@@ -20,6 +20,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { SANDBOX_BACKEND_IDS } from '@abx/contracts'
 import { makeConfig } from '@abx/contracts/test-support'
+import { RUNNING_PLATFORM, RUNNING_VOCABULARY } from '../test-support'
 import type { SandboxBackend, SandboxSpec } from './backend'
 import { createBackend } from './index'
 
@@ -48,9 +49,10 @@ function spec(): SandboxSpec {
   return {
     cellId: 'backend-factory-cell',
     agentId: 'claude',
+    platform: RUNNING_PLATFORM,
     command: ['claude'],
     allocateTty: false,
-    taskDir: '/home/dev/projects/thing',
+    taskDir: RUNNING_VOCABULARY.taskDir,
     workdir: '/workspace',
     cellHome: '/home/node',
     env: {},

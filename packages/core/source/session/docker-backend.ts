@@ -14,8 +14,9 @@
  */
 
 import { spawn } from 'node:child_process'
-import { accessSync, constants } from 'node:fs'
 import path from 'node:path'
+import { isExecutableOnPath } from '../host-command'
+import type { HostPlatform } from '../host-platform'
 import type { SandboxBackend, SandboxHandle, SandboxIo, SandboxMount, SandboxSpec } from './backend'
 import { assertNoForbiddenEnv } from './backend'
 import { MOUNT_POLICY, assertMountPolicy } from './mount-policy'
@@ -124,6 +125,7 @@ export function createDockerBackend(options: DockerBackendOptions = {}): Sandbox
       const sharedMounts = spec.sharedMounts ?? []
       const mounts = MOUNT_POLICY.buildMounts(taskDir, spec.workdir, agentConfigFiles, stateDirs, sharedMounts)
       assertMountPolicy({
+        platform: spec.platform,
         mounts,
         taskDir,
         workdir: spec.workdir,
@@ -184,9 +186,16 @@ export interface DockerProbeResult {
  * 后者只说明客户端装了。**本机现在就是这个状态**——CLI 在，守护进程没起，
  * `docker --version` 会开开心心地打印版本号，然后 `docker run` 直接失败。
  */
-export async function probeDocker(dockerPath = 'docker'): Promise<DockerProbeResult> {
-  if (!isExecutableOnPath(dockerPath)) {
-    return { available: false, version: null, detail: `找不到 ${dockerPath} 可执行文件` }
+export async function probeDocker(platform: HostPlatform, dockerPath = 'docker'): Promise<DockerProbeResult> {
+  if (!isExecutableOnPath(dockerPath, platform)) {
+    return {
+      available: false,
+      version: null,
+      detail:
+        platform === 'win32'
+          ? `找不到 ${dockerPath} 可执行文件（Windows 上按 PATH + PATHEXT 找的，也试过 .exe）`
+          : `找不到 ${dockerPath} 可执行文件`,
+    }
   }
 
   return await new Promise<DockerProbeResult>((resolve) => {
@@ -210,28 +219,6 @@ export async function probeDocker(dockerPath = 'docker'): Promise<DockerProbeRes
         detail: firstLine(stderr) || `docker version 退出码 ${code}`,
       })
     })
-  })
-}
-
-/** `docker` 在不在 PATH 上。绝对路径就直接查文件。 */
-export function isExecutableOnPath(command: string): boolean {
-  if (command.includes(path.sep)) {
-    try {
-      accessSync(command, constants.X_OK)
-      return true
-    } catch {
-      return false
-    }
-  }
-  const searchPath = process.env['PATH'] ?? ''
-  return searchPath.split(path.delimiter).some((directory) => {
-    if (directory === '') return false
-    try {
-      accessSync(path.join(directory, command), constants.X_OK)
-      return true
-    } catch {
-      return false
-    }
   })
 }
 

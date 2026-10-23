@@ -29,37 +29,31 @@ import path from 'node:path'
 import { readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { agentConfigFileNames, agentHomeDirNames } from '@abx/contracts'
+import {
+  POSIX_DANGEROUS_TASK_DIRS,
+  POSIX_DOCKER_SOCKET_PATH,
+  POSIX_FORBIDDEN_MOUNT_PREFIXES,
+  hasParentSegment,
+  hostPathRulesFor,
+} from '../host-platform'
+import type { HostPathRules, HostPlatform } from '../host-platform'
 import type { SandboxConfigFile, SandboxMount, SandboxStateDir } from './backend'
 import { cellDirname, isCellAbsolute, isUnderCellPath } from './cell-path'
 import { defaultInstancesRoot } from './instance'
 
 /**
- * 禁挂前缀：任何挂载源落在这下面都不行。
+ * 这些名单**跟着平台走**，所以它们现在住在 `../host-platform.ts`（一个平台一份，
+ * 由 `hostPathRulesFor(platform)` 给）。下面这三个是 **POSIX 那一份**的别名，
+ * 留给还在按老名字读它们的老代码与文档。
  *
- * 每一条都对应一类具体的逃逸：
- *   - `/home` `/root`：SSH 私钥、`~/.aws`、`~/.config/gh`、浏览器数据；
- *   - `/etc`：`/etc/passwd`、`/etc/shadow`、各种服务凭据；
- *   - `/var/run`：**docker socket 就在这里**。挂进去等于把宿主 root 交出去；
- *   - `/proc` `/sys` `/dev`：内核接口，容器逃逸的经典入口。
+ * 新代码请用 `hostPathRulesFor(platform).forbiddenMountPrefixes` 这一类——
+ * 直接读别名等于把「Linux/macOS 的名单」当成「所有平台的名单」，而 Windows 上
+ * 那份完全是另一个形状（盘符、UNC、保留目录），一个字符串都对不上。
  */
-export const FORBIDDEN_MOUNT_PREFIXES: readonly string[] = [
-  '/home',
-  '/root',
-  '/etc',
-  '/var/run',
-  '/var/lib/docker',
-  '/proc',
-  '/sys',
-  '/dev',
-  '/boot',
-  '/usr',
-  '/bin',
-  '/sbin',
-  '/lib',
-]
+export const FORBIDDEN_MOUNT_PREFIXES = POSIX_FORBIDDEN_MOUNT_PREFIXES
 
-/** 单独点名：它比整个 `/var/run` 更值得在报错里被写出来。 */
-export const DOCKER_SOCKET_PATH = '/var/run/docker.sock'
+/** POSIX 上的 docker socket。Windows 上它是一个命名管道。 */
+export const DOCKER_SOCKET_PATH = POSIX_DOCKER_SOCKET_PATH
 
 /**
  * 舱内共享区的根：用户拖进来的东西一律挂在 `/shared/<名字>` 下，只读。
@@ -99,8 +93,25 @@ export const FORBIDDEN_CREDENTIAL_FILE_PATTERNS: readonly string[] = [
 
 /** 这个挂载源命中哪条凭据规则；没命中就是 `null`。 */
 export function matchCredentialFileRule(source: string): string | null {
-  const name = path.basename(source).toLowerCase()
+  const name = hostBaseName(source).toLowerCase()
   return FORBIDDEN_CREDENTIAL_FILE_PATTERNS.find((rule) => matchesCredentialRule(name, rule)) ?? null
+}
+
+/**
+ * 路径最后那一段，**两种分隔符都切**。
+ *
+ * 不能用 `path.basename`：那个跟着**跑代码这台机器**走，于是同一个字符串在 Linux 上
+ * 和在 Windows 上得出两个结论。落到这道闸门上就是一个真实的口子——挂载源是用户
+ * 拖进来的，来源平台不一定跟宿主一样，而「凭据文件一律不进舱」这条判定必须只看形状。
+ * 跟 `host-platform.ts` 的 `hasParentSegment()`、`shared-entry.ts` 的形状检查是同一个理由。
+ *
+ * 末尾的分隔符先去掉，跟 `basename` 的语义对齐（`/a/.env/` 的最后一段是 `.env`）。
+ * 两种分隔符都切只会**更严**：POSIX 上一个名字里带 `\` 的文件（合法但极其少见）
+ * 会被当成凭据文件拒掉——这个方向上的误判是可以接受的。
+ */
+function hostBaseName(source: string): string {
+  const segments = source.replace(/[/\\]+$/, '').split(/[/\\]/)
+  return segments[segments.length - 1] ?? ''
 }
 
 function matchesCredentialRule(name: string, rule: string): boolean {
@@ -134,27 +145,13 @@ export const FORBIDDEN_INSTANCE_ROOT_SUBDIRS: readonly string[] = [
 ]
 
 /**
- * 不能**作为任务目录本身**的路径。
+ * 不能**作为任务目录本身**的路径（POSIX 那一份）。
  *
  * 比禁挂前缀短：`/home/me/project` 是正常的任务目录，`/home` 不是。
+ * 判定请走 `hostPathRulesFor(platform).isDangerousRoot()`——Windows 那份不是一个
+ * 字符串名单，而是一条形状规则（盘根、盘符下的保留目录）。
  */
-export const DANGEROUS_TASK_DIRS: readonly string[] = [
-  '/',
-  '/home',
-  '/root',
-  '/etc',
-  '/usr',
-  '/var',
-  '/var/run',
-  '/var/lib/docker',
-  '/proc',
-  '/sys',
-  '/dev',
-  '/boot',
-  '/bin',
-  '/sbin',
-  '/lib',
-]
+export const DANGEROUS_TASK_DIRS = POSIX_DANGEROUS_TASK_DIRS
 
 export interface MountPolicyRule {
   readonly requirement: string
@@ -167,9 +164,14 @@ export type WritableMountClass = 'taskDir' | 'instanceState'
 export interface MountPolicy {
   readonly summary: string
   readonly rules: readonly MountPolicyRule[]
-  readonly forbiddenMountPrefixes: readonly string[]
+  /**
+   * 主目录里不许当实例根的那几处子目录名。
+   *
+   * 这一份**不跟平台走**（`.ssh` `.aws` `.kube` 在三个平台上都叫这个名字），
+   * 所以它留在这里；而「哪些路径根本不许挂」是跟着平台走的，住
+   * `hostPathRulesFor(platform).forbiddenMountPrefixes`。
+   */
   readonly forbiddenInstanceRootSubdirs: readonly string[]
-  readonly dangerousTaskDirs: readonly string[]
   /** 可写的两类。读代码的人问「舱内能改什么」，答案就是这一行。 */
   readonly writableClasses: readonly WritableMountClass[]
   /** 任务目录是不是可写。 */
@@ -213,9 +215,7 @@ export const MOUNT_POLICY: MountPolicy = {
   stateDirMode: 'rw',
   sharedMountMode: 'ro',
   mountsHostHome: false,
-  forbiddenMountPrefixes: FORBIDDEN_MOUNT_PREFIXES,
   forbiddenInstanceRootSubdirs: FORBIDDEN_INSTANCE_ROOT_SUBDIRS,
-  dangerousTaskDirs: DANGEROUS_TASK_DIRS,
   rules: [
     {
       requirement: '任务目录以 rw 挂载',
@@ -288,16 +288,27 @@ export class MountPolicyViolation extends Error {
   }
 }
 
-/** 这个宿主路径能不能作为挂载源。 */
-export function isForbiddenMountSource(source: string): boolean {
+/**
+ * 这个宿主路径能不能作为挂载源。
+ *
+ * `platform` 是必填的，没有默认值：这份判定在 Windows 上判的完全是另一套东西
+ * （盘符、UNC、保留目录），给个「默认 POSIX」等于让忘了传的调用方拿到一个
+ * **在 Windows 上永远返回 false 的闸门**——它不报错，只是不挡。
+ */
+export function isForbiddenMountSource(source: string, platform: HostPlatform): boolean {
   if (matchCredentialFileRule(source) !== null) return true
-  if (source === DOCKER_SOCKET_PATH) return true
-  return FORBIDDEN_MOUNT_PREFIXES.some(
-    (prefix) => source === prefix || source.startsWith(`${prefix}${path.sep}`),
-  )
+  return hostPathRulesFor(platform).matchForbiddenMountSource(source) !== null
 }
 
 export interface AssertMountPolicyInput {
+  /**
+   * 这台机器是什么系统。
+   *
+   * **必填**，而且由宿主层（`apps/app`）读一次 `process.platform` 传下来。
+   * 不在这里读、也不给默认值：这份闸门判的路径规则每个平台都不一样，
+   * 「默认 POSIX」在 Windows 上会变成一道**永远不响的**闸门。
+   */
+  readonly platform: HostPlatform
   readonly mounts: readonly SandboxMount[]
   readonly taskDir: string
   readonly workdir: string
@@ -333,9 +344,19 @@ export interface AssertMountPolicyInput {
 }
 
 export interface AssertStateDirPolicyInput {
+  /** 同上：必填，由宿主层传下来。 */
+  readonly platform: HostPlatform
   readonly stateDirs: readonly SandboxStateDir[]
   readonly instancesRoot?: string
   readonly cellHome?: string
+  readonly homeDir?: string
+}
+
+/** `assertInstancesRoot` 的入参。用对象而不是位置参数：平台值是必填的，混在位置参数里容易被漏。 */
+export interface AssertInstancesRootInput {
+  readonly instancesRoot: string
+  readonly platform: HostPlatform
+  /** 宿主 home。缺省 `os.homedir()`。 */
   readonly homeDir?: string
 }
 
@@ -351,10 +372,14 @@ export interface AssertStateDirPolicyInput {
  */
 export function assertStateDirPolicy(input: AssertStateDirPolicyInput): string {
   const homeDir = realpathOrResolve(input.homeDir ?? homedir())
-  const instancesRoot = assertInstancesRoot(input.instancesRoot ?? defaultInstancesRoot(), homeDir)
+  const instancesRoot = assertInstancesRoot({
+    instancesRoot: input.instancesRoot ?? defaultInstancesRoot(),
+    platform: input.platform,
+    homeDir,
+  })
 
   for (const dir of input.stateDirs) {
-    assertOneStateDir(dir, instancesRoot, homeDir, input.cellHome ?? null)
+    assertOneStateDir(dir, instancesRoot, homeDir, input.cellHome ?? null, hostPathRulesFor(input.platform))
   }
 
   return instancesRoot
@@ -366,46 +391,54 @@ export function assertStateDirPolicy(input: AssertStateDirPolicyInput): string {
  * 它平时是 `~/.abx/instances`（abx 自己造的），但这道闸不能省：它是从环境变量
  * 来的，而「把 `ABX_INSTANCES_ROOT` 配成 `/home`」这种写法，后果是**整个主目录**
  * 变成可写挂载源。这类事只要可能发生一次，就该在起容器之前被拒。
+ *
+ * **平台相关的部分收在 `rules.forbiddenSourceViolation()` 里**：那一处是唯一需要
+ * 「让路」的地方（默认实例根就落在主目录下面），而 Windows 上的让路判据是按形状
+ * 算的，不是某几个写死的前缀。这个函数只管那些跟平台无关的闸门。
  */
-export function assertInstancesRoot(instancesRoot: string, homeDir: string = realpathOrResolve(homedir())): string {
-  if (!path.isAbsolute(instancesRoot)) {
+export function assertInstancesRoot(input: AssertInstancesRootInput): string {
+  const rules = hostPathRulesFor(input.platform)
+  const homeDir = input.homeDir === undefined ? realpathOrResolve(homedir()) : input.homeDir
+  const instancesRoot = input.instancesRoot
+
+  if (!rules.path.isAbsolute(instancesRoot)) {
     throw new MountPolicyViolation(`实例根必须是绝对路径：${instancesRoot}`)
   }
-  if (instancesRoot.split(path.sep).includes('..')) {
+  if (hasParentSegment(instancesRoot)) {
     throw new MountPolicyViolation(`实例根里不允许出现 ..：${instancesRoot}`)
   }
 
   const root = realpathOrResolve(instancesRoot)
 
-  if (root === path.parse(root).root) {
+  if (root === rules.path.parse(root).root) {
     throw new MountPolicyViolation(`拒绝把 ${root} 当实例根：它是文件系统的根。`)
   }
 
   // 主目录本身，或者主目录的上级。后者更隐蔽：`/home` 看上去只是「主目录的爸爸」，
   // 但把可写挂载源指到那儿，等于把这一台机器上所有用户的主目录一起交出去。
-  if (root === homeDir || isAncestor(root, homeDir)) {
+  if (root === homeDir || isAncestor(root, homeDir, rules.path.sep)) {
     throw new MountPolicyViolation(
       `拒绝把 ${root} 当实例根：它是宿主 home（${homeDir}）本身，或者是它的上级。` +
         `实例状态目录是可写挂载源，指到这里等于把整个主目录交出去。默认值是 ~/.abx/instances。`,
     )
   }
 
-  if (DANGEROUS_TASK_DIRS.includes(root)) {
+  if (rules.isDangerousRoot(root)) {
     throw new MountPolicyViolation(`拒绝把 ${root} 当实例根：它本身就是一个敏感位置。`)
   }
 
-  // 禁挂前缀里，home 那一条要**让开**——默认实例根就在 home 下面。
-  // 让开之后剩下的（/etc、/var/run、/proc、/root……）一条都不放。
-  const prefix = FORBIDDEN_MOUNT_PREFIXES.find(
-    (candidate) => candidate !== homeDir && !isAncestor(candidate, homeDir) && isUnder(root, candidate),
-  )
-  if (prefix !== undefined) {
-    throw new MountPolicyViolation(`拒绝把 ${root} 当实例根：它落在禁挂前缀 ${prefix} 里。`)
+  // 禁挂那一套判定的**唯一一处让路**（默认实例根就在主目录下面），理由在
+  // `host-platform.ts` 的 `forbiddenSourceViolation()` 上写着。让开之后剩下的照旧一条不放。
+  const violation = rules.forbiddenSourceViolation(root, homeDir)
+  if (violation !== null) {
+    throw new MountPolicyViolation(`拒绝把 ${root} 当实例根：${violation}。`)
   }
 
   // 主目录下面让开了前缀规则，但主目录里的那几处敏感子目录要单独拦
   // （否则 `~/.ssh/instances` 这种写法是能过的）。
-  const sensitive = FORBIDDEN_INSTANCE_ROOT_SUBDIRS.find((name) => isUnder(root, path.join(homeDir, name)))
+  const sensitive = FORBIDDEN_INSTANCE_ROOT_SUBDIRS.find((name) =>
+    isUnder(root, rules.path.join(homeDir, name), rules.path.sep),
+  )
   if (sensitive !== undefined) {
     throw new MountPolicyViolation(
       `拒绝把 ${root} 当实例根：它在主目录的 ${sensitive}/ 下面。` +
@@ -438,23 +471,23 @@ export function assertInstancesRoot(instancesRoot: string, homeDir: string = rea
  * 它挡的是「把整个实例目录挂进去」——那样连 `sessions.jsonl` 一起进舱，
  * 而那个文件正是 abx 自己的记账。
  */
-function assertOneStateDir(dir: SandboxStateDir, instancesRoot: string, homeDir: string, cellHome: string | null): void {
+function assertOneStateDir(dir: SandboxStateDir, instancesRoot: string, homeDir: string, cellHome: string | null, rules: HostPathRules): void {
   // 两半两套语义：`hostPath` 跟着宿主走，`cellPath` 永远是容器里的路径。
   // 混用的后果见 `cell-path.ts`——Windows 上 `path.isAbsolute('/home/node/.claude')`
   // 也返回 true（它认成「当前盘根下的 home\node\.claude」），所以这个闸门不会报错，
   // 只会放过一个错到别处去的挂载点。
-  if (!path.isAbsolute(dir.hostPath) || !isCellAbsolute(dir.cellPath)) {
+  if (!rules.path.isAbsolute(dir.hostPath) || !isCellAbsolute(dir.cellPath)) {
     throw new MountPolicyViolation(`实例状态目录必须用绝对路径：${dir.hostPath} → ${dir.cellPath}`)
   }
-  if (dir.hostPath.split(path.sep).includes('..')) {
+  if (hasParentSegment(dir.hostPath)) {
     throw new MountPolicyViolation(`实例状态目录里不允许出现 ..：${dir.hostPath}`)
   }
 
   assertNotCredentialFile(dir.hostPath)
 
-  const literal = path.resolve(dir.hostPath)
+  const literal = rules.path.resolve(dir.hostPath)
   // 闸 1：字面路径。
-  if (!isUnder(literal, instancesRoot)) {
+  if (!isUnder(literal, instancesRoot, rules.path.sep)) {
     throw new MountPolicyViolation(
       `拒绝把 ${dir.hostPath} 当实例状态目录：它不在实例根 ${instancesRoot} 之下。` +
         `宿主上现成的目录（例如 ~/.claude）不能直接挂进去，那会把宿主那台机器上的历史与凭据一起带进舱。` +
@@ -469,21 +502,24 @@ function assertOneStateDir(dir: SandboxStateDir, instancesRoot: string, homeDir:
       `实例状态目录 ${dir.hostPath} 解析不了（不存在？权限不够？）：解析不了就没法确认它没有顺着软链跑出实例根，所以拒绝。`,
     )
   }
-  if (!isUnder(resolved, instancesRoot)) {
+  if (!isUnder(resolved, instancesRoot, rules.path.sep)) {
     throw new MountPolicyViolation(
       `拒绝把 ${dir.hostPath} 当实例状态目录：解析软链之后它是 ${resolved}，跑出实例根 ${instancesRoot} 了。`,
     )
   }
 
   // 闸 3：主目录本身/它的上级。
-  if (resolved === homeDir || isAncestor(resolved, homeDir)) {
+  if (resolved === homeDir || isAncestor(resolved, homeDir, rules.path.sep)) {
     throw new MountPolicyViolation(
       `拒绝把 ${dir.hostPath} 当实例状态目录：它是宿主 home（${homeDir}）本身或者是它的上级。`,
     )
   }
 
   // 形状：必须是 `<instancesRoot>/<instanceId>/<agentId>` 那一格。
-  if (path.dirname(path.dirname(resolved)) !== instancesRoot || path.basename(resolved) !== dir.agentId) {
+  if (
+    rules.path.dirname(rules.path.dirname(resolved)) !== instancesRoot ||
+    rules.path.basename(resolved) !== dir.agentId
+  ) {
     throw new MountPolicyViolation(
       `拒绝把 ${dir.hostPath} 当实例状态目录：它必须是 <实例根>/<实例 id>/${dir.agentId} 那一格，` +
         `不能是实例目录本身（那里有 abx 自己的记账文件）也不能是别的深度。`,
@@ -509,7 +545,8 @@ function assertOneStateDir(dir: SandboxStateDir, instancesRoot: string, homeDir:
  * 而不是「挂载点数量不对」——后两句话他没法照着改。
  */
 export function assertMountPolicy(input: AssertMountPolicyInput): void {
-  const taskDir = path.resolve(input.taskDir)
+  const rules = hostPathRulesFor(input.platform)
+  const taskDir = rules.path.resolve(input.taskDir)
   const { mounts, workdir } = input
 
   const configFiles = input.agentConfigFiles ?? []
@@ -522,13 +559,14 @@ export function assertMountPolicy(input: AssertMountPolicyInput): void {
   // 目录的场合拿它去判，只会凭空多出一种跟环境相关的失败。
   if (stateDirs.length > 0) {
     assertStateDirPolicy({
+      platform: input.platform,
       stateDirs,
       homeDir: input.homeDir,
       cellHome: input.cellHome,
       instancesRoot: input.instancesRoot,
     })
   }
-  const allowedStateDirs = new Map(stateDirs.map((dir) => [path.resolve(dir.hostPath), dir]))
+  const allowedStateDirs = new Map(stateDirs.map((dir) => [rules.path.resolve(dir.hostPath), dir]))
 
   // 共享挂载按**挂载点**索引，不按来源：同一个目录共享两次时来源相同、挂载点不同
   // （`/shared/notes` 与 `/shared/notes-2`），按来源索引会把前一个悄悄弄丢。
@@ -541,12 +579,12 @@ export function assertMountPolicy(input: AssertMountPolicyInput): void {
 
   for (const mount of mounts) {
     // 来源是宿主路径、挂载点是舱内路径，两边各判各的语义（见 `cell-path.ts`）。
-    if (!path.isAbsolute(mount.source) || !isCellAbsolute(mount.target)) {
+    if (!rules.path.isAbsolute(mount.source) || !isCellAbsolute(mount.target)) {
       throw new MountPolicyViolation(`挂载必须用绝对路径：${mount.source} → ${mount.target}`)
     }
 
     // `..` 能把一个看起来人畜无害的路径变成 `/home`。
-    if (mount.source.split(path.sep).includes('..')) {
+    if (hasParentSegment(mount.source)) {
       throw new MountPolicyViolation(`挂载路径里不允许出现 ..：${mount.source}`)
     }
 
@@ -562,7 +600,7 @@ export function assertMountPolicy(input: AssertMountPolicyInput): void {
       continue
     }
 
-    const allowedStateDir = allowedStateDirs.get(path.resolve(mount.source))
+    const allowedStateDir = allowedStateDirs.get(rules.path.resolve(mount.source))
     if (allowedStateDir !== undefined) {
       assertStateDirMount(mount, allowedStateDir)
       continue
@@ -583,7 +621,7 @@ export function assertMountPolicy(input: AssertMountPolicyInput): void {
     // 「把配置目录挂进去」是这件事最容易走错的一步，而且错得悄无声息
     // （目录里就有凭据文件）。所以挂到那份配置的父目录时单独给一句话，
     // 说清要的是里面的哪个文件。
-    const directoryOwner = configFiles.find((file) => isAncestor(mount.source, file.hostPath))
+    const directoryOwner = configFiles.find((file) => isAncestor(mount.source, file.hostPath, rules.path.sep))
     if (directoryOwner !== undefined) {
       throw new MountPolicyViolation(
         `拒绝挂载 ${mount.source}：这是个目录，而里面既有配置也有凭据。` +
@@ -591,12 +629,13 @@ export function assertMountPolicy(input: AssertMountPolicyInput): void {
       )
     }
 
-    if (isForbiddenMountSource(mount.source)) {
-      // docker socket 单独给一句话：它是最容易被顺手挂进去、后果也最严重的一个
-      // （挂进去等于把宿主 root 交出去），值得在报错里被点名。
-      if (mount.source === DOCKER_SOCKET_PATH) {
+    if (isForbiddenMountSource(mount.source, input.platform)) {
+      // docker 端点单独给一句话：它是最容易被顺手挂进去、后果也最严重的一个
+      // （挂进去等于把宿主 root 交出去），值得在报错里被点名。名字跟着平台走：
+      // Linux 上是一个 socket 文件，Windows 上是一个命名管道。
+      if (mount.source === rules.dockerSocketPath) {
         throw new MountPolicyViolation(
-          `拒绝挂载 docker socket（${DOCKER_SOCKET_PATH}）：舱内能指挥宿主 docker 就等于没有隔离。` +
+          `拒绝挂载 docker 端点（${rules.dockerSocketPath}）：舱内能指挥宿主 docker 就等于没有隔离。` +
             `需要构建镜像时，请在宿主机上手动构建。`,
         )
       }
@@ -619,7 +658,7 @@ export function assertMountPolicy(input: AssertMountPolicyInput): void {
     )
   }
 
-  if (DANGEROUS_TASK_DIRS.includes(taskDir)) {
+  if (rules.isDangerousRoot(taskDir)) {
     throw new MountPolicyViolation(
       `拒绝把 ${taskDir} 作为任务目录：它本身就是一个敏感位置。请指向具体项目目录。`,
     )
@@ -628,7 +667,7 @@ export function assertMountPolicy(input: AssertMountPolicyInput): void {
   for (const mount of mounts) {
     const isTaskDir = mount.source === taskDir
     const isConfigFile = allowedConfigSources.has(mount.source)
-    const isStateDir = allowedStateDirs.has(path.resolve(mount.source))
+    const isStateDir = allowedStateDirs.has(rules.path.resolve(mount.source))
     const isShared = allowedSharedMounts.has(mount.target)
     if (!isTaskDir && !isConfigFile && !isStateDir && !isShared) {
       throw new MountPolicyViolation(
@@ -768,14 +807,18 @@ function assertConfigMount(mount: SandboxMount, file: SandboxConfigFile): void {
  *
  * 导出给 `shared.ts` 用。理由不是省两行，是**两边必须逐字一致**：
  * 前缀判定差一个字符（`/homely` 算不算 `/home` 下面）就是一道闸门的开与关。
+ *
+ * **分隔符是必填参数**，没有默认值。它必须来自判定所用的那个平台的
+ * `rules.path.sep`，而不是跑着的这台机器的 `path.sep`——测试在 Linux 上注入
+ * `win32` 时两者不是一个字符，默认值会让判定悄悄用错的那一个。
  */
-export function isAncestor(candidate: string, filePath: string): boolean {
-  return filePath.startsWith(`${candidate}${path.sep}`)
+export function isAncestor(candidate: string, filePath: string, separator: string): boolean {
+  return filePath.startsWith(`${candidate}${separator}`)
 }
 
 /** `child` 是 `parent` 本身或者它下面的一层。`/homely` 不算 `/home` 下面。 */
-export function isUnder(child: string, parent: string): boolean {
-  return child === parent || isAncestor(parent, child)
+export function isUnder(child: string, parent: string, separator: string): boolean {
+  return child === parent || isAncestor(parent, child, separator)
 }
 
 /**
