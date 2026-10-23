@@ -104,8 +104,12 @@ export function createDockerBackend(options: DockerBackendOptions = {}): Sandbox
       assertNoForbiddenEnv(spec)
 
       const taskDir = path.resolve(spec.taskDir)
-      const mounts = MOUNT_POLICY.buildMounts(taskDir, spec.workdir)
-      assertMountPolicy({ mounts, taskDir, workdir: spec.workdir })
+      // 生成好的 agent 配置跟着一起进挂载清单：**每个文件一个只读挂载点**。
+      // 只读与「逐个文件」不是这里的选择，是 `MOUNT_POLICY.buildMounts` 的构造结果——
+      // 这一层没有把它改成 rw 或者改成目录的入口。
+      const agentConfigFiles = spec.agentConfigFiles ?? []
+      const mounts = MOUNT_POLICY.buildMounts(taskDir, spec.workdir, agentConfigFiles)
+      assertMountPolicy({ mounts, taskDir, workdir: spec.workdir, agentConfigFiles })
 
       const args = buildDockerArgs(spec, mounts)
       const child = spawnProcess(dockerPath, [...args], {

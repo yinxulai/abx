@@ -3,7 +3,15 @@
  */
 
 export { assertNoForbiddenEnv } from './backend'
-export type { SandboxBackend, SandboxExit, SandboxHandle, SandboxIo, SandboxMount, SandboxSpec } from './backend'
+export type {
+  SandboxBackend,
+  SandboxConfigFile,
+  SandboxExit,
+  SandboxHandle,
+  SandboxIo,
+  SandboxMount,
+  SandboxSpec,
+} from './backend'
 
 export { createDockerBackend, buildDockerArgs, containerName, isExecutableOnPath, probeDocker } from './docker-backend'
 export type { DockerBackendOptions, DockerProbeResult } from './docker-backend'

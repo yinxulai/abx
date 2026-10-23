@@ -17,6 +17,22 @@ export interface SandboxMount {
   readonly mode: 'ro' | 'rw'
 }
 
+/**
+ * abx 生成好、落在宿主上的那一个 agent 配置文件。
+ *
+ * 形状与 `StagedAgentConfigFile` 一致（那是它的产地），这里只留下后端需要的两样。
+ *
+ * **一个文件一个挂载点，永远是只读的。** 没有任何字段能让调用方要求别的形态——
+ * 因为唯一会挂这些东西的地方（docker 后端）按 `mode: 'ro'` 构造挂载参数，
+ * 想挂成可写或者挂成目录，都不是「传错一个参数」，而是得改这个类型。
+ */
+export interface SandboxConfigFile {
+  /** 生成文件的宿主路径，形如 `<cellRoot>/agents/<agentId>/settings.json`。 */
+  readonly hostPath: string
+  /** 舱内挂到哪儿。与宿主那份配置的路径一致（D2）。 */
+  readonly cellPath: string
+}
+
 /** 进程的输入输出接到哪儿。 */
 export type SandboxIo =
   /** 直接接到当前终端：agent 多半需要 TTY。 */
@@ -34,6 +50,13 @@ export interface SandboxSpec {
   readonly agentId: string
   /** 舱内要跑的命令，argv 形式。 */
   readonly command: readonly string[]
+  /**
+   * 这次会话要挂进舱的 agent 配置文件，由 `stageAgentConfig()` 生成并落盘。
+   *
+   * 缺省为空数组。docker 后端把它们逐个只读挂进去；local 后端没有挂载这回事，
+   * 但它照样把它们算进「本应挂什么」，让两种后端在上层看起来一样。
+   */
+  readonly agentConfigFiles?: readonly SandboxConfigFile[]
   /** 宿主上的任务目录绝对路径。**唯一**会被挂进舱内的宿主目录。 */
   readonly taskDir: string
   /** 任务目录挂进舱内之后的路径，同时也是工作目录。 */
