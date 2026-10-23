@@ -17,12 +17,15 @@
 | 气闸的舱身份（单实例多舱） | ✅ 已落地（令牌注册表，cellId 由令牌反查、不可伪造） |
 | `packages/console`（React 面板） | 🟡 基础面板已落地：状态块 / 高度回报 / 拖放区，jsdom 测试通过；**真机未看** |
 | `apps/app`（Electron 托盘） | 🟡 骨架 + 面板加载 + 拖放 IPC；**Electron 未在真机验证**（开发机无 GUI） |
-| `packages/core/session` 的挂载与 agent 配置生成 | 🚧 进行中（并行作业 C） |
-| `apps/www`（官网） | 🚧 进行中（并行作业 E） |
+| `packages/core/session` 的挂载与 agent 配置生成 | ✅ 已落地（生成最小配置、单文件只读挂载、凭据文件黑名单） |
+| 配置层（zod schema 为唯一真相） | ✅ 已落地（类型从 schema 推导；手写 readers 已删除） |
+| 舱面来源网段校验 | 🚧 进行中（并行作业 I）—— 当前**没有**这道闸，绑 `0.0.0.0` 的补偿尚未装上 |
+| `apps/www`（官网） | ✅ 已落地（凭据叙事、三步用法、安全边界、明确不承诺项） |
+| 本地（local 后端）端到端脚本 | ✅ 已落地（改走 core 命令层，30 条断言实测通过） |
 | macOS 打包与 CI | ✅ 已落地（electron-builder + macOS workflow）；**未在真机打过包** |
 | `apps/docs`（文档站） | ⬜ 未建站，仅有 Markdown |
 
-**当前基线：** `pnpm lint` / `pnpm typecheck` / `pnpm test` 三样全绿，308 个测试（19 个文件）。
+**当前基线：** `pnpm lint` / `pnpm typecheck` / `pnpm test` 三样全绿，**400 个测试**（24 个文件）。
 
 > 上表里「airlock 阶段」指本项目在 `/home/openclaw/Project/airlock` 下完成的第一次实现。
 > 那个目录是**早期的错误落点**，代码已按
