@@ -35,7 +35,7 @@ import {
 } from '../session/index'
 import type { InstancePlan, InstanceSessionRecord, SandboxStateDir } from '../session/index'
 import type { CommandOptions } from './options'
-import { CommandError, cellOriginFor, ensureBroker, resolveBackend, resolveCellHost, type CommandContext } from './runtime'
+import { CommandError, cellOriginFor, ensureBroker, resolveBackend, resolveCellBindHosts, resolveCellHost, type CommandContext } from './runtime'
 
 export interface OpenInput {
   readonly options: CommandOptions
@@ -103,6 +103,10 @@ export async function runOpen(input: OpenInput): Promise<number> {
     )
   }
   const cellHost = resolveCellHost(context.config, backendId, null)
+  // 绑哪儿与告诉舱内哪个地址是两件事（见 session/cell-host 的说明）。这里算出的
+  // 候选链交给 broker 依次试：配置里是名字时直接退到 `0.0.0.0`，是字面 IP 时
+  // 先试它——原生 linux docker 上那是最窄的一张网卡。
+  const cellBindHosts = resolveCellBindHosts(context.config, backendId, null)
   const cellId = generateCellId(agent.id)
   // 舱内的 home 来自配置，**不是**宿主 home：这一处漏传过一次，生成的配置
   // 落到了宿主的 `~/.claude/`，而舱内 agent 读的是另一个地方。下面每一处用到
@@ -198,7 +202,7 @@ export async function runOpen(input: OpenInput): Promise<number> {
     log(`[abx] local 后端不挂载实例目录：这个后端的会话历史不会跨会话保留。`)
   }
 
-  const lease = await ensureBroker({ context, backend: backendId, cellHost, log })
+  const lease = await ensureBroker({ context, backend: backendId, cellHost, bindHosts: cellBindHosts, log })
   const cellOrigin = cellOriginFor(context.config, cellHost)
 
   // 舱的令牌从注册表来，不再复用宿主固定令牌。`binding.cellId` 与令牌绑定，
@@ -241,6 +245,11 @@ export async function runOpen(input: OpenInput): Promise<number> {
     tokenInPath: context.config.broker.allowCellTokenInPath,
   })
 
+  // 这里**不设** `addHostGatewayMapping`：要不要给舱内补 `--add-host` 取决于
+  // 「这个名字在舱内解析不解析得出来」，而那只能起个容器去问（`decideCellHost()`）。
+  // 按配置里的字符串猜着加会在 Docker Desktop 上把 `host.docker.internal` 改指到
+  // IPv6 ULA（docker-verification §2.1 实测），所以宁可先不加：那里 docker 自己
+  // 就注入这个名字，不加也能通。探测接上来之后再从结论里设它。
   const backend = createBackend(backendId)
   const startedAt = new Date().toISOString()
   // 有没有终端由 CLI 自己判断：交互态给 `--tty`，托盘（管道 spawn）、CI、脚本不给。

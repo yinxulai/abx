@@ -127,10 +127,30 @@ describe('collectChecks', () => {
     expect(token.detail).not.toContain('abcdef123456')
   })
 
-  it('local 后端下舱面绑定地址固定是回环', async () => {
+  it('local 后端下舱面固定走回环，且不探测', async () => {
     const checks = await collectChecks(context(), options({ backend: 'local' }))
-    const cellHost = await checkNamed(checks, '舱面绑定地址')
+    const cellHost = await checkNamed(checks, '舱面地址')
     expect(cellHost.detail).toContain('127.0.0.1')
+    expect(cellHost.detail).toContain('不探测')
+  })
+
+  it('docker 后端下，「告诉舱内哪个地址」与「宿主绑哪张网卡」要分开报', async () => {
+    // 这两件事以前是同一个值，所以只报一个数字就够了。现在默认值是
+    // `host.docker.internal` —— 那是**舱内的**名字，宿主上并不存在，
+    // 于是「绑在 host.docker.internal」这句话本身就不成立。
+    const checks = await collectChecks(context(), options({ backend: 'docker' }))
+    const cellHost = await checkNamed(checks, '舱面地址')
+    expect(cellHost.detail).toContain('告诉舱内 host.docker.internal')
+    // 名字不能当 bind 候选：直接退到 0.0.0.0，而这件事必须写在检查项里。
+    expect(cellHost.detail).toContain('宿主绑 0.0.0.0')
+  })
+
+  it('配成 172.17.0.1 时给出提醒，并说清它在哪些平台上不存在', async () => {
+    const checks = await collectChecks(context({ broker: { cellHost: '172.17.0.1' } }), options({ backend: 'docker' }))
+    const cellHost = await checkNamed(checks, '舱面地址')
+    expect(cellHost.status).toBe('warn')
+    expect(cellHost.detail).toContain('宿主绑 172.17.0.1 → 0.0.0.0')
+    expect(cellHost.hint).toContain('Docker Desktop')
   })
 
   it('挂载策略检查项复述的是策略对象里的那句话', async () => {

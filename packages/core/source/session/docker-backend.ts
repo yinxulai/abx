@@ -15,6 +15,7 @@
 
 import { spawn } from 'node:child_process'
 import path from 'node:path'
+import { HOST_GATEWAY_MAPPING } from '../broker/cell-host'
 import { isExecutableOnPath } from '../host-command'
 import type { HostPlatform } from '../host-platform'
 import type { SandboxBackend, SandboxHandle, SandboxIo, SandboxMount, SandboxSpec } from './backend'
@@ -81,6 +82,13 @@ export function buildDockerArgs(spec: SandboxSpec, mounts: readonly SandboxMount
     '--tmpfs',
     `/tmp:rw,noexec,nosuid,size=${spec.tmpfsSizeMb}m`,
   ]
+
+  // 舱内按名字找宿主时补的映射。**缺省一个参数都不加**，包括 Docker Desktop 上——
+  // 那里这个名字本来就存在，补了反而改指到 IPv6 ULA（见 backend.ts 该字段的说明）。
+  // 位置必须在镜像名之前，否则 docker 会把它当成要跑的命令。
+  if (spec.addHostGatewayMapping !== null && spec.addHostGatewayMapping !== undefined) {
+    args.push('--add-host', `${spec.addHostGatewayMapping}:${HOST_GATEWAY_MAPPING}`)
+  }
 
   for (const mount of mounts) {
     args.push('--volume', `${mount.source}:${mount.target}:${mount.mode}`)

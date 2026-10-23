@@ -20,6 +20,7 @@ import {
 } from '@abx/contracts'
 import {
   DEFAULT_CELL_ID,
+  bindHostCandidates,
   defaultCellTokenPath,
   formatHostForUrl,
   generateCellToken,
@@ -111,16 +112,30 @@ export function resolveBackend(config: AbxConfig, override: SandboxBackendId | n
 }
 
 /**
- * 舱面绑到哪儿。
+ * 舱面**告诉舱内**的那个地址。
  *
- * local 后端跑在宿主上，能连到它的地址就是回环——配置里默认的 `172.17.0.1`
- * 是 docker 网桥的网关，docker 没起来时那个地址压根不存在，bind 会直接失败。
- * 所以这里跟着后端走，而不是让用户自己去改配置。
+ * local 后端跑在宿主上，能连到它的地址就是回环。docker 后端上这个值是**候选**：
+ * 真正该告诉舱内哪一个要由 `decideCellHost()` 从舱内探出来（见
+ * `../broker/cell-host.ts`）——Docker Desktop 上只有 `host.docker.internal` 好使，
+ * 原生 linux docker 上是网桥网关，`192.168.65.2` 是旧版 Docker Desktop 的 VM 网关。
+ * 这里给的是「先按哪个来」，探测有了结论之后以结论为准。
  */
 export function resolveCellHost(config: AbxConfig, backend: SandboxBackendId, override: string | null): string {
   if (override !== null) return override
   if (backend === 'local') return '127.0.0.1'
   return config.broker.cellHost
+}
+
+/**
+ * 舱面按这个顺序试 bind，第一个成功的算数。
+ *
+ * 与 `resolveCellHost` 是**两个问题**：那个问「告诉舱内哪个地址」，这个问
+ * 「宿主机上绑哪张网卡」。混起来是 Docker Desktop 上舱面起不来的原因——
+ * 那里没有 `172.17.0.1` 这张网卡，而配置里的默认值恰恰是它。
+ * 判定在纯函数那一侧（`bindHostCandidates()`），这里只负责把配置喂进去。
+ */
+export function resolveCellBindHosts(config: AbxConfig, backend: SandboxBackendId, override: string | null): readonly string[] {
+  return bindHostCandidates({ backend, configuredHost: config.broker.cellHost, override })
 }
 
 export function cellOriginFor(config: AbxConfig, cellHost: string): string {
@@ -187,6 +202,8 @@ export interface EnsureBrokerInput {
   readonly context: CommandContext
   readonly backend: SandboxBackendId
   readonly cellHost: string
+  /** 舱面按这个顺序试 bind；不传就只试 `cellHost` 一个（老行为）。 */
+  readonly bindHosts?: readonly string[]
   readonly log: (message: string) => void
 }
 
@@ -237,6 +254,7 @@ export async function ensureBroker(input: EnsureBrokerInput): Promise<BrokerLeas
     env: input.context.env,
     cellToken: token,
     cellHost: input.cellHost,
+    bindHosts: input.bindHosts,
     logger: { info: input.log, warn: input.log, error: input.log },
   })
 

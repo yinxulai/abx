@@ -77,6 +77,21 @@ describe('buildDockerArgs', () => {
     expect(argsFor()).toContain('--rm')
   })
 
+  it('缺省**不**加 --add-host：Docker Desktop 自己会注入那个名字，补了反而改指到 IPv6', () => {
+    // 这条断言是防回归的：曾经的想法是「配置里写的是名字就无条件补一条
+    // host-gateway 映射」，而 docker-verification §2.1 实测那个参数在 Docker
+    // Desktop 上会把 host.docker.internal 改指到 fdc4:f303:9324::254。默认不加。
+    expect(argsFor()).not.toContain('--add-host')
+  })
+
+  it('显式给了要补的名字时才加，且加在镜像名之前', () => {
+    const args = argsFor({ addHostGatewayMapping: 'host.docker.internal' })
+    expect(flagValue(args, '--add-host')).toBe('host.docker.internal:host-gateway')
+    // docker 把第一个非选项参数当镜像名，之后的全是命令：加错位置的后果是
+    // 「--add-host 变成了容器里要跑的命令」，报错完全指不到这里。
+    expect(args.indexOf('--add-host')).toBeLessThan(args.indexOf('node:22-slim'))
+  })
+
   it('只挂任务目录，且可写', () => {
     const volumes = allFlagValues(argsFor(), '--volume')
     expect(volumes).toEqual([`${TASK_DIR}:/workspace:rw`])
