@@ -26,6 +26,11 @@ module.exports = {
     // 于是照单收下——收进去的全是 TypeScript 源码与 `*.test.ts`。
     // 将来若真的引入一个必须留在外部的运行期依赖，要同时改 `external` 和这里。
     '!node_modules',
+    // 托盘图标是**运行期**由主进程按 `../../build/trayTemplate.png` 读的
+    // （`output/main/index.js` 往上两级）。不显式收进来，打包后只有一种表现：
+    // app 起来了，菜单栏里什么都没有。
+    'build/trayTemplate.png',
+    'build/trayTemplate@2x.png',
     // 面板渲染层（`packages/console` 构建产物）落地后，在这里补一条
     // `{ from: '../../packages/console/output', to: 'output/render' }`，
     // 并让主进程按 `__dirname/../render` 反推它——两边是一组，改一处必须改全部。
