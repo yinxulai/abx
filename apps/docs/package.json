@@ -4,9 +4,22 @@
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
-  "description": "文档包：specs/ 放内部规格（只服务实现与评审），source/ 放面向使用者的文档（尚未开写）。",
+  "description": "文档站：source/ 下按 tab 分目录的使用者文档（中文为默认语言，英文按 missing: fallback 增量补译），发布成静态站。Clarify 站点。",
   "author": "AlainClaw <yinxulai@hotmail.com>",
   "scripts": {
-    "dev": "echo \"文档站尚未搭建：先看 specs/README.md\""
+    "dev": "clarify dev",
+    "build": "clarify build",
+    "preview": "clarify preview",
+    "deploy": "wrangler deploy",
+    "deploy:dry-run": "wrangler deploy --dry-run",
+    "dev:worker": "wrangler dev"
+  },
+  "dependencies": {
+    "@abx/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@clarify-labs/cli": "^0.11.21",
+    "style-to-js": "^2.0.2",
+    "wrangler": "^4.150.0"
   }
 }
