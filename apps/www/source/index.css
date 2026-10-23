@@ -1,0 +1,131 @@
+@import 'tailwindcss';
+
+/* ==========================================================================
+   设计令牌
+
+   与 osw 的官网同一套取向：**不用阴影**，层次靠「底色明度阶梯 + 1px 发丝边框」
+   表达。官网是「看一眼」的场景，允许一处冷色点缀（气闸的冰蓝），但只出现在
+   状态与焦点上，不铺满页面。
+
+   对比度下限：正文用 ink-2，说明文字最低到 ink-4（在 void 上约 5.5:1），
+   不再往下压——再淡的灰在暗底上读起来发虚。
+   ========================================================================== */
+@theme {
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif;
+  --font-mono:
+    ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, 'Liberation Mono',
+    monospace;
+
+  /* 底色：3 档明度。surface-0 是页面本身，往上每档抬一点，用来看出「谁在上面」。 */
+  --color-void: #06080c;
+  --color-surface-0: #0a0d13;
+  --color-surface-1: #10141c;
+  --color-surface-2: #161b25;
+  --color-surface-chrome: rgb(6 8 12 / 0.78);
+
+  /* 发丝边框：line 是常态，line-strong 用于 hover / 需要强调的分隔。 */
+  --color-line: rgb(255 255 255 / 0.08);
+  --color-line-strong: rgb(255 255 255 / 0.16);
+  --color-grid-line: rgb(255 255 255 / 0.035);
+
+  /* 文字：4 档。ink-4 是说明文字的下限。 */
+  --color-ink: #f3f6fb;
+  --color-ink-2: #cfd8e8;
+  --color-ink-3: #a9b4c8;
+  --color-ink-4: #7d879b;
+
+  /* 品牌与状态色。ice 只用于强调与交互，mint / rose / amber 只用于状态。 */
+  --color-ice: #7dd3fc;
+  --color-ice-strong: #38bdf8;
+  --color-mint: #4ade80;
+  --color-rose: #fb7185;
+  --color-amber: #fbbf24;
+
+  --color-glow-ice: rgb(125 211 252 / 0.12);
+  --color-glow-ice-strong: rgb(56 189 248 / 0.08);
+
+  --animate-rise: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-drift: drift 16s ease-in-out infinite;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes drift {
+  0%,
+  100% {
+    opacity: 0.75;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: translate3d(2%, -3%, 0) scale(1.08);
+  }
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    color-scheme: dark;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-void);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* 键盘焦点必须看得见：默认 outline 在暗底上不够亮，统一成 ice 色 2px 外扩。 */
+  :focus-visible {
+    outline: 2px solid var(--color-ice);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  ::selection {
+    background-color: rgb(125 211 252 / 0.28);
+    color: var(--color-ink);
+  }
+
+  /* 锚点跳转要给吸顶头部留出高度，否则标题会藏在头部下面。 */
+  [id] {
+    scroll-margin-top: 6rem;
+  }
+
+  /* 尊重系统的「减少动态效果」：关掉入场与漂移，保留焦点与状态变化。 */
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* 顶部背景的细网格。用渐变画线，不额外请求图片。 */
+@utility bg-grid {
+  background-image:
+    linear-gradient(to right, var(--color-grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--color-grid-line) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: linear-gradient(to bottom, black, transparent 85%);
+}
