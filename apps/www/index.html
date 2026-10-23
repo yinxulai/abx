@@ -7,9 +7,50 @@
       name="description"
       content="abx（气闸）是给 AI coding agent 用的隔离舱：模型和密钥留在舱外的 OSW，舱里只有占位符；出口默认拒绝，所有进出都留痕。"
     />
-    <meta name="color-scheme" content="dark" />
+    <!-- 两套主题都要能用，所以这里声明「深浅都支持」；实际生效的是根节点上的
+         color-scheme，由下面那段内联脚本在首帧之前写好。 -->
+    <meta name="color-scheme" content="dark light" />
     <meta name="theme-color" content="#06080c" />
     <title>abx · 给 AI coding agent 的隔离舱</title>
+    <script>
+      // 首帧之前定下主题与语言。放在这里而不是 React 里，是为了不让页面先闪一下
+      // 再换色；`source/theme.ts` 与 `source/i18n.ts` 读的就是这里写下的结果。
+      (() => {
+        const queryTheme = new URLSearchParams(window.location.search).get('theme')
+        // `matchMedia` 缺失时当系统没有偏好（见 source/theme.ts 的同一处理）。
+        const prefersLight =
+          typeof window.matchMedia === 'function' &&
+          window.matchMedia('(prefers-color-scheme: light)').matches
+        const theme =
+          queryTheme === 'light' || queryTheme === 'dark'
+            ? queryTheme
+            : prefersLight
+              ? 'light'
+              : 'dark'
+
+        let storedLanguage = null
+        try {
+          storedLanguage = window.localStorage.getItem('abx-language')
+        } catch {
+          // 隐私模式等场景可能禁止访问；按浏览器语言兜底即可。
+        }
+        const language =
+          storedLanguage === 'en' || storedLanguage === 'zh'
+            ? storedLanguage
+            : navigator.language.toLowerCase().startsWith('zh')
+              ? 'zh'
+              : 'en'
+
+        // 中文是主要维护语言，也是兜底语言：所以除了显式选了英文，
+        // 其余情况都按中文渲染（'zh-CN' 同时也影响字体回退与读屏发音）。
+        document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en'
+        document.documentElement.dataset.theme = theme
+        document.documentElement.style.colorScheme = theme
+        document
+          .querySelector('meta[name="theme-color"]')
+          ?.setAttribute('content', theme === 'light' ? '#f7f8fa' : '#06080c')
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

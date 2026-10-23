@@ -7,8 +7,15 @@
    表达。官网是「看一眼」的场景，允许一处冷色点缀（气闸的冰蓝），但只出现在
    状态与焦点上，不铺满页面。
 
-   对比度下限：正文用 ink-2，说明文字最低到 ink-4（在 void 上约 5.5:1），
-   不再往下压——再淡的灰在暗底上读起来发虚。
+   **两套主题用同一批语义 token**：`@theme` 里是深色（默认），下面
+   `:root[data-theme='light']` 覆盖成浅色。组件里只写 `text-ink-3`
+   这样的语义名，不写具体颜色，所以切换主题不需要改任何组件。
+
+   对比度下限：正文用 ink-2，说明文字最低到 ink-4。两套主题都按
+   WCAG AA 取值（正文 ≥ 4.5:1），实测值见 apps/docs/specs/product/www.md。
+
+   字号只允许 6 档：12 / 14 / 16 / 18 / 30 / 36（深浅两套、桌面手机都算）。
+   任何地方新增第 7 档，`audit.mjs` 的 type-scale 判据就会报出来。
    ========================================================================== */
 @theme {
   --font-sans:
@@ -46,8 +53,43 @@
   --color-glow-ice: rgb(125 211 252 / 0.12);
   --color-glow-ice-strong: rgb(56 189 248 / 0.08);
 
+  /* 选中文本的底色。跟着主题走，因为浅底上要的是「压暗」而不是「提亮」。 */
+  --color-selection: rgb(125 211 252 / 0.28);
+
   --animate-rise: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
   --animate-drift: drift 16s ease-in-out infinite;
+}
+
+/* 浅色：同一批语义 token 的另一组取值。页面变白，层级改用浅灰，
+   而冰蓝、薄荷、玫瑰、琥珀四个强调色都要**压暗**——它们在深底上是亮色，
+   直接放到白底上对比度只有 1.6～2.5:1，连 3:1 都不到。 */
+:root[data-theme='light'] {
+  --color-void: #f7f8fa;
+  --color-surface-0: #ffffff;
+  --color-surface-1: #f1f3f7;
+  --color-surface-2: #e7eaf0;
+  --color-surface-chrome: rgb(255 255 255 / 0.84);
+
+  --color-line: rgb(6 8 12 / 0.1);
+  --color-line-strong: rgb(6 8 12 / 0.2);
+  --color-grid-line: rgb(6 8 12 / 0.045);
+
+  --color-ink: #0d1117;
+  --color-ink-2: #333c4a;
+  --color-ink-3: #525c6b;
+  --color-ink-4: #626a76;
+
+  --color-ice: #0369a1;
+  --color-ice-strong: #075985;
+  --color-mint: #15803d;
+  --color-rose: #be123c;
+  --color-amber: #b45309;
+
+  --color-glow-ice: rgb(3 105 161 / 0.1);
+  --color-glow-ice-strong: rgb(7 89 133 / 0.07);
+  --color-selection: rgb(3 105 161 / 0.18);
+
+  color-scheme: light;
 }
 
 @keyframes rise {
@@ -74,6 +116,8 @@
 }
 
 @layer base {
+  /* 没有 JS（内联脚本没跑）时的默认。带 `data-theme` 时由上面那一块覆盖：
+     未分层的规则优先于 `@layer base`，所以不需要 !important。 */
   html {
     scroll-behavior: smooth;
     color-scheme: dark;
@@ -96,7 +140,7 @@
   }
 
   ::selection {
-    background-color: rgb(125 211 252 / 0.28);
+    background-color: var(--color-selection);
     color: var(--color-ink);
   }
 
