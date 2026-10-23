@@ -154,6 +154,12 @@ export function createFileTransomLedger(filePath: string): TransomLedger {
     const handle = await open(filePath, 'a', 0o600)
     await handle.close()
   })()
+  // 这一次「建目录 + 建文件」在**构造时**就起跑了，而唯一 await 它的地方是第一次
+  // `write`。中间要是没人写过（一次会话里一个东西都没递，很正常），一个失败
+  // ——目录建不出来、权限不对——就会变成**未处理的 rejection**，而 node 默认
+  // 会因为它直接终止进程。挂一个空的 catch 只是把「没人接」这件事堵上：
+  // 异常本身还在，第一次 write 照样抛（那才是「记不下来就不算交付」的落点）。
+  void ready.catch(() => undefined)
 
   return {
     describe: path.resolve(filePath),

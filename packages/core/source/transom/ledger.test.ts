@@ -179,6 +179,30 @@ describe('写文件：一行一条，追加', () => {
     await expect(ledger.write(record())).rejects.toThrow()
     await ledger.close()
   })
+
+  it('**一个东西都没递**的会话里，建不出账本也不许变成未处理的 rejection', async () => {
+    // 建目录是构造时起跑的，而唯一 await 它的地方是 write。一次都不写的时候，
+    // 没人接住那个失败——node 默认会让它终止进程，而这次会话本来什么事都没有。
+    const blocked = path.join(tempDir(), 'blocked')
+    writeFileSync(blocked, 'x')
+
+    const seen: unknown[] = []
+    const onUnhandled = (reason: unknown): void => {
+      seen.push(reason)
+    }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      const ledger = createFileTransomLedger(path.join(blocked, 'transom.jsonl'))
+      // 未处理的 rejection 是在这一轮跑完之后才判定的，所以给它几个回合。
+      await new Promise((resolve) => setTimeout(resolve, 20))
+
+      expect(seen).toEqual([])
+      // 而且失败没有被吞掉：真要写的时候照样抛。
+      await expect(ledger.write(record())).rejects.toThrow()
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
+  })
 })
 
 describe('内存账本（用例用的那个）', () => {
