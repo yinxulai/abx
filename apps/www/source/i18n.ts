@@ -161,6 +161,76 @@ export const en = {
     upstreamBody:
       'It is the default upstream in that manifest entry, not the whole set you can reach. What actually decides where a request goes is the channel configuration in OSW, outside the cell: keys, routing and failover all live there, and the cell neither sees nor needs to know about them.',
   },
+  boundaries: {
+    eyebrow: 'Boundaries',
+    title: 'Safe by default, not by configuration',
+    lead: 'The allowlist, the read-only mounts and the audit log are defaults, not settings. A sandbox that starts wide open and waits for you to tighten it is, in real use, no sandbox at all.',
+    item: {
+      egress: {
+        title: 'Egress is denied by default',
+        body: 'Traffic leaves only to domains on the allowlist. Anything not listed is blocked and recorded as a denial — the default is already the strictest setting, so there is nothing for you to tighten.',
+      },
+      shared: {
+        title: 'Shared items are read-only',
+        body: 'Everything you hand in is mounted read-only. The agent can read it and cannot change it; when it needs to produce something, that goes into the outbox of that one cell.',
+      },
+      audit: {
+        title: 'Every request is recorded',
+        body: 'One line per outbound request: time, cell, target domain, allowed or denied, status code, duration. The key column only ever says injected or not injected — never the value.',
+      },
+      disposable: {
+        title: 'Cells are disposable',
+        body: 'A cell is destroyed when it exits. No login item, no background process, and the only changes that survive are in the task directory and the outbox.',
+      },
+    },
+    nonPromiseTitle: 'What this explicitly does not promise',
+    nonPromise: {
+      kernel:
+        'It does not promise to stop a kernel-level escape — the kernel is shared; a container is not a virtual machine.',
+      selfInflicted:
+        'It does not promise to stop you dragging credentials into the shared area yourself — the gate stops the agent getting them, not you handing them over.',
+      anonymity: 'It does not promise anonymity on the network — the outbound IP is still yours.',
+      adversarial:
+        'It does not promise it has survived an adversarial attack — the evidence so far is that it behaves correctly in normal use, and nobody has yet tried to bypass the allowlist or forge a cell token.',
+      taskDir:
+        'It does not promise the task directory can be rolled back — it is a real writable directory, and whatever the agent deletes in there does not come back.',
+    },
+    platformTitle: 'How far each platform is supported',
+    platformCaption: 'Support level and reason for each of the three desktop platforms',
+    platformColumn: 'Platform',
+    supportColumn: 'Support',
+    whyColumn: 'Why',
+    platform: {
+      macos: {
+        support: 'The V1 target',
+        detail:
+          'The tray, drag and drop, and App Sandbox are all macOS ideas, so V1 is macOS only. It is in progress, and has not yet been verified on real macOS hardware.',
+      },
+      linux: {
+        support: 'Development only',
+        detail:
+          'Used only to exercise the logic through the local backend. It isolates nothing: the product labels it "not a sandbox, not for demos". There is no Linux desktop build.',
+      },
+      windows: {
+        support: 'Not planned',
+        detail:
+          'No schedule. The backend set aside in the design is Windows Sandbox, but V1 explicitly excludes a Windows desktop build.',
+      },
+    },
+    unsuitableTitle: 'When this does not apply',
+    unsuitable: {
+      guiApp:
+        'The thing you want to test needs a window and menu clicks — there is no graphical interface inside a cell.',
+      kernelWork:
+        'You need kernel modules, system settings, or harder isolation than a container — use a virtual machine.',
+      dockerInDocker:
+        'The task itself starts containers — there is no docker socket inside a cell, deliberately.',
+      wholeMachine:
+        'You want the agent to read any path on your machine — it only sees the directories you hand in.',
+      longLived:
+        'You want a long-lived environment that keeps all its state across sessions — cells are disposable.',
+    },
+  },
   footer: {
     line: 'An airlock for your AI coding agent. The first version is macOS only.',
   },
