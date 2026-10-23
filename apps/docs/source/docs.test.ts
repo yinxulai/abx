@@ -323,7 +323,7 @@ describe('界面描述与真面板一致', () => {
   const troubleshooting = readMdx('zh', 'limits/troubleshooting')
 
   it('起舱说的是方块的形状，不是头部计数', () => {
-    // 头部没有计数（`design-system.md` §8：数量归管理面板）。
+    // 头部没有计数（`design-system.md` §12：数量归管理面板）。
     expect(firstRun).toContain('右下角的点变成实心')
     expect(firstRun).not.toContain('头部计数加一')
   })

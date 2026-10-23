@@ -97,7 +97,7 @@ describe('tray panel mock-up', { timeout: FULL_PAGE_TIMEOUT }, () => {
     await renderApp('zh')
 
     // 「N 舱」胶囊已经删掉：副标题只说「在不在跑、结果是什么」，舱数是管理面板的职责
-    // （`design-system.md` §8）。这一条守着那个删除，别让它长回来。
+    // （`design-system.md` §12）。这一条守着那个删除，别让它长回来。
     expect(textOf(panel())).not.toMatch(/\d+\s*舱/)
     // 托盘面板只有三件事（打开 agent、看共享内容、拖入），没有第四块 footer。
     for (const gone of ['审计流水', '停止全部', '退出']) {

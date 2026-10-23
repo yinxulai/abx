@@ -73,7 +73,7 @@ describe('getting started', { timeout: FULL_PAGE_TIMEOUT }, () => {
     await renderApp('zh')
 
     const body = textOf(section())
-    // 副标题说的是「在不在跑」，没有数字：`design-system.md` §8 把舱数判给了管理面板。
+    // 副标题说的是「在不在跑」，没有数字：`design-system.md` §12 把舱数判给了管理面板。
     // 这里写「有几个在跑」，就是把用户送到一个不存在的读数前面。
     expect(body).toContain('它拿不到你的密钥')
     expect(body).not.toContain('几个舱在跑')
