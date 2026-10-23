@@ -35,11 +35,11 @@ function instancesRoot(): string {
   return path.join(root, 'instances')
 }
 
-function context(env: Readonly<Record<string, string | undefined>> = {}): CommandContext {
+function context(env: Readonly<Record<string, string | undefined>> = {}, sessionImage: string | null = null): CommandContext {
   return {
     config: makeConfig({
       upstreams: [makeUpstream({ id: 'anthropic', baseUrl: 'https://api.anthropic.com' })],
-      session: { cellHome: CELL_HOME },
+      session: { cellHome: CELL_HOME, image: sessionImage },
     }),
     configPath: '/tmp/abx.config.json',
     env,
@@ -65,13 +65,15 @@ function options(overrides: Partial<CommandOptions> = {}): CommandOptions {
 interface DryRunOptions {
   readonly instance?: string
   readonly env?: Readonly<Record<string, string | undefined>>
+  /** 配置里的 `session.image`。不传 = 不写，镜像由 agent 清单决定。 */
+  readonly image?: string
 }
 
 async function dryRun(agentId: string, overrides: DryRunOptions = {}): Promise<{ code: number; output: string }> {
   const lines: string[] = []
   const code = await runOpen({
     options: options({ positionals: [agentId], dryRun: true, instance: overrides.instance ?? null }),
-    context: context(overrides.env ?? {}),
+    context: context(overrides.env ?? {}, overrides.image ?? null),
     log: (message) => lines.push(message),
   })
   return { code, output: lines.join('\n') }
@@ -157,5 +159,18 @@ describe('runOpen --dry-run', () => {
 
   it('不认识的 agent 直接报错，并指出去哪儿加', async () => {
     await expect(dryRun('nope')).rejects.toThrow(/不认识的 agent/)
+  })
+
+  it('配置里不写镜像时，用所选 agent 清单里那个（每个 agent 自己的镜像）', async () => {
+    // 这条是旧默认值 `node:22-slim` 的回归测试：那个默认值会让 `abx open claude`
+    // 起一个没有 claude 命令的空壳，看起来还挺正常。
+    const { output } = await dryRun('claude')
+    expect(output).toContain('镜像         abx-agent-claude:2.1.308')
+  })
+
+  it('配置里显式写了镜像就以配置为准（跑裸容器做验证的出口）', async () => {
+    const { output } = await dryRun('claude', { image: 'node:22-slim' })
+    expect(output).toContain('镜像         node:22-slim')
+    expect(output).not.toContain('abx-agent-claude')
   })
 })

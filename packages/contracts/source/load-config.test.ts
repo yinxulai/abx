@@ -292,6 +292,18 @@ describe('其他形状校验', () => {
     expect(config.session.backend).toBe('docker')
   })
 
+  it('不写 session.image 时是 null——镜像由所选 agent 的清单决定', () => {
+    // 这里**不许**再出现一个全局默认镜像：默认成 `node:22-slim` 的话，
+    // `abx open claude` 会起一个没有 claude 命令的空壳，而会话看起来是起来了。
+    const config = configOf(minimalConfig())
+    expect(config.session.image).toBeNull()
+  })
+
+  it('session.image 写了就不能是空串——空串是「以为配了、其实没有」', () => {
+    const issues = issuesOf({ session: { image: '' }, ...minimalConfig() })
+    expect(issues[0]?.path).toBe('session.image')
+  })
+
   it('cellHome 默认是舱内那个 home，不是宿主 home', () => {
     // 这个值决定了注册表里的 `~/.claude/settings.json` 展开到哪儿。默认成宿主
     // home 的话，生成的配置会落到舱内 agent 根本不会读的地方——而它在宿主上
