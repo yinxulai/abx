@@ -10,10 +10,16 @@
   "desktopName": "com.yinxulai.abx",
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "build": "node scripts/build.mjs"
+    "build": "node scripts/build.mjs",
+    "package": "node scripts/build.mjs --package",
+    "package:mac": "node scripts/build.mjs --package --mac --arm64 --x64"
   },
   "dependencies": {
     "@abx/contracts": "workspace:*",
     "@abx/core": "workspace:*"
+  },
+  "devDependencies": {
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3"
   }
 }

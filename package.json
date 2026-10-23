@@ -7,11 +7,12 @@
   "type": "module",
   "packageManager": "pnpm@12.14.0",
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
+    "release:mac": "pnpm build && pnpm --filter @abx/app run package:mac",
     "lint": "node packages/toolkit/scripts/lint.mjs",
     "test": "node packages/toolkit/scripts/test.mjs",
     "test:coverage": "node packages/toolkit/scripts/test.mjs --coverage",
