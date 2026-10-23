@@ -8,5 +8,8 @@
   "exports": {
     ".": "./source/index.ts",
     "./*": "./source/*.ts"
+  },
+  "dependencies": {
+    "@abx/contracts": "workspace:*"
   }
 }
