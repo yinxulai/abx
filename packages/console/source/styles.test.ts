@@ -128,20 +128,21 @@ describe('颜色：文档的两张表与两套主题逐条对上', () => {
   })
 })
 
-describe('字号：六档封顶，字重只用 400 / 500 / 600', () => {
+describe('字号：五档封顶，字重只用 400 / 500 / 600', () => {
   /** 文档 §3 的表：`| \`--text-2xs\` | 11 | 14 | …`。 */
   const rows = [...section('## 3. 字号与字重', '## 4.').matchAll(/^\|\s*`(--text-[a-z0-9]+)`\s*\|\s*(\d+)\s*\|\s*(\d+)\s*\|/gim)].map(
     (match) => ({ name: match[1] ?? '', size: `${match[2] ?? ''}px`, leading: `${match[3] ?? ''}px` }),
   )
 
-  it('六档，不多不少', () => {
+  it('五档，不多不少', () => {
+    // 第六档 `--text-xl` 随「主面板改成单页、不再有页面标题」一起删掉了（文档 §3 那条注）。
+    // 当时只删了文档、没删样式表，于是这条测试红过一阵。
     expect(rows.map((row) => row.name)).toEqual([
       '--text-2xs',
       '--text-xs',
       '--text-sm',
       '--text-base',
       '--text-lg',
-      '--text-xl',
     ])
   })
 
@@ -152,7 +153,7 @@ describe('字号：六档封顶，字重只用 400 / 500 / 600', () => {
     }
   })
 
-  it('样式表里没有第七档字号', () => {
+  it('样式表里没有第六档字号', () => {
     // `--text-*` 里既有字号也有颜色（`--text` / `--text-muted`），还有成对的行高
     // （`--text-sm-leading`）：按值是不是像素、名字带不带 `-leading` 区分。
     const sizes = [...lightTokens.entries()].flatMap(([name, value]) =>
