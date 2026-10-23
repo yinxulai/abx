@@ -1,0 +1,111 @@
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { log } from './lib/log.mjs'
+
+// 版本号的唯一来源是仓库根的 `package.json`：`pnpm version:set <version>` 把它强制覆盖到
+// 每一个 workspace 包，`pnpm version:check` 只读校验它们全都与它一致。
+//
+// 为什么需要它：版本号在构建期被各处读取（构建期常量、产物命名、`--version`），
+// 各读各的 manifest 就会出现「看起来正常但不对」的产物——显示的版本不是实际在跑的那个。
+// 所以只留一个入口：根 manifest。
+//
+// 为什么住在 toolkit：它改的是每一个 workspace 包的 manifest，任何单一包都不是它的归属物；
+// 而 toolkit 就是「跨包脚本」的落脚处（与 `lint.mjs` / `test.mjs` / `typecheck.mjs` 同级）。
+//
+// 为什么不写包目录清单：手写清单会在加包时漏项，而漏项不会报错——脚本确实改了工作区里的文件，
+// 只是那份改动没被提交，本地 typecheck / lint / test 一路全绿，看不出来。
+// 现在包目录从 `pnpm-workspace.yaml` 现算：加包不需要改这里。
+//
+// `--check` 是给追这件事用的：它不写文件，只在有包与根不一致时报错。挂在 `pnpm lint` 里，
+// 于是「哪一份 manifest 没被提交」会在下一次 CI 上变成红的，而不是等发布之后靠人回头看。
+
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
+const rootManifestPath = path.join(repositoryRoot, 'package.json')
+
+function relativePath(manifestPath) {
+  return path.relative(repositoryRoot, manifestPath).replaceAll(path.sep, '/')
+}
+
+// `pnpm-workspace.yaml` 里 `packages:` 那一节的条目。`dir/*` 展开成目录下的每个包，
+// 其余写法按包目录原样使用；扩展不出来的条目会在读 manifest 时直接 ENOENT——
+// 「清单少列了一个成员」正是这个脚本存在的理由，宁可炸也不能默默少列。
+function workspaceDirectories() {
+  const lines = fs.readFileSync(path.join(repositoryRoot, 'pnpm-workspace.yaml'), 'utf8').split('\n')
+  const start = lines.findIndex(line => /^packages:\s*$/.test(line))
+  if (start === -1) throw new Error('pnpm-workspace.yaml 里找不到 `packages:`')
+
+  const patterns = []
+  for (const line of lines.slice(start + 1)) {
+    // 顶格的下一节（例如 `allowBuilds:`）表示列表结束。
+    if (/^\S/.test(line)) break
+    const entry = line.match(/^\s*-\s*(\S+)\s*$/)?.[1]
+    if (entry !== undefined) patterns.push(entry)
+  }
+
+  return patterns.flatMap(pattern => {
+    if (!pattern.endsWith('/*')) return [pattern]
+    const parent = pattern.slice(0, -2)
+    // `apps/` 这类目录在骨架期可能整个不存在，而 git 不跟踪空目录——
+    // 少一个目录是「还没有成员」，不是错误。
+    if (!fs.existsSync(path.join(repositoryRoot, parent))) return []
+    return fs.readdirSync(path.join(repositoryRoot, parent), { withFileTypes: true })
+      .filter(entry => entry.isDirectory())
+      .map(entry => `${parent}/${entry.name}`)
+      .filter(directory => fs.existsSync(path.join(repositoryRoot, directory, 'package.json')))
+      .sort()
+  })
+}
+
+const manifestPaths = [
+  rootManifestPath,
+  ...workspaceDirectories().map(directory => path.join(repositoryRoot, directory, 'package.json')),
+]
+
+function readVersion(manifestPath) {
+  return JSON.parse(fs.readFileSync(manifestPath, 'utf8')).version
+}
+
+function check() {
+  const expected = readVersion(rootManifestPath)
+  const drifted = manifestPaths
+    .map(manifestPath => [relativePath(manifestPath), readVersion(manifestPath)])
+    .filter(([, version]) => version !== expected)
+
+  if (drifted.length > 0) {
+    log.error(`Version drift: ${relativePath(rootManifestPath)} is ${expected}, but`)
+    for (const [manifestPath, version] of drifted) log.error(`  ${manifestPath} is ${version}`)
+    log.error('Run `pnpm version:set <version>` to overwrite every manifest with the root version.')
+    process.exit(1)
+  }
+
+  log.success(`Version ${expected} in ${manifestPaths.length} manifests`)
+}
+
+function set(version) {
+  log.title(`Setting version to ${version}`)
+  for (const manifestPath of manifestPaths) {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    const previousVersion = manifest.version
+    manifest.version = version
+    fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+    log.info(`${relativePath(manifestPath)}: ${previousVersion} → ${version}`)
+  }
+
+  log.success(`Version updated in ${manifestPaths.length} manifests`)
+}
+
+const version = process.argv[2]
+
+// 与 `release.yml` 的 `Validate version` 保持同一个形状：那边收下的版本号这里也必须收下。
+if (version === undefined) {
+  log.error('Usage: pnpm version:set <version> | pnpm version:check')
+  process.exit(1)
+} else if (version === '--check') {
+  check()
+} else if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/.test(version)) {
+  log.error(`Not a valid semver version: ${version}`)
+  process.exit(1)
+} else {
+  set(version)
+}

@@ -1,0 +1,12 @@
+{
+  "name": "@abx/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "description": "共享契约：跨包共用的类型与常量。只描述形状，不依赖任何实现。",
+  "exports": {
+    ".": "./source/index.ts",
+    "./*": "./source/*.ts"
+  }
+}

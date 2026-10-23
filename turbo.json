@@ -1,0 +1,20 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "ui": "stream",
+  "globalDependencies": ["tsconfig.base.json", "package.json", "pnpm-lock.yaml"],
+  "tasks": {
+    // 只登记各包**自己**实现的任务。`turbo run typecheck / lint / test` 曾经也写在这里，
+    // 但没有任何包定义过这三个 script（根 `package.json` 里的同名 script 直接跑
+    // `packages/toolkit/scripts/*.mjs`，不经过 turbo），于是它们匹配不到任何东西却读起来像
+    // 「按包编排」——属于会误导人的残留，删掉。类型检查与测试本来就是一份覆盖全工作区的配置，
+    // 没有可并行的粒度。
+    //
+    // 顺序由依赖图决定，不靠人记：「谁先构建」这个问题只允许有一个答案。
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["output/**"]
+    },
+    // 长驻进程：不缓存、不结束。
+    "dev": { "cache": false, "persistent": true }
+  }
+}

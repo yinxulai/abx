@@ -1,0 +1,66 @@
+name: Set up Node and pnpm
+description: 安装 pnpm / Node、按需恢复缓存并安装依赖，供各 job 复用。
+
+inputs:
+  # 两个开关都是「这个 job 到底会不会用」的显式声明，不是可选优化。
+  # `actions/cache` 的恢复前缀匹配救不了「从来不写这个目录」的 job：
+  # 缓存永久 miss，退出阶段还会报一条 Path Validation Error。
+  turbo-cache:
+    description: 是否恢复并保存 `.turbo`。只有跑 `turbo run` 的 job 才该开启。
+    default: 'true'
+  tool-cache:
+    description: 是否恢复并保存 `node_modules/.cache`（ESLint 缓存与 tsc 增量信息）。
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    # 不写 `version:`——根 `package.json` 的 `packageManager` 是唯一的 pnpm 版本权威，
+    # 在两处各写一遍就会出现「CI 装 9、本地跑 12」这种只在 CI 上暴露的差异。
+    #
+    # 必须钉 `v6.1.0`，不能用浮动的 `@v6`：symbolic `v6` 标签至今仍指向 v6.0.10，
+    # 而 pnpm 12 的支持（`targetsPnpm12` 分支 + native bootstrap lockfile）是
+    # v6.1.0 才加的（release note: `feat: support pnpm v12`）。用 `@v6` 会装到
+    # 一个不认识 pnpm 12 的 bootstrap，靠 `pnpm self-update` 硬升，行为不确定。
+    - name: Set up pnpm
+      uses: pnpm/action-setup@v6.1.0
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v5
+      with:
+        node-version: 22
+        cache: pnpm
+
+    # Turbo 的任务缓存是内容寻址的：命中同一个 key 就能跳过没变的包。
+    # key 里的 sha 让每次运行都能存一份新缓存，`restore-keys` 前缀匹配则保证
+    # 即使 sha 变了也先从最近一次恢复——这才是增量构建真正生效的地方。
+    #
+    # 必须用 v6 及以上：v4 及其以前的运行时是 Node.js 20，GitHub 已经弃用，
+    # 虽然会被强制升到 Node.js 24 继续跑，但每次运行都会挂一条告警。
+    # v5 起改为 Node.js 24，v6 又迁移到 ESM 并更新了依赖，输入参数没有变化，
+    # 所以这里的 path / key / restore-keys 写法不用跟着改。v5 要求
+    # runner ≥ 2.327.1，GitHub 托管的 runner 一直满足。
+    - name: Restore Turbo cache
+      if: inputs.turbo-cache == 'true'
+      uses: actions/cache@v6
+      with:
+        path: .turbo
+        key: turbo-${{ runner.os }}-${{ github.job }}-${{ github.sha }}
+        restore-keys: |
+          turbo-${{ runner.os }}-${{ github.job }}-
+
+    # ESLint 的 `--cache` 与 tsc 的 `--incremental` 都写在脚本/配置里，这里只负责把
+    # 它们的结果目录在同一个 job 名下续上。两者都会按文件内容自我校验，
+    # 所以缓存过期最多是「多跑一遍」，不会把新问题藏起来。
+    - name: Restore tool cache
+      if: inputs.tool-cache == 'true'
+      uses: actions/cache@v6
+      with:
+        path: node_modules/.cache
+        key: tool-${{ runner.os }}-${{ github.job }}-${{ github.sha }}
+        restore-keys: |
+          tool-${{ runner.os }}-${{ github.job }}-
+
+    - name: Install dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile

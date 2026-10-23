@@ -1,0 +1,26 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    // 增量信息写在 `node_modules/.cache` 下：CI 把这个目录缓存到 lint / typecheck 各自的
+    // job 名下，本地跑也不会在仓库根留下文件。
+    // 路径相对**本文件**解析，所以要从包里看出去。
+    "incremental": true,
+    "tsBuildInfoFile": "../../node_modules/.cache/tsconfig.check.tsbuildinfo"
+  },
+  // 一次覆盖全部包：各包的 `source` 树与构建/测试配置都放在同一个程序里。
+  // 逐包做类型检查需要每个包自己声明 paths，收益不大，反而多出几个会腐烂的配置
+  // （见 `scripts/typecheck.mjs`）。
+  //
+  // 注意 `include` 的语义：`tsc` 对指向空气的条目**静默成功**，
+  // 所以改文件名时必须同步改它。
+  "include": [
+    "../../packages/*/source/**/*.ts",
+    "../../packages/*/source/**/*.tsx",
+    "../../apps/*/source/**/*.ts",
+    "../../apps/*/source/**/*.tsx",
+    "vitest.config.ts"
+  ],
+  "references": []
+}

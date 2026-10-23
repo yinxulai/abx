@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      # `pnpm typecheck` 直接跑 tsc（一次覆盖全部包的源码树），不经过 turbo，
+      # 所以 `.turbo` 缓存永远 miss；tool-cache 换来的则是 tsc 增量信息。
+      - name: Set up environment
+        uses: ./.github/actions/setup
+        with:
+          turbo-cache: 'false'
+          tool-cache: 'true'
+
+      - name: Run typecheck
+        run: pnpm typecheck
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      # 同 typecheck：ESLint 从仓库根一次跑完，不经过 turbo。
+      - name: Set up environment
+        uses: ./.github/actions/setup
+        with:
+          turbo-cache: 'false'
+          tool-cache: 'true'
+
+      - name: Run lint
+        run: pnpm lint
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      # vitest 同样不由 turbo 驱动，也没有值得留到下轮的产物。
+      - name: Set up environment
+        uses: ./.github/actions/setup
+        with:
+          turbo-cache: 'false'
+
+      # 只跑一次：`test:coverage` 本身就是「跑全部测试 + 收集覆盖率」。
+      - name: Run tests with coverage
+        run: pnpm test:coverage
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage
+          path: coverage/
+          if-no-files-found: error
+          retention-days: 7
+
+  # 这个 job 回答的是「这次的改动还能不能构建」。
+  #
+  # 它只有每次 push 都跑才有意义：产物路径、入口文件名、构建期常量这类错误，
+  # typecheck / lint / test 一路全绿也照样漏过去，只有真的跑一次 `pnpm build` 才看得见。
+  #
+  # `needs: [typecheck, test]` 只是省算力：前两个红了就没必要再打一遍。
+  build:
+    name: Build
+    needs: [typecheck, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      # 这是 CI 里唯一会写 `.turbo` 的 job（`turbo run build`），所以缓存开关保持默认开启。
+      - name: Set up environment
+        uses: ./.github/actions/setup
+
+      # `pnpm build` 就是 `turbo run build`：按包依赖顺序构建。
+      # 当前骨架里还没有包定义 `build`，这条命令是空跑，等第一个真实包落地后自动生效。
+      - name: Build
+        run: pnpm build

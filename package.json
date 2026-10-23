@@ -1,0 +1,34 @@
+{
+  "name": "abx",
+  "private": true,
+  "version": "0.1.0",
+  "license": "UNLICENSED",
+  "author": "AlainClaw <yinxulai@hotmail.com>",
+  "type": "module",
+  "packageManager": "pnpm@12.14.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "node packages/toolkit/scripts/lint.mjs",
+    "test": "node packages/toolkit/scripts/test.mjs",
+    "test:coverage": "node packages/toolkit/scripts/test.mjs --coverage",
+    "typecheck": "node packages/toolkit/scripts/typecheck.mjs",
+    "version:set": "node packages/toolkit/scripts/version.mjs",
+    "version:check": "node packages/toolkit/scripts/version.mjs --check"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@typescript-eslint/parser": "^8.71.2",
+    "@typescript-eslint/utils": "^8.71.2",
+    "@typescript/native": "npm:typescript@^7.0.2",
+    "@vitest/coverage-v8": "^5.0.5",
+    "@yinxulai/eslint-plugin-peculiar": "^1.0.6",
+    "eslint": "^10.12.0",
+    "turbo": "^2.11.7",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "vitest": "^5.0.5"
+  }
+}

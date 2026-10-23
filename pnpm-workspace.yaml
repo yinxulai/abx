@@ -1,0 +1,7 @@
+packages:
+  - packages/*
+  - apps/*
+
+allowBuilds:
+  # esbuild 需要 postinstall 安装对应平台的二进制。
+  esbuild: true
