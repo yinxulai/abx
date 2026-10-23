@@ -51,6 +51,10 @@ describe('tray panel mock-up', { timeout: FULL_PAGE_TIMEOUT }, () => {
 
   it('describes the panel in the language of the page', async () => {
     await renderApp('zh')
+    // 副标题逐字等于真面板在跑那一档说的话（`packages/console` 的 `PanelCard`）。
+    // 「气闸 / 凭据 / 舱」是把内部术语搬到了用户面前，一个都不许回来。
+    expect(textOf(panel())).toContain('运行中 · 它拿不到你的密钥')
+    expect(textOf(panel())).not.toMatch(/气闸|凭据|舱/)
     expect(textOf(figure())).toContain('共享给全部 agent')
     expect(textOf(figure())).toContain('只读')
     // 拖放区那一句逐字来自 `tray-ui.md` §7 第 3 条：面板内的文案只说面板。
@@ -60,6 +64,8 @@ describe('tray panel mock-up', { timeout: FULL_PAGE_TIMEOUT }, () => {
 
     cleanup()
     await renderApp('en')
+    expect(textOf(panel())).toContain('Running · it cannot reach your keys')
+    expect(textOf(panel())).not.toMatch(/airlock|credential|cell/i)
     expect(textOf(figure())).toContain('Shared with every agent')
     expect(textOf(figure())).toContain('read-only')
     expect(textOf(figure())).toContain('Drop here → every agent sees it at once')
@@ -90,7 +96,7 @@ describe('tray panel mock-up', { timeout: FULL_PAGE_TIMEOUT }, () => {
   it('draws no cell-count pill and no footer', async () => {
     await renderApp('zh')
 
-    // 「N 舱」胶囊已经删掉：副标题说了气闸在不在跑，舱数是管理面板的职责
+    // 「N 舱」胶囊已经删掉：副标题只说「在不在跑、结果是什么」，舱数是管理面板的职责
     // （`design-system.md` §8）。这一条守着那个删除，别让它长回来。
     expect(textOf(panel())).not.toMatch(/\d+\s*舱/)
     // 托盘面板只有三件事（打开 agent、看共享内容、拖入），没有第四块 footer。
