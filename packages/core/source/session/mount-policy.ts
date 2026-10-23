@@ -226,8 +226,9 @@ export interface AssertMountPolicyInput {
  * 会在这里抛而不是打个警告，是因为这些组合没有一种是「配置写错了但还是能跑」——
  * 它们全都是「跑起来了，但隔离没了」。
  *
- * 检查顺序是先看有没有禁挂路径，再看结构。理由很实际：一个同时犯了两个错的配置，
- * 用户最需要看到的是「你挂到 /home 去了」，而不是「挂载点数量不对」。
+ * 检查顺序是**凭据 → 禁挂路径 → 结构**。理由很实际：一个同时犯了两个错的配置，
+ * 用户最需要看到的是「这是凭据文件」或者「你挂到 /home 去了」，
+ * 而不是「挂载点数量不对」——后两句话他没法照着改。
  */
 export function assertMountPolicy(input: AssertMountPolicyInput): void {
   const taskDir = path.resolve(input.taskDir)
