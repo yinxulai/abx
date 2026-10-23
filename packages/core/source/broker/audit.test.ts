@@ -10,6 +10,7 @@ function record(overrides: Partial<AuditRecord> = {}): AuditRecord {
   return {
     ts: '2026-10-23T00:00:00.000Z',
     cellId: 'cell-1',
+    sourceAddress: '192.168.65.2',
     method: 'POST',
     path: '/u/anthropic/v1/messages',
     upstreamId: 'anthropic',
@@ -29,6 +30,7 @@ describe('toAuditLine', () => {
     expect(parsed).toEqual({
       ts: '2026-10-23T00:00:00.000Z',
       cellId: 'cell-1',
+      sourceAddress: '192.168.65.2',
       method: 'POST',
       path: '/u/anthropic/v1/messages',
       upstreamId: 'anthropic',
@@ -60,19 +62,31 @@ describe('toAuditLine', () => {
     })
   })
 
-  it('上游 id / 目标为空时写 null，不写 undefined', () => {
-    const parsed = JSON.parse(toAuditLine(record({ upstreamId: null, targetHost: null }))) as Record<string, unknown>
+  it('上游 id / 目标 / 来源为空时写 null，不写 undefined', () => {
+    const parsed = JSON.parse(
+      toAuditLine(record({ upstreamId: null, targetHost: null, sourceAddress: null })),
+    ) as Record<string, unknown>
     expect(parsed['upstreamId']).toBeNull()
     expect(parsed['targetHost']).toBeNull()
+    expect(parsed['sourceAddress']).toBeNull()
     // undefined 会被 JSON.stringify 直接丢掉，字段就消失了——审计的字段应当固定。
     expect(Object.keys(parsed)).toContain('targetHost')
+    expect(Object.keys(parsed)).toContain('sourceAddress')
+  })
+
+  it('来源地址也是外部输入，同样要压成一行里的安全字段', () => {
+    const line = toAuditLine(record({ sourceAddress: '1.2.3.4\n{"decision":"allowed"}' }))
+    expect(line.split('\n')).toHaveLength(1)
+    expect(line).toContain('\\n')
   })
 
   it('每一次决策都有对应的取值', () => {
     for (const decision of [
       'allowed',
       'denied-egress',
+      'denied-cell-source',
       'denied-cell-token',
+      'denied-cell-identity',
       'denied-route',
       'denied-unknown-upstream',
       'credential-missing',
