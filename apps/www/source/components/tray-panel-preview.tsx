@@ -1,7 +1,7 @@
 import { FileText, Folder } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { TRAY_AGENT_ROWS } from '../agents'
-import { AirlockMark } from './airlock-mark'
+import { BrandMark } from './brand-mark'
 
 /**
  * 没在跑的那一档：虚线、中性色，**但描边必须看得见**。
@@ -59,10 +59,11 @@ export const TrayPanelPreview = () => {
         aria-hidden="true"
         className="overflow-hidden rounded-[14px] border border-line-strong bg-surface-0 shadow-[0_24px_60px_rgb(0_0_0/0.28)]"
       >
-        <div className="flex items-start gap-3 border-b border-line px-4 py-3.5">
-          <span className="grid size-8 shrink-0 place-items-center rounded-[8px] border border-line bg-surface-1">
-            <AirlockMark className="size-5 text-ink-2" />
-          </span>
+        <div className="flex items-center gap-3 border-b border-line px-4 py-3.5">
+          {/* 与真面板同一处：**光着的** 16px 标志，外面没有那圈描边方块。
+              标志自带容器（那个圆角矩形就是它的头），再垫一层底是「标志还是线描图形」
+              时的画法——真面板已经不那样画了（`design-system.md` §5）。 */}
+          <BrandMark className="size-4 shrink-0" />
           <div className="min-w-0">
             <p className="text-sm font-medium text-ink">abx</p>
             <p className="mt-1 text-xs text-ink-3">

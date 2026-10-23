@@ -132,7 +132,7 @@ html[data-surface='tray'] body {
 
 ```
 ┌─ 面板卡片 366×auto ─────────────────────────────────┐
-│ header  56px  [icon28] abx                      ⚙   │
+│ header  56px  [icon16] abx                      ⚙   │
 │               气闸运行中 · 凭据全部在舱外            │
 ├─────────────────────────────────────────────────────┤
 │ agents  上排 icon · gap 8 · padding 12/14           │
@@ -156,7 +156,7 @@ html[data-surface='tray'] body {
 
 | 区域 | 高度/间距 | 备注 |
 |---|---|---|
-| header | `min-height: 56px`，`padding: 0 14px`，`gap: 10px` | 图标 28px、`border-radius: 7px` |
+| header | `min-height: 56px`，`padding: 0 14px`，`gap: 10px` | 标志 16px（`--mark-size`，`design-system.md` §5）；**没有方块底**——标志自带容器 |
 | agents | `padding: 12px 14px`，`flex`，`gap: 8px` | **tile 44×44**，只有 icon，**无名字** |
 | section | `padding: 0 14px 12px` | 段落标题 `--text-primary` + 右侧计数 `--text-quaternary` |
 | list 行 | `min-height: 40px`（`--row-height`），`padding: 8px 10px` | 行间分隔 `--border`（装饰性，不用斑马纹） |
