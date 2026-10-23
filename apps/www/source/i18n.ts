@@ -74,7 +74,7 @@ export const en = {
     highlightAudit: 'Everything audited',
   },
   tray: {
-    status: 'Airlock running · every credential stays outside',
+    status: 'Running · it cannot reach your keys',
     stateRunning: 'Running',
     stateIdle: 'Not running',
     shared: 'Shared with every agent',

@@ -41,9 +41,10 @@ const SHARED = ['design-spec.pdf', 'api-contract.md', 'assets/'] as const
  * - **只画已安装的 agent**（§3.1 ④）。名单来自清单本身（`source/agents.ts`），
  *   镜像还没构建的 agent 不在其中，也不该在这里被画成一个可辨认的身份。
  *
- * 面板的文案（副标题、共享区标题、拖放区那一句）逐字照 §3/§4，**包括副标题里的
- * 「舱」**：它是规格与 `packages/console` 现在真正显示的字。它与
- * `functional-design.md` §0.2 的语言铁律冲突，那个冲突要连规格一起改，不在这里单方面改掉。
+ * 面板的文案（副标题、共享区标题、拖放区那一句）逐字照 `packages/console` 现在真正
+ * 显示的字：`PanelCard` 的副标题只说后果，不说术语，所以这里也没有「气闸」「凭据」「舱」。
+ * 这一档画的是一个 agent 在跑，副标题就用运行中那一句；两档都写在 `i18n` 的同一个 key 里
+ * 会让这张图只能对一半。
  *
  * 整块对辅助技术隐藏，信息由可见的 `figcaption` 承担，避免读屏念一堆装饰文字。
  * 字号比规格里的 11px 抬到 12px：官网的 `audit.mjs` 有一条「不许有 11px 以下的
@@ -65,7 +66,7 @@ export const TrayPanelPreview = () => {
           <div className="min-w-0">
             <p className="text-sm font-medium text-ink">abx</p>
             <p className="mt-1 text-xs text-ink-3">
-              {t('tray.status', '气闸运行中 · 凭据全部在舱外')}
+              {t('tray.status', '运行中 · 它拿不到你的密钥')}
             </p>
           </div>
         </div>
