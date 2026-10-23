@@ -1,11 +1,16 @@
 # abx（气闸）产品规格文档
 
-给 AI coding agent 用的隔离舱，macOS 托盘应用。舱内能像在本机一样干活，
+给 AI coding agent 用的隔离舱，Electron 托盘应用。舱内能像在本机一样干活，
 但**拿不到任何真实凭据**、碰不到任务目录以外的文件、删不掉机器。
 
+三个平台三种角色：**macOS 是发布平台**、**Windows 是使用者的日常测试平台**、
+**Linux 是开发机**（没有物理显示器）。差异与各自的验证状态见
+[`overview/platforms.md`](./overview/platforms.md)。
+
 > **文档状态：能力层与规格已就位，桌面壳已有骨架。** 核心模块（broker / policy / session /
-> mounts / 共享挂载）已完成并通过测试；`apps/app`（Electron 托盘）能加载面板、收发共享列表与
-> 落盘，但**没在真机上跑过**。真实状态以 [`../roadmap.md`](../roadmap.md) 为准。
+> mounts / 共享挂载）已完成并通过测试，三平台分叉点已显式化；`apps/app`（Electron 托盘）能加载
+> 面板、收发共享列表与落盘，但**没在 macOS 真机上跑过**。真实状态以
+> [`../roadmap.md`](../roadmap.md) 为准。
 
 ## 名称与理念
 
@@ -89,7 +94,7 @@
 | agent 配置与上游接线 | [agent-config.md](./overview/agent-config.md) | 只读挂载生成配置、不挂凭据文件、气闸默认上游 osw、为什么不需要改 osw、agent id 与 osw client key 的对应 |
 | Agent 清单 | [agent-manifest.md](./overview/agent-manifest.md) | 一个 agent 由哪些数据构成（展示 / 持久化目录 / 镜像 / 配置模板），以及「加一个 agent 只加一条数据」靠哪些检查维持 |
 | 核心模块架构 | [architecture.md](./overview/architecture.md) | 目标结构、单向依赖规则、contracts / policy / broker / session / mounts 的边界与接口、后端选择策略（docker 优先 / local 不做回退 / 加后端的口子）、安全不变量清单、文件闸口、舱令牌投递、真实 Docker 验证结论 |
-| 平台差异与 Linux 开发链路 | [platforms.md](./overview/platforms.md) | 必须按平台分叉的七处（沙箱 / 托盘图标 / 托盘锚点 / 透明窗口 / 拖放 / 字体 / 主题）、无头验证入口与四份产物、透明窗口无合成器时的实测像素、实测结论与尚未取得证据的判断 |
+| 平台差异与三平台链路 | [platforms.md](./overview/platforms.md) | 三个平台各自的角色（macOS 发布 / Windows 日常测试 / Linux 开发机）、必须按平台分叉的十二处（沙箱 / 托盘图标 / 托盘锚点 / 透明窗口 / 拖放 / 字体 / 主题 / 宿主路径规则 / 可执行文件查找 / 分隔符与大小写 / 舱内路径 / 打包目标）、为什么平台必须是注入的参数、舱面地址拆成「绑哪张网卡」与「告诉舱内哪个地址」、无头验证入口与四份产物、**按平台分开列的**实测结论与尚未取得证据的判断 |
 | 实例持久化 | [persistence.md](./overview/persistence.md) | 为什么用宿主目录而不是留着容器、为什么按实例而不是按舱、整目录 rw 而不是子路径白名单、嵌套只读的实测结果、两类可写挂载与四道闸 |
 
 **这两份冲突时**：产品取舍看 `design.md`，技术边界看 `architecture.md`。
@@ -109,6 +114,7 @@
 | 主题 | 权威文档 | 覆盖范围 |
 |---|---|---|
 | 容器与宿主之间的真实连通性 | [docker-verification.md](./operations/docker-verification.md) | 真实 docker 验证脚本怎么跑、三条候选地址的实测结论与原因、地址探测规则与 core 落点、来源网段校验为什么必要、共享路径与镜像工具链的坑、设计不一致清单、明确没验的部分 |
+| 在 Windows 上怎么跑、坏了怎么办 | [windows-runbook.md](./operations/windows-runbook.md) | 前置条件与日常命令、`pnpm release:win` 的产物与未签名的代价、四类常见故障的原文与下一步、宿主路径与舱内路径怎么分、在真机上补哪几条证据 |
 
 判定一份文档该进哪一簇：**写「应该怎么样」的是设计，写「实测是什么样」的是运维。**
 两边冲突时以机器为准，并回头改设计文档。
