@@ -40,10 +40,27 @@ export type { BrokerRoute, CellTokenExtraction, CellTokenSource as CellTokenOrig
 export { concatUpstreamPath, resolveTarget, STRIPPED_AUTH_HEADERS } from './target'
 export type { ResolvedFailure, ResolvedTarget, TargetResolution } from './target'
 
+export {
+  DEFAULT_ALLOWED_CELL_SUBNETS,
+  LOOPBACK_SUBNET,
+  classifyCellSource,
+  findInvalidCellSubnets,
+  isAllowedCellSource,
+  normalizeRemoteAddress,
+} from './cell-source'
+export type { CellSourceCheck, CellSourceReason } from './cell-source'
+
 export { DEFAULT_CELL_REGISTRY_LIMIT, CellRegistryError, CellTokenRegistry } from './registry'
 export type { CellRegistryOptions } from './registry'
 
 export { DEFAULT_CELL_ID, consoleLogger, formatHostForUrl, startBroker } from './server'
 export type { BrokerHandle, BrokerLogger, BrokerOptions } from './server'
 
-export { CELL_TOKEN_FILE_NAME, defaultCellTokenPath, generateCellToken, readCellTokenFile, writeCellTokenFile } from './token'
+export {
+  CELL_TOKEN_FILE_NAME,
+  CELL_TOKEN_PREFIX,
+  defaultCellTokenPath,
+  generateCellToken,
+  readCellTokenFile,
+  writeCellTokenFile,
+} from './token'

@@ -27,10 +27,27 @@ export interface SandboxMount {
  * 想挂成可写或者挂成目录，都不是「传错一个参数」，而是得改这个类型。
  */
 export interface SandboxConfigFile {
-  /** 生成文件的宿主路径，形如 `<cellRoot>/agents/<agentId>/settings.json`。 */
+  /** 生成文件的宿主路径，形如 `<instancesRoot>/<instanceId>/<agentId>/settings.json`。 */
   readonly hostPath: string
   /** 舱内挂到哪儿。与宿主那份配置的路径一致（D2）。 */
   readonly cellPath: string
+}
+
+/**
+ * 实例状态目录：abx 自己创建、跨会话活下来的那个目录，以 **rw** 挂进舱。
+ *
+ * 与 `SandboxConfigFile` 是同一类东西的两面——都能进舱、都必须过闸，区别只有权限
+ * 和成因：配置是 abx 现写的一份文件（只读），状态目录是 agent 自己往里写历史的
+ * 地方（可写、初始为空）。**可写这一条是持久化的全部实现**，所以它的形状必须是
+ * 一个能过 `assertMountPolicy` 那道闸的对象，而不是随手一个路径字符串。
+ */
+export interface SandboxStateDir {
+  /** 宿主路径，形如 `<instancesRoot>/<instanceId>/<agentId>`。 */
+  readonly hostPath: string
+  /** 舱内挂到哪儿，形如 `<cellHome>/.claude`。 */
+  readonly cellPath: string
+  /** 这个目录属于哪个 agent。挂载策略拿它核对目录名。 */
+  readonly agentId: string
 }
 
 /** 进程的输入输出接到哪儿。 */
@@ -51,16 +68,44 @@ export interface SandboxSpec {
   /** 舱内要跑的命令，argv 形式。 */
   readonly command: readonly string[]
   /**
+   * 要不要给容器分配 TTY（docker 的 `--tty`）。
+   *
+   * 由**调用方**按「自己有没有终端」决定，不让后端替它猜：`--tty` 要求启动方的
+   * stdin 是终端，而托盘应用（管道 spawn）、CI 和脚本里都不是。无条件加 `--tty`
+   * 的后果不是「少点颜色」，而是 docker 直接拒绝起容器：
+   * `cannot attach stdin to a TTY-enabled container because stdin is not a terminal`。
+   *
+   * `--interactive` 是另一回事：它只要求 stdin 可读，任何情况下都保留。
+   */
+  readonly allocateTty: boolean
+  /**
    * 这次会话要挂进舱的 agent 配置文件，由 `stageAgentConfig()` 生成并落盘。
    *
    * 缺省为空数组。docker 后端把它们逐个只读挂进去；local 后端没有挂载这回事，
    * 但它照样把它们算进「本应挂什么」，让两种后端在上层看起来一样。
    */
   readonly agentConfigFiles?: readonly SandboxConfigFile[]
-  /** 宿主上的任务目录绝对路径。**唯一**会被挂进舱内的宿主目录。 */
+  /**
+   * 这次会话要挂进舱的实例状态目录，由 `planInstance()` + `ensureInstanceStateDir()`
+   * 建出来。缺省为空数组。
+   *
+   * 它是**第二个可写挂载**（第一个是任务目录）。多出来的可写面就是持久化的代价，
+   * 所以它必须过 `mount-policy.ts` 里那几道闸，而不是「调用方说挂就挂」。
+   */
+  readonly stateDirs?: readonly SandboxStateDir[]
+  /** 宿主上的任务目录绝对路径。会被挂进舱内的宿主目录之一。 */
   readonly taskDir: string
   /** 任务目录挂进舱内之后的路径，同时也是工作目录。 */
   readonly workdir: string
+  /**
+   * 舱内那个 home（`session.cellHome`）。
+   *
+   * 必须显式传，不能靠镜像默认值：docker 后端会把它注成 `HOME`，而 agent 的
+   * 「把历史写到 `~/.claude/projects/`」用的就是这个值。镜像默认值随镜像变，
+   * 而实例状态目录挂在哪，取决于这个值——两者对不上就是「挂了一个 agent
+   * 不会去写的地方」，表现是历史照样丢。
+   */
+  readonly cellHome: string
   /** 要注入的环境变量。必须已经由 `buildCellEnv` 脱敏过。 */
   readonly env: Readonly<Record<string, string>>
   /**

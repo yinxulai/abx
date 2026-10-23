@@ -34,8 +34,13 @@ function spec(overrides: Partial<SandboxSpec> = {}): SandboxSpec {
     cellId: 'test-cell',
     agentId: 'claude',
     command: [process.execPath, '-e', 'console.log("hello from the cell")'],
+    // local 后端不分配 pty（它直接用管道接了进程的 stdio），这个值只是把接口填满。
+    allocateTty: false,
     taskDir: directory,
     workdir: '/workspace',
+    // local 后端跑在宿主上，`HOME` 是它自己改写到任务目录的（见 local-backend.ts），
+    // 这个值在这儿只是把接口填满：跨后端的形状必须一样。
+    cellHome: '/home/node',
     env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:8789/u/anthropic', ANTHROPIC_AUTH_TOKEN: 'abx-placeholder' },
     forbiddenEnvNames: ['ANTHROPIC_API_KEY'],
     limits: { memory: '2g', pids: 256, cpus: 2 },

@@ -17,6 +17,13 @@ export interface CommandOptions {
   readonly tail: boolean
   /** open：只打印这次会话会做什么，不起任何进程。 */
   readonly dryRun: boolean
+  /**
+   * open：哪一份历史（`--instance`）。`null` 表示用 agentId。
+   *
+   * 默认「就是 agent 自己」这件事是设计的一部分：再开一次 `claude` 接的是上一次
+   * 那份历史。要并行开两份互不干扰的历史时才显式指定别的名字。
+   */
+  readonly instance: string | null
   /** broker：覆盖舱面绑定地址。 */
   readonly cellHost: string | null
   /** broker：舱令牌落盘位置。 */

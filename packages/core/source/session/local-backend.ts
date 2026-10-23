@@ -60,7 +60,12 @@ export function createLocalBackend(options: LocalBackendOptions = {}): SandboxBa
       // 挂载清单照样算出来并挂到 handle 上——不是为了挂载（本地后端没有挂载这回事），
       // 而是为了让 CLI 和审计能报出「这次会话本应挂什么」。两种后端在这一点上
       // 保持同样的形状，上层就不用分叉。
-      const mounts: readonly SandboxMount[] = MOUNT_POLICY.buildMounts(taskDir, spec.workdir, spec.agentConfigFiles ?? [])
+      const mounts: readonly SandboxMount[] = MOUNT_POLICY.buildMounts(
+        taskDir,
+        spec.workdir,
+        spec.agentConfigFiles ?? [],
+        spec.stateDirs ?? [],
+      )
 
       const scrubbed = scrubEnv(baseEnv, {
         forbiddenNames: spec.forbiddenEnvNames,

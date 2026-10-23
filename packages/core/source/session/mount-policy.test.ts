@@ -1,14 +1,18 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { SandboxConfigFile, SandboxMount } from './backend'
+import type { SandboxConfigFile, SandboxMount, SandboxStateDir } from './backend'
+import { INSTANCES_ROOT_ENV, defaultInstancesRoot } from './instance'
 import {
   DOCKER_SOCKET_PATH,
   FORBIDDEN_CREDENTIAL_FILE_PATTERNS,
+  FORBIDDEN_INSTANCE_ROOT_SUBDIRS,
   MOUNT_POLICY,
   MountPolicyViolation,
+  assertInstancesRoot,
   assertMountPolicy,
+  assertStateDirPolicy,
   findRiskyFilesInTaskDir,
   isForbiddenMountSource,
   matchCredentialFileRule,
@@ -60,6 +64,25 @@ describe('MOUNT_POLICY.buildMounts', () => {
       expect(rule.requirement.length).toBeGreaterThan(0)
       expect(rule.rationale.length).toBeGreaterThan(0)
     }
+  })
+
+  it('可写的就两类，而且状态目录必须 rw——只读的话历史一行都落不下来', () => {
+    expect([...MOUNT_POLICY.writableClasses]).toEqual(['taskDir', 'instanceState'])
+    expect(MOUNT_POLICY.taskDirMode).toBe('rw')
+    expect(MOUNT_POLICY.stateDirMode).toBe('rw')
+  })
+
+  it('实例状态目录排在配置文件前面挂，而且是目录形态的 rw', () => {
+    const mounts = MOUNT_POLICY.buildMounts(
+      TASK_DIR,
+      WORKDIR,
+      [],
+      [{ hostPath: '/home/dev/.abx/instances/claude/claude', cellPath: '/home/node/.claude', agentId: 'claude' }],
+    )
+    expect(mounts).toEqual([
+      { source: TASK_DIR, target: WORKDIR, mode: 'rw' },
+      { source: '/home/dev/.abx/instances/claude/claude', target: '/home/node/.claude', mode: 'rw' },
+    ])
   })
 })
 
@@ -319,6 +342,244 @@ describe('生成的 agent 配置：只读、单文件', () => {
         [SETTINGS, codex],
       ),
     ).not.toThrow()
+  })
+})
+
+/**
+ * 实例状态目录那几道闸。
+ *
+ * 这组用例的分量比上面几组重：**多出来的可写挂载面就是持久化的全部代价**，
+ * 而它默认落在主目录下面。所以这里不光要盖「正常情况能过」，还要盖住那几种
+ * 「看上去正常、其实把宿主主目录交出去了」的写法。
+ *
+ * 用真实临时目录而不是假路径，是因为 realpath 那道闸只有在路径真的存在时才有意义。
+ */
+describe('实例状态目录：第二个可写挂载', () => {
+  const CELL_HOME = '/home/node'
+  const TEMP_DIRS: string[] = []
+
+  interface InstanceFixture {
+    readonly base: string
+    readonly homeDir: string
+    readonly instancesRoot: string
+    readonly stateDir: SandboxStateDir
+  }
+
+  afterEach(() => {
+    for (const directory of TEMP_DIRS) rmSync(directory, { recursive: true, force: true })
+    TEMP_DIRS.length = 0
+  })
+
+  /** 造一份真实存在的实例布局：home 在临时目录里，实例根在 home 下面（和默认值同形）。 */
+  function fixture(instanceId = 'claude', agentId = 'claude'): InstanceFixture {
+    const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'abx-policy-')))
+    TEMP_DIRS.push(base)
+    const homeDir = path.join(base, 'home')
+    const instancesRoot = path.join(homeDir, '.abx', 'instances')
+    const hostPath = path.join(instancesRoot, instanceId, agentId)
+    mkdirSync(hostPath, { recursive: true })
+    return { base, homeDir, instancesRoot, stateDir: { hostPath, cellPath: `${CELL_HOME}/.${agentId}`, agentId } }
+  }
+
+  function check(stateDirs: readonly SandboxStateDir[], fixtureInput: InstanceFixture): void {
+    assertStateDirPolicy({
+      stateDirs,
+      instancesRoot: fixtureInput.instancesRoot,
+      homeDir: fixtureInput.homeDir,
+      cellHome: CELL_HOME,
+    })
+  }
+
+  it('正常的一格通过：字面路径和 realpath 都在实例根之下', () => {
+    const current = fixture()
+    expect(() => check([current.stateDir], current)).not.toThrow()
+  })
+
+  it('拿宿主真实的 ~/.claude 当状态目录源 → 拒绝', () => {
+    // 这是这个任务里最容易被写漏的一种写法：路径看上去完全合理（就是 agent 的
+    // home），但它是宿主上**现成的**那一个——里面既有历史也有 `.credentials.json`。
+    // 挂进去等于把宿主那台机器上的凭据一起交出去，而命令行里只是一个 -v。
+    const stateDir: SandboxStateDir = {
+      hostPath: path.join(homedir(), '.claude'),
+      cellPath: `${CELL_HOME}/.claude`,
+      agentId: 'claude',
+    }
+    expect(() => assertStateDirPolicy({ stateDirs: [stateDir], homeDir: homedir() })).toThrow(MountPolicyViolation)
+    expect(() => assertStateDirPolicy({ stateDirs: [stateDir], homeDir: homedir() })).toThrow(/不在实例根/)
+  })
+
+  it('同样的写法走完整挂载清单也拒绝（不是只有单独那道闸拦得住）', () => {
+    const hostClaude = path.join(homedir(), '.claude')
+    const stateDir: SandboxStateDir = { hostPath: hostClaude, cellPath: `${CELL_HOME}/.claude`, agentId: 'claude' }
+    const mounts = MOUNT_POLICY.buildMounts(TASK_DIR, WORKDIR, [], [stateDir])
+    expect(() =>
+      assertMountPolicy({ mounts, taskDir: TASK_DIR, workdir: WORKDIR, stateDirs: [stateDir], homeDir: homedir() }),
+    ).toThrow(/不在实例根/)
+  })
+
+  it('ABX_INSTANCES_ROOT 配成 /home → 拒绝', () => {
+    // 后者比前者隐蔽得多：`/home` 看上去只是「主目录的爸爸」，但它是可写挂载源的
+    // 来源，指到那儿等于把这一台机器上所有用户的主目录一起交出去。
+    const root = defaultInstancesRoot({ [INSTANCES_ROOT_ENV]: '/home' }, homedir())
+    expect(root).toBe('/home')
+    expect(() => assertInstancesRoot(root, homedir())).toThrow(MountPolicyViolation)
+  })
+
+  it('ABX_INSTANCES_ROOT 配成宿主 home → 拒绝', () => {
+    const root = defaultInstancesRoot({ [INSTANCES_ROOT_ENV]: homedir() }, homedir())
+    expect(() => assertInstancesRoot(root, homedir())).toThrow(/宿主 home/)
+  })
+
+  it('实例根不合格时，形状完全正确的状态目录也一起被拒——闸在来源上', () => {
+    const current = fixture()
+    expect(() => assertStateDirPolicy({ stateDirs: [current.stateDir], instancesRoot: '/home', homeDir: current.homeDir })).toThrow(
+      MountPolicyViolation,
+    )
+  })
+
+  it('实例根落在主目录的敏感子目录里也拒绝——让开 /home 前缀之后剩的那个口子', () => {
+    // `/home` 前缀必须给默认值（`~/.abx/instances`）让路，让开之后 `~/.ssh/instances`
+    // 就没人拦了。这一条补的就是它。
+    for (const name of FORBIDDEN_INSTANCE_ROOT_SUBDIRS) {
+      const root = path.join('/home/dev', name, 'instances')
+      expect(() => assertInstancesRoot(root, '/home/dev')).toThrow(/敏感|身份|禁挂前缀/)
+    }
+  })
+
+  it('实例根本身是文件系统根、是 /etc、带 .. 或者不是绝对路径，都拒绝', () => {
+    expect(() => assertInstancesRoot('/', '/home/dev')).toThrow(MountPolicyViolation)
+    expect(() => assertInstancesRoot('/etc/abx/instances', '/home/dev')).toThrow(MountPolicyViolation)
+    expect(() => assertInstancesRoot('/home/dev/../..', '/home/dev')).toThrow(MountPolicyViolation)
+    expect(() => assertInstancesRoot('relative/instances', '/home/dev')).toThrow(/绝对路径/)
+  })
+
+  it('软链逃逸：字面在实例根下，realpath 却跑出去了 → 拒绝', () => {
+    // 闸 1 只看字面路径，而软链是唯一能骗过它的东西：目录名规规矩矩叫
+    // `<实例根>/claude/claude`，实际指着别处。所以必须有闸 2。
+    const current = fixture()
+    const outside = path.join(current.base, 'outside')
+    mkdirSync(outside, { recursive: true })
+    rmSync(current.stateDir.hostPath, { recursive: true, force: true })
+    symlinkSync(outside, current.stateDir.hostPath, 'dir')
+
+    expect(() => check([current.stateDir], current)).toThrow(/跑出实例根/)
+  })
+
+  it('目录解析不出来就拒绝——失败关闭，不留「查不出来所以放行」的口子', () => {
+    const current = fixture()
+    rmSync(current.stateDir.hostPath, { recursive: true, force: true })
+    expect(() => check([current.stateDir], current)).toThrow(/解析不了/)
+  })
+
+  it('名字正好命中凭据黑名单的目录拒绝', () => {
+    const current = fixture()
+    const credentialDir: SandboxStateDir = { ...current.stateDir, hostPath: path.join(current.instancesRoot, 'claude', 'auth.json') }
+    expect(() => check([credentialDir], current)).toThrow(/凭据文件/)
+  })
+
+  it('必须是 <实例根>/<实例 id>/<agentId> 那一格，不能是实例目录本身', () => {
+    // 挂实例目录本身的话，`sessions.jsonl` 会跟着进舱——那是 abx 自己的记账，
+    // 不该让舱内的 agent 看见，更不该让它能改。
+    const current = fixture()
+    const tooHigh: SandboxStateDir = { ...current.stateDir, hostPath: path.dirname(current.stateDir.hostPath) }
+    expect(() => check([tooHigh], current)).toThrow(/那一格/)
+  })
+
+  it('目录名和 agentId 对不上也拒绝', () => {
+    const current = fixture()
+    const mismatched: SandboxStateDir = { ...current.stateDir, agentId: 'codex' }
+    expect(() => check([mismatched], current)).toThrow(/那一格/)
+  })
+
+  it('舱内挂载点必须在舱内 home 之下——挂到别处等于没挂', () => {
+    const current = fixture()
+    const elsewhere: SandboxStateDir = { ...current.stateDir, cellPath: '/tmp/.claude' }
+    expect(() => check([elsewhere], current)).toThrow(/不在舱内 home/)
+  })
+
+  it('必须是 rw：只读挂进去的话历史写不下来，而界面上看不出异常', () => {
+    const current = fixture()
+    const mounts: SandboxMount[] = [
+      { source: TASK_DIR, target: WORKDIR, mode: 'rw' },
+      { source: current.stateDir.hostPath, target: current.stateDir.cellPath, mode: 'ro' },
+    ]
+    expect(() =>
+      assertMountPolicy({
+        mounts,
+        taskDir: TASK_DIR,
+        workdir: WORKDIR,
+        stateDirs: [current.stateDir],
+        instancesRoot: current.instancesRoot,
+        homeDir: current.homeDir,
+        cellHome: CELL_HOME,
+      }),
+    ).toThrow(/必须以 rw 挂载/)
+  })
+
+  it('必须挂回它自己的位置', () => {
+    const current = fixture()
+    const mounts: SandboxMount[] = [
+      { source: TASK_DIR, target: WORKDIR, mode: 'rw' },
+      { source: current.stateDir.hostPath, target: '/home/node/.codex', mode: 'rw' },
+    ]
+    const input = { mounts, taskDir: TASK_DIR, workdir: WORKDIR, stateDirs: [current.stateDir] }
+    expect(() =>
+      assertMountPolicy({ ...input, instancesRoot: current.instancesRoot, homeDir: current.homeDir, cellHome: CELL_HOME }),
+    ).toThrow(/挂回它自己的位置/)
+  })
+
+  it('配置文件嵌在状态目录里面：目录整体 rw，配置那一格仍然 ro', () => {
+    // 这就是真实形态：生成的配置**长在**状态目录里，于是它在可写挂载内部又套了
+    // 一层只读挂载。docker 的嵌套绑定是「深的目标赢」，所以两者可以共存。
+    const current = fixture()
+    const settings: SandboxConfigFile = {
+      hostPath: path.join(current.stateDir.hostPath, 'settings.json'),
+      cellPath: `${current.stateDir.cellPath}/settings.json`,
+    }
+    writeFileSync(settings.hostPath, '{}')
+
+    const mounts = MOUNT_POLICY.buildMounts(TASK_DIR, WORKDIR, [settings], [current.stateDir])
+    expect(mounts).toEqual([
+      { source: TASK_DIR, target: WORKDIR, mode: 'rw' },
+      { source: current.stateDir.hostPath, target: current.stateDir.cellPath, mode: 'rw' },
+      { source: settings.hostPath, target: settings.cellPath, mode: 'ro' },
+    ])
+    expect(() =>
+      assertMountPolicy({
+        mounts,
+        taskDir: TASK_DIR,
+        workdir: WORKDIR,
+        agentConfigFiles: [settings],
+        stateDirs: [current.stateDir],
+        instancesRoot: current.instancesRoot,
+        homeDir: current.homeDir,
+        cellHome: CELL_HOME,
+      }),
+    ).not.toThrow()
+  })
+
+  it('可写的上限是「任务目录 1 个 + 每个状态目录 1 个」，再多一个就拒', () => {
+    const current = fixture()
+    const mounts: SandboxMount[] = [
+      { source: TASK_DIR, target: WORKDIR, mode: 'rw' },
+      { source: current.stateDir.hostPath, target: current.stateDir.cellPath, mode: 'rw' },
+      { source: '/srv/extra', target: '/srv/extra', mode: 'rw' },
+    ]
+    expect(() =>
+      assertMountPolicy({
+        mounts,
+        taskDir: TASK_DIR,
+        workdir: WORKDIR,
+        stateDirs: [current.stateDir],
+        instancesRoot: current.instancesRoot,
+        homeDir: current.homeDir,
+        cellHome: CELL_HOME,
+      }),
+    ).toThrow(/可写挂载最多/)
+  })
+
+  it('没有状态目录时不碰实例根——免得凭空多出一种跟跑测试的人的主目录有关的失败', () => {
+    expect(() => assertMountPolicy({ mounts: [{ source: TASK_DIR, target: WORKDIR, mode: 'rw' }], taskDir: TASK_DIR, workdir: WORKDIR })).not.toThrow()
   })
 })
 
