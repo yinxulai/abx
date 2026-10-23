@@ -13,7 +13,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { MCP_SHIM_CELL_PATH, type SessionConfig } from '@abx/contracts'
+import { MCP_SHIM_CELL_PATH, MCP_SHIM_FILE_NAME, type SessionConfig } from '@abx/contracts'
 import { makeConfig, makeUpstream } from '@abx/contracts/test-support'
 import { RUNNING_PLATFORM } from '../test-support'
 import type { CommandOptions } from './options'
@@ -189,7 +189,7 @@ describe('runOpen --dry-run', () => {
     const cellId = output.match(/会话 id\s+([^\s（]+)/)?.[1]
 
     expect(cellId).toBeTruthy()
-    expect(output).toContain(`${path.join(root, cellId ?? '')}/abx-mcp-shim.mjs → ${MCP_SHIM_CELL_PATH}`)
+    expect(output).toContain(`${path.join(root, cellId ?? '', MCP_SHIM_FILE_NAME)} → ${MCP_SHIM_CELL_PATH}`)
     expect(output).toContain('只读')
   })
 

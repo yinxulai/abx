@@ -22,7 +22,11 @@ import type { Opener } from './opener'
 import { createMemoryTransomLedger } from './ledger'
 import { createTransomMcpHandler } from './mcp'
 import { createTransomService, type TransomSession } from './service'
-import { defaultRuntimeRoot, runtimeDirFor, stageTransomShim } from './shim'
+import { RUNTIME_DIR_NAME, defaultRuntimeRoot, runtimeDirFor, stageTransomShim } from './shim'
+import { RUNNING_VOCABULARY } from '../test-support'
+
+/** 运行时根是**宿主路径**，形状跟着跑测试这台机器走（见 `test-support.ts`）。 */
+const HOST = RUNNING_VOCABULARY
 
 const CELL_ID = 'claude-20261023-abc123'
 const CELL_TOKEN = 'abx_cell_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
@@ -402,13 +406,15 @@ describe('落盘的地方', () => {
   })
 
   it('运行时根跟着 ABX_RUNTIME_ROOT / home 走，一格一个会话', () => {
-    expect(defaultRuntimeRoot({ ABX_RUNTIME_ROOT: '/tmp/custom' }, '/home/dev')).toBe('/tmp/custom')
-    expect(defaultRuntimeRoot({}, '/home/dev')).toBe('/home/dev/.abx/runtime')
+    const custom = HOST.underHome('custom')
+    expect(defaultRuntimeRoot({ ABX_RUNTIME_ROOT: custom }, HOST.home)).toBe(custom)
+    expect(defaultRuntimeRoot({}, HOST.home)).toBe(HOST.underHome('.abx', RUNTIME_DIR_NAME))
     // 空串按「没配」处理，否则会得到一个空路径。
-    expect(defaultRuntimeRoot({ ABX_RUNTIME_ROOT: '   ' }, '/home/dev')).toBe('/home/dev/.abx/runtime')
+    expect(defaultRuntimeRoot({ ABX_RUNTIME_ROOT: '   ' }, HOST.home)).toBe(HOST.underHome('.abx', RUNTIME_DIR_NAME))
 
-    expect(runtimeDirFor('/root/rt', CELL_ID)).toBe(`/root/rt/${CELL_ID}`)
+    const root = HOST.underHome('rt')
+    expect(runtimeDirFor(root, CELL_ID)).toBe(HOST.join(root, CELL_ID))
     // 会话 id 来自宿主，但仍然过一遍清洗：它要当目录名用。
-    expect(runtimeDirFor('/root/rt', '../../etc')).toBe('/root/rt/.._.._etc')
+    expect(runtimeDirFor(root, '../../etc')).toBe(HOST.join(root, '.._.._etc'))
   })
 })
