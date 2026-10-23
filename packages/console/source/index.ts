@@ -1,5 +1,8 @@
 // @abx/console —— UI 层。
 //
-// 本阶段仅占位，不搭应用、不写界面：将来用 React + Vite 实现（与 osw 一致），
-// 只通过管理 API 与 @abx/core 通信。
-export const consolePackageName = '@abx/console'
+// 目前只有一个界面：托盘面板（React 自绘的无边框浮层）。产物由 `vite build` 打到
+// `output/`，`apps/app` 以 `file://` 加载；面板只通过 preload 的极小桥接与宿主通信
+// （见 `./bridge.ts`），不直接碰文件系统或进程。
+export { App } from './App'
+export { getBridge, type AbxBridge } from './bridge'
+export { useReportHeight } from './hooks/useReportHeight'

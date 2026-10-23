@@ -12,6 +12,8 @@ const PANEL_GUTTER = 28
 const PANEL_MIN_HEIGHT = 120
 
 const here = path.dirname(fileURLToPath(import.meta.url))
+/** 面板产物：`@abx/console` 构建到 `output/panel`，与主进程产物同级。 */
+const PANEL_ENTRY = path.join(here, '../panel/index.html')
 let tray: Tray | null = null
 let panel: BrowserWindow | null = null
 let panelHeight = 320
@@ -37,11 +39,19 @@ function createPanel(): BrowserWindow {
     alwaysOnTop: true,
     show: false,
     webPreferences: {
-      preload: path.join(here, '../preload/index.js'),
+      // `.cjs`：沙箱里的 preload 没有 ESM 上下文，只认 CJS（见 vite.preload.config.ts）。
+      preload: path.join(here, '../preload/index.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
     },
+  })
+
+  // 面板是自绘的：窗口本身没有任何内容，React 卡片由渲染层画。
+  // 用 `loadFile` 而不是 `loadURL`：产物是静态文件，且 `base: './'` 让资源引用相对，
+  // `file://` 下也能解析。
+  window.loadFile(PANEL_ENTRY).catch((error: unknown) => {
+    console.error('[abx] failed to load the tray panel', error)
   })
 
   // 失焦即隐藏，不销毁：重建窗口会让面板每次都有一次可见的空白帧。
@@ -92,6 +102,14 @@ ipcMain.on('panel:height', (_event, height: unknown) => {
 })
 
 ipcMain.on('panel:hide', () => panel?.hide())
+
+// 拖进面板的文件路径（`preload` 用 `webUtils` 换出来的绝对路径）。
+// 这里**只做「收到了」**：真正把它们挂进共享区属于 mounts 那个作业，
+// 在挂载语义定下来之前，宿主不猜测该怎么处理。
+ipcMain.on('panel:dropped-files', (_event, paths: unknown) => {
+  if (!Array.isArray(paths) || paths.some((item) => typeof item !== 'string')) return
+  console.info(`[abx] tray panel received ${paths.length} dropped path(s)`)
+})
 
 app.whenReady().then(() => {
   tray = createTray()
