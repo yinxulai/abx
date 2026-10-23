@@ -9,7 +9,13 @@
 
 import { afterEach, describe, expect, it } from 'vitest'
 import { makeConfig } from '@abx/contracts/test-support'
-import { DEFAULT_ALLOWED_CELL_SUBNETS, LOOPBACK_SUBNET, startBroker, type BrokerHandle } from '../broker/index'
+import {
+  DEFAULT_ALLOWED_CELL_SUBNETS,
+  LOOPBACK_SUBNET,
+  createMemoryAuditSink,
+  startBroker,
+  type BrokerHandle,
+} from '../broker/index'
 import { allowedCellSubnetsFor, resolveCellHost } from './runtime'
 
 const cleanups: (() => Promise<void>)[] = []
@@ -51,6 +57,9 @@ describe('allowedCellSubnetsFor', () => {
       cellToken: 'abx_cell_local-backend-0000',
       cellHost,
       allowedCellSubnets: allowedCellSubnetsFor(cellHost),
+      // 不传审计 sink 的话，broker 会按配置里的相对路径往**当前目录**写审计流水。
+      // 跑测试时的当前目录是仓库根，那会在工作区里留下一个 abx-audit.jsonl。
+      auditSink: createMemoryAuditSink(),
       hostPort: 0,
       cellPort: 0,
       logger: quiet,
@@ -71,6 +80,7 @@ describe('allowedCellSubnetsFor', () => {
       cellToken: 'abx_cell_local-backend-0000',
       cellHost: '127.0.0.1',
       allowedCellSubnets: DEFAULT_ALLOWED_CELL_SUBNETS,
+      auditSink: createMemoryAuditSink(),
       hostPort: 0,
       cellPort: 0,
       logger: quiet,
