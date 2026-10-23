@@ -6,9 +6,33 @@
 - 常用命令：`pnpm install` / `pnpm lint` / `pnpm typecheck` / `pnpm test`。
   提交前这四条都要是绿的。
 
-## 提交
+## 提交纪律（强制）
 
-- 提交信息用英文，格式 `type(scope): summary`，例如 `feat(sandbox): add process isolation`。
+**每一个可验证的小步 = 一次提交。** 不要攒成一个大提交，也不要「全改完再一起提」。
+
+- 一次提交只做**一件逻辑上的事**：加一个模块、改一处行为、补一组测试，各算一步。
+- 提交前跑过被改到的检查：`pnpm lint` / `pnpm typecheck` / `pnpm test`。
+- 提交信息用**英文**，套用 `.gitmessage` 模版：
+
+  ```
+  <type>(<scope>): <summary>
+
+  Why:
+    <为什么需要这个改动>
+
+  What:
+    - <改了什么>
+
+  Verify:
+    - <命令> -> <真实结果>
+  ```
+
+  类型限：`feat` / `fix` / `refactor` / `perf` / `test` / `docs` / `build` / `ci` / `chore` / `style` / `revert`。
+
+- 模版是**强制**的：`pnpm install` 时 `prepare` 会把 `core.hooksPath` 指向 `.githooks/`，
+  `commit-msg` 钩子会拒绝不合规的信息（subject 格式错、缺 `Why:`/`What:`、出现中文）。
+- 手动校验一条现成信息：`pnpm commit:check .git/COMMIT_EDITMSG`
+- 临时绕过：`git commit --no-verify` —— 只用于紧急情况，**不要**用它绕过「英文 + 模版」。
 - git 身份：`AlainClaw <yinxulai@hotmail.com>`。
 
 ## 密钥
@@ -44,7 +68,7 @@ TanStack 系列（`@tanstack/react-query`、`@tanstack/react-router`）、`recha
   （`pnpm version:set <version>` 会把根版本刷到每一个包）。
 - 目录职责：`packages/*` 放库（contracts=类型/schema、core=领域逻辑、console=Web UI、
   toolkit=工具链），`apps/*` 放入口程序。产品能力（代理、沙箱）只落在 `packages/core` 里，
-  由 `apps/cli` 这样的宿主跑起来。
+  由 `apps/app` 这样的宿主跑起来。
 
 ## 预留目录
 

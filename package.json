@@ -16,6 +16,8 @@
     "test": "node packages/toolkit/scripts/test.mjs",
     "test:coverage": "node packages/toolkit/scripts/test.mjs --coverage",
     "typecheck": "node packages/toolkit/scripts/typecheck.mjs",
+    "commit:check": "node packages/toolkit/scripts/check-commit-msg.mjs",
+    "prepare": "git config core.hooksPath .githooks && git config commit.template .gitmessage",
     "version:set": "node packages/toolkit/scripts/version.mjs",
     "version:check": "node packages/toolkit/scripts/version.mjs --check"
   },

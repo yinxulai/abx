@@ -1,0 +1,44 @@
+<type>(<scope>): <summary>
+
+Why:
+  <the problem this solves, or the reason the change is needed>
+
+What:
+  - <one bullet per logical change>
+
+Verify:
+  - <exact command> -> <observed result>
+
+Refs: <design doc section / issue / task id>
+
+# =====================================================================
+#  abx commit template -- see AGENTS.md ("提交纪律")
+# =====================================================================
+#
+#  SUBJECT  <type>(<scope>): <summary>
+#    - imperative mood, lowercase summary, no trailing period
+#    - 72 characters maximum
+#    - <scope> is optional, e.g. feat(core):, fix(mounts):
+#
+#  TYPES
+#    feat      a new capability
+#    fix       a bug fix
+#    refactor  behaviour-preserving restructure
+#    perf      performance improvement
+#    test      tests only
+#    docs      documentation only
+#    build     build system or dependencies
+#    ci        CI configuration
+#    chore     maintenance that fits nothing above
+#    style     formatting only
+#    revert    revert a previous commit
+#
+#  RULES
+#    1. English only. CJK characters are rejected.
+#    2. "Why:" and "What:" sections are mandatory.
+#    3. "Verify:" is expected -- record the command and its real result.
+#    4. One logical change per commit. Do not batch unrelated changes.
+#    5. Blank line between the subject and the body.
+#
+#  These comment lines are stripped by git and never enter the message.
+# =====================================================================
