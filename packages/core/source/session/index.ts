@@ -28,7 +28,14 @@ export {
 } from './env'
 export type { BuildCellEnvOptions, CellBaseUrlOptions, ScrubEnvResult } from './env'
 
-export { AgentConfigError, cellRootFor, renderAgentConfig, stageAgentConfig, toSandboxConfigFiles } from './agent-config'
+export {
+  AgentConfigError,
+  agentHomePath,
+  cellRootFor,
+  renderAgentConfig,
+  stageAgentConfig,
+  toSandboxConfigFiles,
+} from './agent-config'
 export type {
   RenderAgentConfigOptions,
   RenderedAgentConfig,
@@ -37,6 +44,17 @@ export type {
   StagedAgentConfig,
   StagedAgentConfigFile,
 } from './agent-config'
+
+export {
+  INSTANCES_ROOT_ENV,
+  InstanceError,
+  appendSessionRecord,
+  defaultInstancesRoot,
+  ensureInstanceStateDir,
+  isValidInstanceId,
+  planInstance,
+} from './instance'
+export type { InstancePlan, InstancePlanInput, InstanceSessionRecord } from './instance'
 
 export {
   DANGEROUS_TASK_DIRS,

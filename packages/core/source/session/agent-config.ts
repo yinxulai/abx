@@ -118,6 +118,45 @@ export function renderAgentConfig(options: RenderAgentConfigOptions): RenderedAg
 }
 
 /**
+ * agent 在舱内的主目录：`<cellHome>/.claude` 这样一段。
+ *
+ * 从注册表里那几份**会生成**的配置文件的路径推出来，而不是在代码里写死一张
+ * `claude → .claude` 的表：注册表已经是路径的唯一真相，再写一张表就会漂。
+ *
+ * 这个目录同时也是持久化挂载点（见 `instance.ts`）：把整个 agent 主目录挂进去，
+ * 历史才跟着走。所以下面几条都必须拦住——
+ *
+ *   - 配置文件分散在多个目录：只能挂一个，另一个会静默丢历史，不如直接抛；
+ *   - 目录就是舱内 home 本身：那等于把整个 home 变成可写挂载点，挂载面大了一整圈。
+ */
+export function agentHomePath(agent: AgentDefinition, cellHome: string = DEFAULT_CELL_HOME): string {
+  const directories = [
+    ...new Set(
+      generatedConfigFiles(agent).map((file) => path.posix.dirname(expandHome(file.path, cellHome))),
+    ),
+  ]
+
+  const directory = directories[0]
+  if (directory === undefined) {
+    throw new AgentConfigError(`agent ${agent.id} 没有登记任何会生成的配置文件，不知道它的舱内主目录在哪。`)
+  }
+  if (directories.length > 1) {
+    throw new AgentConfigError(
+      `agent ${agent.id} 的配置文件分散在多个目录里（${directories.join('、')}）：` +
+        `持久化挂载只能挂一个目录，请先把它们收敛到同一个目录下。`,
+    )
+  }
+  if (directory === cellHome || directory === '/' || directory === '.') {
+    throw new AgentConfigError(
+      `agent ${agent.id} 的配置直接写在舱内 home 根上（${directory}）：` +
+        `那会把整个 home 变成可写挂载点，请让它住在自己的子目录里。`,
+    )
+  }
+
+  return directory
+}
+
+/**
  * 一次会话的宿主目录：`~/.abx/cells/<cellId>`。
  *
  * 选在 `~/.abx/` 下面有两个理由：它跟着 home 走（Docker Desktop 只把 home 下的路径
