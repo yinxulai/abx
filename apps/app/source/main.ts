@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { parseSharedEntry, type SharedEntry, type SharedEntryRejection, type SharedListSnapshot } from '@abx/contracts'
 import { requireHostPlatform } from '@abx/core/host-platform'
 import type { HostPlatform } from '@abx/core/host-platform'
+import { panelPosition } from './panel-position'
 import {
   addSharedEntries,
   defaultSharedListPath,
@@ -127,17 +128,24 @@ function createPanel(): BrowserWindow {
   return window
 }
 
-/** 把面板贴到托盘图标下方，并夹在屏幕可视区内。 */
+/**
+ * 把面板贴到托盘图标旁边，并夹在屏幕可视区内。
+ *
+ * 贴哪一边由 `panelPosition()` 按坐标算，不按平台：Windows 的任务栏默认在**底部**，
+ * 「永远贴图标下面」在那台机器上等于把面板放到屏幕外面（窗口真的存在、真的拿到了
+ * 焦点，就是看不见）。任务栏在 Windows 上还能被拖到顶部，所以判据必须是坐标。
+ */
 function placePanel(window: BrowserWindow): void {
   if (tray === null) return
   const trayBounds = tray.getBounds()
   const display = screen.getDisplayNearestPoint({ x: trayBounds.x, y: trayBounds.y })
-  const workArea = display.workArea
   const bounds = window.getBounds()
 
-  const centered = Math.round(trayBounds.x + trayBounds.width / 2 - bounds.width / 2)
-  const x = Math.min(Math.max(centered, workArea.x), workArea.x + workArea.width - bounds.width)
-  const y = Math.round(trayBounds.y + trayBounds.height)
+  const { x, y } = panelPosition({
+    trayBounds,
+    workArea: display.workArea,
+    panelSize: { width: bounds.width, height: bounds.height },
+  })
   window.setPosition(x, y, false)
 }
 
