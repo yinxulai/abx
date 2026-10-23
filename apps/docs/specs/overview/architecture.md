@@ -19,7 +19,7 @@
 > 仍然有效，而且正是它们决定了现在的形状。但**任何技术断言都要以代码为准**——
 > 下面第 16.1 节就有一条已经被证伪了。
 
-> 配套文档：`DESIGN.md`（产品设计：威胁模型 / 设计原则 / 体验 / 演示脚本）。
+> 配套文档：`design.md`（产品设计：威胁模型 / 设计原则 / 体验 / 演示脚本）。
 > **本文只回答一件事：核心模块怎么切、怎么接、不能被破坏的不变量是什么。**
 >
 > 状态：阶段 0（能力层）· 2026-10-23
@@ -28,7 +28,7 @@
 
 ## 0. 范围与阅读顺序
 
-`DESIGN.md` 回答「做什么、为什么」；本文回答「切成几块、每块的边界和接口」。
+`design.md` 回答「做什么、为什么」；本文回答「切成几块、每块的边界和接口」。
 两处冲突时：**产品取舍看 DESIGN，技术边界看本文。**
 
 本文只覆盖**核心**：`contracts` / `core(broker·policy·session·mounts)` / `apps/app`。
@@ -469,7 +469,7 @@ idle ──open()──▶ preparing ──create()──▶ running ──stop(
 | **0 · 能力层（当前）** | `contracts` + `core(broker/policy/session/mounts)`；补 G1/G2/G3/G6；**托盘骨架 + 共享挂载（§18）** |
 | **1 · 文件闸口** | `core/mounts` 完成禁区 + 符号链接校验 + `review`（出舱审核）；`session` 消费 |
 | **2 · 体验层完善** | `packages/console` 面板（状态灯 / 产出通知 / 审计可视化）；经 HTTP 与 core 通信（R5） |
-| **3 · 接入 osw** | broker 增加「第二个监听面」+ 舱身份头；OSW 作为生产级上游替换自研代理 |
+| **3 · 接入 osw** | 气闸唯一下游改为 OSW 本地地址（`127.0.0.1:19300`）；自研直连上游降级为开发期能力 |
 | **未来（不实现）** | FUSE 文件闸口：open/write/unlink 全过策略进程 |
 
 ---
@@ -514,7 +514,7 @@ type MountGrant = {
 
 ### 15.2 符号链接：真正要防的地方在**挂载时**，不在挂载后 ⚠️
 
-**这是对 `DESIGN.md` §4.2 第 1 条的修正。**
+**这是对 `design.md` §4.2 第 1 条的修正。**
 
 原文说「必须禁止符号链接指向挂载点之外」。**在容器场景下这句话是无效防护**，原因是：
 
@@ -593,13 +593,16 @@ Claude Code / Codex 只会往 `BASE_URL` 发请求并带自己的 `Authorization
 「舱内 agent」这条主路径必须走**路径携带**：
 
 ```
-ABX_BASE_URL = http://host.docker.internal:8721/c/<cellToken>/u/anthropic
+ABX_BASE_URL = http://host.docker.internal:8721/c/<cellToken>/u/osw
 ABX_AUTH_TOKEN = abx-placeholder
 ```
 
 > **实测修正（2026-10-23）**：原稿写的是 `<网桥IP>`。在 Docker Desktop 上这个地址
 > **从舱内连不上**（`ECONNREFUSED`），必须用 `host.docker.internal`。macOS 只有 Docker
 > Desktop，所以这**不是边例，是主路径**。详见 §19.1。
+>
+> **上游 id 是 `osw`**：生产形态下气闸的唯一下游就是 OSW，见 `design.md` §12。
+> 舱内 agent 的配置里因此只有**一个自定义供应商、一个 baseUrl**——这就是要讲的安全。
 
 这正是 `route.ts` 里 `CELL_PATH_PREFIX = '/c/'` 与
 `CellTokenSource = 'header' | 'path'` 存在的原因 —— 两条路都要留。
@@ -619,7 +622,7 @@ ABX_AUTH_TOKEN = abx-placeholder
 
 ---
 
-## 17. 对 `DESIGN.md` 的修正记录
+## 17. 对 `design.md` 的修正记录
 
 | 原文位置 | 原文说法 | 修正 |
 |---|---|---|

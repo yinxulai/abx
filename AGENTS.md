@@ -76,8 +76,20 @@ TanStack 系列（`@tanstack/react-query`、`@tanstack/react-router`）、`recha
 
 - `apps/app/` —— Electron 桌面壳（osw 里是 `@osw/app`，含托盘、更新器、打包脚本）。
   abx 需要桌面形态时再建，届时同步引 electron 系列依赖。
-- `apps/docs/` —— 文档站（osw 里放 `specs/` 规格文档与构建配置）。
-  abx 的规格文档多到需要站点承载时再建。
+- `apps/docs/` —— ✅ **已创建**。与 osw 同构：`specs/` 放内部规格（不进静态站），
+  `source/` 放面向使用者的文档（尚未开写）。文档站本身未搭建，`dev`/`build` 是占位。
+  入口：`apps/docs/specs/README.md`（文档地图）、`apps/docs/roadmap.md`（进度与验收）。
 
-两者都是 `pnpm-workspace.yaml` 的 `apps/*` 通配范围内的成员，创建后
+`apps/app` 是 `pnpm-workspace.yaml` 的 `apps/*` 通配范围内的成员，创建后
 包边界校验与版本校验会自动纳入，无需改工具链脚本。
+
+## 文档
+
+所有文档住在 `apps/docs/`（与 osw 同构）。
+
+- **规格文档**（内部，只服务实现与评审）：`apps/docs/specs/<簇>/*.md`
+- **使用者文档**（未来，双语）：`apps/docs/source/<locale>/`
+- **文档地图**：`apps/docs/specs/README.md` —— 加文档前先看它，加了就往表里补一行
+- **进度与验收状态**：`apps/docs/roadmap.md` —— **唯一来源**，其它文档不写「做到哪一步」
+
+**一个主题只在一份文档里展开**，其它地方提到它只写结论加链接。
