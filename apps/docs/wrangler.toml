@@ -25,6 +25,14 @@ name = "abx-docs"
 # 「后台某天改成了 Latest」这种仓库外漂移。
 compatibility_date = "2026-10-01"
 
+# 这两个默认值显式写出来，理由与 `apps/www/wrangler.toml` 相同：不写的话每次部署都会
+# 告警，而告警描述的默认行为已经在生效——「配置里没写」和「线上没开」于是成了两件事。
+#
+# workers.dev 域名现在就是文档的线上地址：https://abx-docs.yinxulai.workers.dev
+# 等自定义域名定下来，在顶层加 `routes`，那时再把这里改成 false。
+workers_dev = true
+preview_urls = true
+
 # ---------------------------------------------------------------- 域名
 #
 # 自定义域名尚未定。定下来以后在这里加顶层 `routes`：

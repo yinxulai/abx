@@ -17,18 +17,19 @@
 | 气闸的舱身份（单实例多舱） | ✅ 已落地（令牌注册表，cellId 由令牌反查、不可伪造） |
 | `packages/console`（React 面板） | 🟡 基础面板已落地：状态块 / 高度回报 / 拖放区 / 共享列表（渲染宿主快照、目录与文件两种符号、被拒条目的原因行），jsdom 测试通过；**已在无头 Linux 上渲染并截图**，明暗两套对比度实测达标（见 [`overview/platforms.md`](./overview/platforms.md) §2） |
 | `apps/app`（Electron 托盘） | 🟡 骨架 + 面板加载 + 拖放 IPC + 共享列表 IPC（`shared:list` / `shared:add`）；**已能在无头 Linux（Xvfb）上起来、渲染并截图**；托盘锚点定位仍未验证 |
+| agent 清单（镜像 / 持久化目录 / 图标 / 配置模板） | ✅ 已落地（**加一个 agent = 一条数据**；构建期拒绝空的、`latest` 的镜像版本，并有守卫禁止别处再声明 agent）；`codex` / `dsh` 的**镜像尚未构建** |
 | `packages/core/session` 的挂载与 agent 配置生成 | ✅ 已落地（生成最小配置、单文件只读挂载、凭据文件黑名单） |
 | 共享给全部 agent（文件 / 目录，只读） | ✅ 已落地（契约 / 解析四道闸 / `~/.abx/shared.json` 持久化 / 面板列表 / 宿主 IPC；真 docker 验证见 `../packages/toolkit/scripts/e2e-shared.sh`）；**会话接线未做** |
 | 配置层（zod schema 为唯一真相） | ✅ 已落地（类型从 schema 推导；手写 readers 已删除） |
 | 舱面来源网段校验 | ✅ 已落地（来源网段判定在令牌解析**之前**、令牌加可扫描前缀、审计记来源地址；实测结论：回环必须进默认放行名单，同机进程仅靠令牌挡住） |
-| `apps/www`（官网） | ✅ 已落地（凭据叙事、三步用法、安全边界、明确不承诺项） |
+| `apps/www`（官网） | ✅ 已上线 <https://abx-www.yinxulai.workers.dev>（凭据叙事、三步用法、安全边界、明确不承诺项）；构建期预渲染首屏，**关掉 JS 也能取到正文**（55 KB / 3.7k 中文字） |
 | 本地（local 后端）端到端脚本 | ✅ 已落地（改走 core 命令层，30 条断言实测通过） |
 | macOS 打包与 CI | ✅ 已落地（electron-builder + macOS workflow）；**未在真机打过包** |
 | Linux 开发链路 | ✅ 已落地（按平台分叉 + `verify:linux` 无头验证入口，见 [`overview/platforms.md`](./overview/platforms.md)）；Linux 只服务开发，不是发布平台 |
 | Linux 打包与 CI | 🟡 AppImage 与 deb 都在本机打出来了，deb 解包后的可执行文件也能起；**CI 流水线尚未在 runner 上跑过，deb 也从未装过** |
-| `apps/docs`（文档站） | ⬜ 未建站，仅有 Markdown |
+| `apps/docs`（文档站） | ✅ 已上线 <https://abx-docs.yinxulai.workers.dev>（33 页，中文为源语言、英文增量补译，机器审计校验与清单一致）；**英文侧 10 页仍回退中文** |
 
-**当前基线：** `pnpm lint` / `pnpm typecheck` / `pnpm test` 三样全绿，**587 个测试**（33 个文件）。
+**当前基线：** `pnpm lint` / `pnpm typecheck` / `pnpm test` 三样全绿，**716 个测试**（52 个文件）。
 
 > 上表里「airlock 阶段」指本项目在 `/home/openclaw/Project/airlock` 下完成的第一次实现。
 > 那个目录是**早期的错误落点**，代码已按
