@@ -319,6 +319,7 @@ describe('界面描述与真面板一致', () => {
   // 断言「新句在」与「旧词不在」。
   const firstRun = readMdx('zh', 'getting-started/first-run')
   const installation = readMdx('zh', 'getting-started/installation')
+  const limitations = readMdx('zh', 'limits/limitations')
 
   it('起舱说的是方块的形状，不是头部计数', () => {
     // 头部没有计数（`design-system.md` §8：数量归管理面板）。
@@ -344,6 +345,18 @@ describe('界面描述与真面板一致', () => {
     expect(installation).not.toContain('三个 agent 方块')
     expect(installation).not.toContain('几个 agent 在跑')
     expect(installation).not.toContain('未配置上游')
+  })
+
+  it('共享条目那一条缺口写的是会话接线，不是已经取消的出舱确认', () => {
+    // `functional-design.md` §13 把「出舱确认」这个状态取消了：交付落地即打开，
+    // 没有「一个等待确认的条目」。拿一个不存在的状态描述缺口，等于把「还没做」
+    // 和「已经决定不做」混成一件事，读者会去等一个不会来的确认。
+    // 真实缺口是会话接线（`roadmap.md`）：起容器那一刻要重算一遍再挂。
+    expect(limitations).toContain('会话接线还没做')
+    expect(limitations).not.toContain('出舱确认')
+    // 「真正的挂载」已经落地（契约 / 解析四道闸 / 真 docker 验证），
+    // 再说它「仍在接入」就是把做完的事写在缺口里。
+    expect(limitations).not.toContain('真正的挂载')
   })
 
   it('示意图源码画的是现形态，不是上一版', () => {
