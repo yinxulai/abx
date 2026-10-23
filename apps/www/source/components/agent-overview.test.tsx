@@ -42,22 +42,33 @@ describe('agent overview', () => {
   it('shows the built image reference, and says "not built yet" for the others', async () => {
     await renderApp('zh')
 
-    // claude 的镜像已经构建：显示 `仓库:版本`。
-    expect(textOf(cardFor('Claude Code').closest('article'))).toContain('abx-agent-claude:2.1.308')
+    // 哪几条已经构建由数据层现算，这里不手抄「claude / codex 构建了、dsh 没有」——
+    // 手抄的那份会在下一个镜像建出来时变成一条假绿（或者一条假红）。
+    expect(AGENT_ROWS.some(row => row.image.state === 'built')).toBe(true)
 
-    // codex / dsh 的 version 是 `unbuilt` —— 那是给脚本看的哨兵值，
-    // 页面上必须是「镜像尚未构建」，不能拼成 `abx-agent-codex:unbuilt`。
-    const codexCard = textOf(cardFor('OpenAI Codex CLI').closest('article'))
-    expect(codexCard).toContain('镜像尚未构建')
-    expect(codexCard).not.toContain('unbuilt')
+    for (const row of AGENT_ROWS) {
+      const card = textOf(cardFor(row.label).closest('article'))
+      if (row.image.state === 'built') {
+        // 构建了的那条显示 `仓库:版本`。
+        expect(card).toContain(`${row.image.repository}:${row.image.version}`)
+      } else {
+        // 没构建的那条 version 是 `unbuilt` —— 那是给脚本看的哨兵值，
+        // 页面上必须是「镜像尚未构建」，不能拼成 `仓库:unbuilt`。
+        expect(card).toContain('镜像尚未构建')
+        expect(card).not.toContain('unbuilt')
+      }
+    }
   })
 
   it('has the English copy for the unbuilt image', async () => {
     await renderApp('en')
 
-    const codexCard = textOf(cardFor('OpenAI Codex CLI').closest('article'))
-    expect(codexCard).toContain('not built yet')
-    expect(codexCard).not.toContain('unbuilt')
+    const unbuilt = AGENT_ROWS.find(row => row.image.state === 'unbuilt')
+    if (unbuilt === undefined) throw new Error('清单里没有未构建镜像的 agent，这条用例验不到东西')
+
+    const card = textOf(cardFor(unbuilt.label).closest('article'))
+    expect(card).toContain('not built yet')
+    expect(card).not.toContain('unbuilt')
   })
 
   it('marks the manifest entries that are not verified yet', async () => {

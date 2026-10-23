@@ -13,10 +13,11 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { SessionConfig } from '@abx/contracts'
 import { makeConfig, makeUpstream } from '@abx/contracts/test-support'
 import type { CommandOptions } from './options'
 import { runOpen } from './open'
-import type { CommandContext } from './runtime'
+import { CommandError, type CommandContext } from './runtime'
 
 /** 测试用的「舱内 home」。刻意**不是**默认值，这样「有没有把配置传进去」才看得出来。 */
 const CELL_HOME = '/home/dev'
@@ -172,5 +173,97 @@ describe('runOpen --dry-run', () => {
     const { output } = await dryRun('claude', { image: 'node:22-slim' })
     expect(output).toContain('镜像         node:22-slim')
     expect(output).not.toContain('abx-agent-claude')
+  })
+})
+
+/**
+ * 镜像还没构建的那个 agent（清单里钉的是 `unbuilt`）单独一组用例。
+ *
+ * 这组用例守的是一件具体的事：**报错要长成人话**。以前 `abx open <这个 agent>`
+ * 会一路走到起容器，docker 回一句「拉不到 <仓库>:unbuilt」——那句话读起来像网络
+ * 不通、或者镜像名写错了，而真正的原因是「这个 agent 的镜像从来没人构建过」。
+ */
+describe('runOpen：镜像还没构建', () => {
+  type EnvLike = Readonly<Record<string, string | undefined>>
+
+  /**
+   * 那个 agent 的上下文。上游 id 用清单里登记的那个（`dsh`）——
+   * 少配上游会先撞上另一道检查，这条用例就验不到镜像那道闸了。
+   */
+  function unbuiltContext(session: Partial<SessionConfig> = {}, env: EnvLike = {}): CommandContext {
+    return {
+      config: makeConfig({
+        upstreams: [makeUpstream({ id: 'dsh', baseUrl: 'https://api.example.invalid' })],
+        session: { cellHome: CELL_HOME, ...session },
+      }),
+      configPath: '/tmp/abx.config.json',
+      env,
+      cwd: '/tmp',
+    }
+  }
+
+  interface OpenUnbuiltOptions {
+    readonly dryRun?: boolean
+    readonly session?: Partial<SessionConfig>
+    readonly env?: EnvLike
+  }
+
+  /** 起一次 `abx open dsh`。默认干跑；`dryRun: false` 走真路径。 */
+  async function openUnbuilt(overrides: OpenUnbuiltOptions = {}): Promise<{ code: number; output: string }> {
+    const lines: string[] = []
+    const code = await runOpen({
+      options: options({ positionals: ['dsh'], dryRun: overrides.dryRun ?? true }),
+      context: unbuiltContext(overrides.session ?? {}, overrides.env ?? {}),
+      log: (message) => lines.push(message),
+    })
+    return { code, output: lines.join('\n') }
+  }
+
+  it('在起任何东西之前就失败，并说清该跑哪条命令', async () => {
+    const root = instancesRoot()
+
+    // 走的是**真**路径（不是干跑）：这道闸要在建实例目录、起 broker、拼 docker
+    // 命令之前就抛出。闸不在的话，这里会一路走到起容器，报出来的就是 docker
+    // 那句「拉不到镜像」——正是这条用例要拦住的东西。
+    const thrown = await openUnbuilt({ dryRun: false, env: { ABX_INSTANCES_ROOT: root } }).catch(
+      (error: unknown) => error,
+    )
+
+    expect(thrown).toBeInstanceOf(CommandError)
+    const failure = thrown as CommandError
+    expect(failure.message).toContain('dsh 的镜像还没构建')
+    expect(failure.message).toContain('abx-agent-dsh:unbuilt')
+    // 该跑哪条命令写在 hint 里，它跟着 agent id 走（换一个 agent 就是另一个 id）。
+    expect(failure.hint).toContain('bash packages/toolkit/scripts/build-agent-image.sh dsh')
+
+    // 「没有真的调用 docker」在这里的证据是它**没走到那一步**：实例目录是起容器
+    // 之前建的（`ensureInstanceStateDir`），这条路一个字节都没落盘。
+    expect(existsSync(root)).toBe(false)
+  })
+
+  it('干跑也拦住：它说的是「这次起不来」，不是「计划长什么样」', async () => {
+    await expect(openUnbuilt()).rejects.toThrow(/镜像还没构建/)
+  })
+
+  it('配置里显式给了镜像就不拦：那是跑裸容器的出口，跟清单里钉什么无关', async () => {
+    const root = instancesRoot()
+    const { code, output } = await openUnbuilt({
+      session: { image: 'node:22-slim' },
+      env: { ABX_INSTANCES_ROOT: root },
+    })
+    expect(code).toBe(0)
+    expect(output).toContain('镜像         node:22-slim')
+  })
+
+  it('local 后端不拦：它在宿主上跑命令，根本用不上镜像', async () => {
+    // 拦下来会让人去构建一个这次会话不会用到的东西——那是一条错的下一步。
+    const root = instancesRoot()
+    const { code, output } = await openUnbuilt({
+      session: { backend: 'local' },
+      env: { ABX_INSTANCES_ROOT: root },
+    })
+    expect(code).toBe(0)
+    expect(output).toContain('abx-agent-dsh:unbuilt')
+    expect(output).toContain('local')
   })
 })

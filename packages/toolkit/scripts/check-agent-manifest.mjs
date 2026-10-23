@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { log } from './lib/log.mjs'
@@ -6,7 +6,7 @@ import { loadAgentRegistry } from './lib/agent-registry.mjs'
 
 // agent 清单的守卫：让「加一个 agent = 加一条数据」这句话有判据。
 //
-// 三件事，缺一件那句承诺就还是注释：
+// 四件事，缺一件那句承诺就还是注释：
 //
 //   ① 注册表自洽 —— 每个 agent 都带镜像（仓库非空、版本钉住、不是 latest）、
 //      持久化目录、配置模板。判据只有一份：`agentManifestProblems()`，
@@ -16,13 +16,16 @@ import { loadAgentRegistry } from './lib/agent-registry.mjs'
 //   ③ 不许有第二张 agent 表 —— `packages/*/source` 里除注册表外，
 //      没有哪个文件同时列出两个以上 agent id。有第二张表，
 //      「加一条数据」就又要改代码。
+//   ④ 镜像定义与注册表对得上 —— `images/agents/<id>/Dockerfile` 在的时候，
+//      这条 agent 的 `image.version` 不许还是 `AGENT_IMAGE_UNBUILT`。
 //
-// 后两条都是静态扫描，新文件自动纳入，不维护白名单。
+// 后三条都是静态扫描，新文件自动纳入，不维护白名单。
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
 const REGISTRY_FILE = 'packages/contracts/source/agents.ts'
+const IMAGES_DIR = 'images/agents'
 
-const { AGENT_DEFINITIONS, agentIds, agentManifestProblems } = await loadAgentRegistry()
+const { AGENT_DEFINITIONS, AGENT_IMAGE_UNBUILT, agentIds, agentManifestProblems } = await loadAgentRegistry()
 
 /** 递归列出目录下的文件（相对仓库根，posix 分隔符）。 */
 function collectFiles(directory) {
@@ -132,9 +135,45 @@ function checkNoSecondAgentList() {
   return true
 }
 
+/**
+ * 镜像定义在不在，与注册表说的必须一致。
+ *
+ * 拦的是「Dockerfile 写好了、版本忘了钉」这一种：注册表说 `unbuilt`、`images/`
+ * 下却已经有那份定义，于是 `abx open <id>` 会拿 `仓库:unbuilt` 去起容器，
+ * docker 报一句「拉不到镜像」——读起来像网络问题或者名字写错。
+ *
+ * 只判一个方向（有 Dockerfile ⇒ 不许是 unbuilt）。反方向**故意不在这里判**：
+ * 「钉了版本却没有 Dockerfile」是构建脚本自己的事，它已经在第 1 步拒掉了
+ * （exit 1，并说清该往哪儿放 Dockerfile）；而钉住的版本将来完全可能指向一个
+ * 不是本地 `docker build` 出来的镜像，那时候这条规则会变成假警报。
+ */
+function checkImageVersionsMatchDockerfiles() {
+  const withDockerfile = AGENT_DEFINITIONS.filter((agent) =>
+    existsSync(path.join(root, IMAGES_DIR, agent.id, 'Dockerfile')),
+  )
+  const stale = withDockerfile.filter((agent) => agent.image.version === AGENT_IMAGE_UNBUILT)
+
+  if (stale.length > 0) {
+    log.error(`${IMAGES_DIR}/<id>/Dockerfile 存在、注册表里却还写着 unbuilt（${stale.length} 处）`)
+    for (const agent of stale) {
+      console.log(
+        `  ${agent.id}：镜像定义已经在 ${IMAGES_DIR}/${agent.id}/Dockerfile，但 image.version 还是 ${AGENT_IMAGE_UNBUILT}。` +
+          `把它改成实际装得上的版本，不然 abx open ${agent.id} 会拿 ${agent.image.repository}:${AGENT_IMAGE_UNBUILT} 去起容器。`,
+      )
+    }
+    return false
+  }
+
+  const built = withDockerfile.map((agent) => `${agent.id}（${agent.image.version}）`)
+  log.success(
+    `镜像定义与注册表一致（${withDockerfile.length} 个 agent 有 Dockerfile${built.length > 0 ? `：${built.join(' / ')}` : ''}）`,
+  )
+  return true
+}
+
 log.title('Agent manifest check')
 
-const checks = [checkManifest, checkNoImageLiterals, checkNoSecondAgentList]
+const checks = [checkManifest, checkNoImageLiterals, checkNoSecondAgentList, checkImageVersionsMatchDockerfiles]
 const results = checks.map((check) => check())
 
 if (results.some((passed) => !passed)) {

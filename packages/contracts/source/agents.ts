@@ -269,11 +269,12 @@ export const AGENT_DEFINITIONS: readonly AgentDefinition[] = [
     // 只给标识、不给颜色：颜色是可选的，界面对没有颜色的图标用中性色。
     icon: { slug: 'codex' },
     statePaths: [{ path: '~/.codex', mode: 'rw' }],
-    // 镜像**还没建**（`images/agents/codex/` 还不存在），所以版本写 `unbuilt` 而不是
-    // 编一个版本号。它同样不是 `latest`：编一个号会让人以为这个镜像存在。
-    // 镜像建出来之前 `abx open codex` 会当场失败（docker 找不到镜像）——
-    // 这比今天「起一个没有 codex 命令的空壳、看起来还挺正常」要好。
-    image: { repository: 'abx-agent-codex', version: AGENT_IMAGE_UNBUILT },
+    // 本地构建出来的那份镜像，见 images/agents/codex/：Dockerfile 里装的 codex
+    // 就是这个版本，构建期的自检拿 `codex --version` 核对过。
+    // 0.164.0 是 `npm view @openai/codex version` 在 2026-10-23 给出的最新版，
+    // 也是实测装得上、打得出 `codex-cli 0.164.0` 的那个。不是 `latest`：
+    // 某天顺手拉上来一个新版本，表现会是「昨天还能跑、今天行为变了」。
+    image: { repository: 'abx-agent-codex', version: '0.164.0' },
     command: 'codex',
     args: [],
     upstreamId: 'openai',
@@ -305,7 +306,7 @@ export const AGENT_DEFINITIONS: readonly AgentDefinition[] = [
       },
     ],
     status: 'stable',
-    note: 'OPENAI_BASE_URL 只改 API 端点；Codex 的登录态走的是另一套（`~/.codex/config.toml`，路径与字段名以 OSW 客户端注册表为准），尚未实测。镜像也还没建（`image.version` 是 `unbuilt`）。',
+    note: 'OPENAI_BASE_URL 只改 API 端点；Codex 的登录态走的是另一套（`~/.codex/config.toml`，路径与字段名以 OSW 客户端注册表为准），尚未实测。镜像已构建（`images/agents/codex/`，版本 `0.164.0`）：舱内确实有一个能跑的 `codex`，但「它在真网关下能不能干活」「abx 生成的那份 config.toml 是否真的生效」两件都还没验。',
   },
   {
     id: 'dsh',

@@ -15,7 +15,7 @@
 
 import { existsSync, statSync } from 'node:fs'
 import path from 'node:path'
-import { agentIds, agentImageRef, findAgent } from '@abx/contracts'
+import { AGENT_IMAGE_UNBUILT, agentIds, agentImageRef, findAgent } from '@abx/contracts'
 import { collectSecretEnvNames } from '../broker/index'
 import {
   appendSessionRecord,
@@ -73,12 +73,35 @@ export async function runOpen(input: OpenInput): Promise<number> {
     )
   }
 
+  // 后端先定下来：下面那道「镜像还没构建」的闸只对 docker 后端有意义
+  // （local 后端在宿主上直接跑命令，不起容器、不挂载，镜像根本用不上）。
+  const backendId = resolveBackend(context.config, options.backend)
+
   // 镜像按 agent 给：配置里没写就用清单里那个（`repository:version`）。
   // 配置里写了就以配置为准——那是「只跑一个裸容器」这类场合的出口，
   // 它跟某个 agent 无关，所以没道理为它登记一条清单。
-  const image = context.config.session.image ?? agentImageRef(agent)
+  const configuredImage = context.config.session.image
+  const image = configuredImage ?? agentImageRef(agent)
 
-  const backendId = resolveBackend(context.config, options.backend)
+  // 镜像还没构建的时候，**在这里**就停，不要留给 docker。
+  // `abx-agent-dsh:unbuilt` 这个引用拿去起容器，docker 回的是「拉不到这个镜像」——
+  // 那句话读起来像网络不通、或者名字写错了，而真正的原因是**这个 agent 的镜像
+  // 从来没人构建过**。要跑的命令只有一条，直接说出来。
+  //
+  // 只在「用的是清单里那个镜像」时判：配置里写了 `session.image` 就是用户自己
+  // 指了别的镜像（裸容器那条路），清单里钉的是不是 unbuilt 与他无关。
+  // 也只对 docker 后端判：local 后端根本没有镜像这回事，在那儿拦下来等于让人去
+  // 构建一个这次会话不会用到的东西。
+  //
+  // 干跑也走这道闸：它说的是「这次会话根本起不来」，而不是「计划长什么样」，
+  // 跟上面实例根那道闸是同一个道理——错了要在按下回车之前就知道。
+  if (configuredImage === null && backendId === 'docker' && agent.image.version === AGENT_IMAGE_UNBUILT) {
+    throw new CommandError(
+      `${agent.id} 的镜像还没构建：清单里钉的是 ${agentImageRef(agent)}，本地没有这个标签。`,
+      `先构建它：bash packages/toolkit/scripts/build-agent-image.sh ${agent.id}` +
+        `（脚本会核对该把版本钉成什么）。只想跑一个跟 agent 无关的裸容器做验证的话，在配置里写 session.image。`,
+    )
+  }
   const cellHost = resolveCellHost(context.config, backendId, null)
   const cellId = generateCellId(agent.id)
   // 舱内的 home 来自配置，**不是**宿主 home：这一处漏传过一次，生成的配置

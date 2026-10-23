@@ -15,14 +15,17 @@ FROM node:22-slim
 # 两份默认值迟早会漂，而「标签说 2.1.308、里面其实是别的版本」几乎查不出来。
 # 直接 `docker build` 而不传这个 arg 会装到一个空版本并当场失败——这是有意的。
 #
+# ARG 的名字三个 agent 用同一个（`AGENT_VERSION`），构建脚本才不必维护一张
+# 「哪个 agent 用哪个 arg 名」的表。改这个名字要连 build-agent-image.sh 一起改。
+#
 # 镜像里这份是 npm 全局包，让它的版本与注册表里那个值一致，
 # 「镜像里跑出来的行为和预期不一样」就少了一个变量。
 #
 # 注意：`node:22-slim` 的默认 npm registry 是 https://registry.npmjs.org/，
 # 不受宿主那份镜像源配置影响。
-ARG CLAUDE_CODE_VERSION
+ARG AGENT_VERSION
 
-RUN npm install --global --no-fund --no-audit "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+RUN npm install --global --no-fund --no-audit "@anthropic-ai/claude-code@${AGENT_VERSION}" \
   && npm cache clean --force \
   && rm -rf /root/.npm
 
@@ -34,7 +37,7 @@ RUN npm install --global --no-fund --no-audit "@anthropic-ai/claude-code@${CLAUD
 RUN set -eu; \
   actual="$(claude --version)"; \
   printf 'claude --version -> %s\n' "$actual"; \
-  test "$(printf '%s' "$actual" | cut -d' ' -f1)" = "${CLAUDE_CODE_VERSION}" || { \
-    printf '构建自检失败：期望 %s，实际 %s\n' "${CLAUDE_CODE_VERSION}" "$actual" >&2; \
+  test "$(printf '%s' "$actual" | cut -d' ' -f1)" = "${AGENT_VERSION}" || { \
+    printf '构建自检失败：期望 %s，实际 %s\n' "${AGENT_VERSION}" "$actual" >&2; \
     exit 1; \
   }

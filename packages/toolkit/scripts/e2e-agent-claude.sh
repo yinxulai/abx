@@ -27,7 +27,7 @@
 #     `${ABX_TEST_UPSTREAM_BASE_URL}` 这种引用，不是地址本身。
 #
 # 用法：
-#   bash packages/toolkit/scripts/build-agent-image.sh     # 先构建镜像
+#   bash packages/toolkit/scripts/build-agent-image.sh claude # 先构建镜像
 #   bash packages/toolkit/scripts/e2e-agent-claude.sh        # 再跑这个
 #   bash packages/toolkit/scripts/e2e-agent-claude.sh --keep # 跑完不清理临时目录
 #
@@ -99,7 +99,7 @@ ok "docker 守护进程可用（server $DOCKER_SERVER）"
 
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   fail "本机没有镜像 $IMAGE，先构建它："
-  raw 'bash packages/toolkit/scripts/build-agent-image.sh'
+  raw 'bash packages/toolkit/scripts/build-agent-image.sh claude'
   exit 1
 fi
 ok "镜像 $IMAGE 在本地（$(docker image inspect --format '{{.Id}}' "$IMAGE" | cut -c1-19)…）"

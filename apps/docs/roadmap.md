@@ -17,7 +17,7 @@
 | 气闸的舱身份（单实例多舱） | ✅ 已落地（令牌注册表，cellId 由令牌反查、不可伪造） |
 | `packages/console`（React 面板） | 🟡 基础面板已落地：状态块 / 高度回报 / 拖放区 / 共享列表（渲染宿主快照、目录与文件两种符号、被拒条目的原因行），jsdom 测试通过；**已在无头 Linux 上渲染并截图**，明暗两套对比度实测达标（见 [`overview/platforms.md`](./overview/platforms.md) §2） |
 | `apps/app`（Electron 托盘） | 🟡 骨架 + 面板加载 + 拖放 IPC + 共享列表 IPC（`shared:list` / `shared:add`）；**已能在无头 Linux（Xvfb）上起来、渲染并截图**；托盘锚点定位仍未验证 |
-| agent 清单（镜像 / 持久化目录 / 图标 / 配置模板） | ✅ 已落地（**加一个 agent = 一条数据**；构建期拒绝空的、`latest` 的镜像版本，并有守卫禁止别处再声明 agent）；`codex` / `dsh` 的**镜像尚未构建** |
+| agent 清单（镜像 / 持久化目录 / 图标 / 配置模板） | ✅ 已落地（**加一个 agent = 一条数据**；构建期拒绝空的、`latest` 的镜像版本，并有守卫禁止别处再声明 agent）；镜像按 agent id 构建（`build-agent-image.sh <agent-id>`），**codex 已构建、dsh 仍未构建**——镜像没构建时 `abx open <agent>` 在起容器之前就停下来说清该跑哪条命令 |
 | `packages/core/session` 的挂载与 agent 配置生成 | ✅ 已落地（生成最小配置、单文件只读挂载、凭据文件黑名单） |
 | 共享给全部 agent（文件 / 目录，只读） | ✅ 已落地（契约 / 解析四道闸 / `~/.abx/shared.json` 持久化 / 面板列表 / 宿主 IPC；真 docker 验证见 `../packages/toolkit/scripts/e2e-shared.sh`）；**会话接线未做** |
 | 配置层（zod schema 为唯一真相） | ✅ 已落地（类型从 schema 推导；手写 readers 已删除） |
