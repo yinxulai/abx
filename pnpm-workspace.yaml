@@ -12,3 +12,7 @@ allowBuilds:
   # 脚本只是把 `vendor/7z-<arch>.exe` 复制成 `vendor/7z.exe`，与 abx 打不打 Windows
   # 无关；但不放行它，pnpm 12 会让整个 `pnpm install` 以 ERR_PNPM_IGNORED_BUILDS 失败。
   electron-winstaller: true
+  # wrangler 的本地运行时。只在文档站的 `wrangler dev` / `deploy --dry-run` 时用到，
+  # 但装不上它时 wrangler 的报错很绕（指向 approve-builds），不如直接放行。
+  # 与 osw 的 `pnpm-workspace.yaml` 保持同一条。
+  workerd: true

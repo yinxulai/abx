@@ -1,0 +1,167 @@
+---
+title: claude / codex / dsh
+description: 三个内置 agent 的命令、配置落点、上游与状态；这些数据全部来自 agent 清单。
+keywords:
+  - Claude Code
+  - Codex
+  - dsh
+  - agent 清单
+---
+
+import { AGENT_COUNT, AGENT_DOCS, AGENTS_IMAGE_UNBUILT } from '../../data/agents'
+
+# claude / codex / dsh
+
+当前清单里有 **{AGENT_COUNT} 个 agent**。名字、命令、配置落点、上游和状态都取自
+`packages/contracts/source/agents.ts` —— **清单是唯一真相**，面板、配置生成与这份文档都从它读，
+不在各自的地方再抄一份。
+
+## 一览
+
+<table>
+  <thead>
+    <tr>
+      <th>agent</th>
+      <th>舱内命令</th>
+      <th>默认上游</th>
+      <th>状态</th>
+    </tr>
+  </thead>
+  <tbody>
+    {AGENT_DOCS.map((agent) => (
+      <tr key={agent.id}>
+        <td>{agent.label}（<code>{agent.id}</code>）</td>
+        <td><code>{agent.command}</code></td>
+        <td><code>{agent.upstreamId}</code></td>
+        <td>{agent.status === 'stable' ? '已核对' : '待确认'}</td>
+      </tr>
+    ))}
+  </tbody>
+</table>
+
+「待确认」表示这条定义还没跟上游工具的真实行为核对过。**dsh 目前是待确认**：
+命令名与配置字段名都缺少权威来源，`abx open dsh` 会照跑，但跑之前请自己确认一遍。
+
+## 配置落点
+
+abx 只为标着「生成」的文件写内容；标着「只登记」的文件不写、也不挂，列出来只为把配置面写全。
+
+<table>
+  <thead>
+    <tr>
+      <th>agent</th>
+      <th>配置文件</th>
+      <th>格式</th>
+      <th>abx 做什么</th>
+    </tr>
+  </thead>
+  <tbody>
+    {AGENT_DOCS.flatMap((agent) =>
+      agent.registeredFiles.map((file) => (
+        <tr key={`${agent.id}-${file.path}`}>
+          <td>{agent.label}</td>
+          <td><code>{file.path}</code></td>
+          <td>{file.format}</td>
+          <td>{file.generated ? '生成并只读挂载' : '只登记，不生成也不挂载'}</td>
+        </tr>
+      )),
+    )}
+  </tbody>
+</table>
+
+生成出来的内容只有一扇门（气闸）和一个占位符，没有 `model` 字段；你本机那份配置与
+同目录的登录凭据不会进舱。细节见[配置是生成的，只读](/inside/config)。
+
+## 镜像
+
+镜像**按 agent 给**：清单里每条定义带自己的 `image.repository` 与 `image.version`，
+起舱用的就是所选 agent 的那一条，各自装好自己的 CLI。配置项 `session.image` 只是可选的
+**覆盖口**（跑裸容器做挂载 / 网络验证时用），不写也没有全局默认值。
+
+<table>
+  <thead>
+    <tr>
+      <th>agent</th>
+      <th>镜像</th>
+      <th>状态</th>
+    </tr>
+  </thead>
+  <tbody>
+    {AGENT_DOCS.map((agent) => (
+      <tr key={agent.id}>
+        <td><code>{agent.id}</code></td>
+        <td><code>{agent.image.built ? agent.image.reference : agent.image.repository}</code></td>
+        <td>{agent.image.built ? '已构建' : '尚未构建'}</td>
+      </tr>
+    ))}
+  </tbody>
+</table>
+
+{AGENTS_IMAGE_UNBUILT.length > 0 ? (
+  <p>
+    <strong>{AGENTS_IMAGE_UNBUILT.join(' / ')} 的镜像尚未构建</strong>：清单里登记了仓库名，
+    版本写的是 <code>unbuilt</code>。镜像构建出来之前，起这两个 agent 会当场失败——Docker
+    找不到镜像。这是有意的：比起起一个没有对应命令的空壳、看起来还挺正常，直接失败更容易发现。
+  </p>
+) : null}
+
+claude 的镜像定义在 `images/agents/claude/`，版本与镜像里装的 CLI 版本是同一个值：
+构建脚本从这个值打标签，不在两处各写一遍。
+
+## 历史目录
+
+清单给每个 agent 登记了它在舱内写历史的目录（`statePaths`）。abx 按**实例**把这个目录以
+`rw` 挂到宿主上，所以默认「再开一次 claude」接的是上一次那份历史：
+
+<table>
+  <thead>
+    <tr>
+      <th>agent</th>
+      <th>舱内历史目录</th>
+      <th>挂载</th>
+    </tr>
+  </thead>
+  <tbody>
+    {AGENT_DOCS.map((agent) => (
+      <tr key={agent.id}>
+        <td><code>{agent.id}</code></td>
+        <td><code>{agent.statePaths.map((statePath) => statePath.path).join(' + ')}</code></td>
+        <td><code>{agent.statePaths.map((statePath) => statePath.mode).join(' + ')}</code></td>
+      </tr>
+    ))}
+  </tbody>
+</table>
+
+宿主侧落在 `~/.abx/instances/<实例>/<agent id>/`（`ABX_INSTANCES_ROOT` 可覆盖），
+**不是**你的 `~/.claude`：实例目录由 abx 创建、初始为空，登录凭据不会被送进舱。
+`--instance <id>` 可以开一份平行历史。细节见[历史留在哪里](/inside/history)。
+
+## 三个名字对得上
+
+abx 的 id 与 OSW 客户端注册表里的 key 不是一一同名的，谈路径和字段时需要对得上：
+
+<table>
+  <thead>
+    <tr>
+      <th>abx agent id</th>
+      <th>OSW 客户端 key</th>
+    </tr>
+  </thead>
+  <tbody>
+    {AGENT_DOCS.map((agent) => (
+      <tr key={agent.id}>
+        <td><code>{agent.id}</code></td>
+        <td><code>{agent.oswClientKey}</code></td>
+      </tr>
+    ))}
+  </tbody>
+</table>
+
+## 加一个 agent 是加数据
+
+清单里的每条定义由展示信息、镜像、历史目录、配置模板与上游接线组成。新增一个 agent 的正常路径是
+往清单里加一条，**不改会话编排、不改界面**。面板那一排、配置生成和这页表格都会跟着清单走。
+
+---
+
+这些 agent 的请求最后都去同一处：[唯一的生产上游：OSW](/agents/upstream)。

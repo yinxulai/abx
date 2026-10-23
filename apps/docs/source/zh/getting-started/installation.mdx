@@ -1,0 +1,74 @@
+---
+title: 安装与第一次运行
+description: 准备 macOS、Docker Desktop 与 OSW，把 abx 跑成菜单栏里的托盘应用。
+keywords:
+  - 安装
+  - 第一次运行
+  - 托盘
+  - Docker Desktop
+---
+
+# 安装与第一次运行
+
+<Callout title="当前状态" type="warning">
+abx 仍在开发中，**还没有公开发布的安装包**。下面「从源码跑起来」是现在唯一能用的路径；
+文中的界面行为以产品规格为准，真机验收项列在[明确不做的边界](/limits/limitations)。
+</Callout>
+
+## 准备什么
+
+| 项 | 要求 | 为什么 |
+|---|---|---|
+| macOS | V1 **只支持 macOS** | 托盘拖放（`drop-files`）与自绘菜单栏面板都是 macOS 语义 |
+| Docker Desktop | 已安装并处于运行状态 | 每个舱是一个一次性容器；挂载源必须落在 Docker Desktop 的共享路径里 |
+| [OSW](https://github.com/yinxulai/osw) | 已安装、至少配好一个可用供应商 | 模型、密钥、路由、故障转移都在 OSW；abx 不复制供应商配置 |
+| Node.js / pnpm | 只有**从源码运行**时需要：Node ≥ 24、pnpm 12 | 版本由仓库根的 `package.json` 与 `packageManager` 决定 |
+
+OSW 的本地代理默认监听 `127.0.0.1:9300`（开发实例是 `19300`）。abx 的**生产形态**只把请求交给它，
+不直接连任何供应商；接线方式见[唯一的生产上游：OSW](/agents/upstream)。
+
+<Callout title="凭据不要进 abx 的配置" type="warning">
+`abx.config.json` 里只写**环境变量名**（`secretEnv`）或**文件路径**（`secretFile`），
+绝不写密钥本身。配置加载时会主动扫一遍，长得像明文凭据的值会被拒绝。
+</Callout>
+
+## 从源码跑起来
+
+```bash
+pnpm install
+pnpm --filter @abx/app dev
+```
+
+打包成可双击的 `.app` / `.dmg`：
+
+```bash
+pnpm --filter @abx/app package:mac
+```
+
+产物在 `apps/app/release/`。构建是 **ad-hoc 签名、未公证**：首次打开若被系统拦下，
+去「系统设置 → 隐私与安全性」放行，或在访达里右键应用 →「打开」。
+
+## 第一次启动会看到什么
+
+启动后 abx 常驻**菜单栏**，Dock 里没有图标，也不会打开主窗口。点菜单栏图标，弹出面板：
+
+![abx 托盘面板示意：头部状态、三个 agent 方块、共享列表与拖放区。](/tray-panel.png)
+
+<Callout title="这是示意图" type="note">
+图是浏览器渲染的面板示意，不是 macOS 窗口截图。面板宽 422px（卡片 366px + 两侧各 28px
+阴影留白），高度随内容变化。
+</Callout>
+
+几件固定行为：
+
+- 点面板外任意处，面板**隐藏**而不是关闭；再点图标立刻回来。
+- 首次启动**不弹配置向导，也不要求填 API Key**。没有可用上游时，头部显示「未配置上游」，
+  agent 方块不可点。
+- 明暗**跟随系统**，面板里没有切换器。
+- 面板只回答三个问题：现在安全吗、有几个 agent 在跑、你给了它们什么。
+
+## 下一步
+
+面板已经起来了，就可以把第一个目录递进去：
+
+[拖进去之后会发生什么 →](/getting-started/first-run)
