@@ -39,7 +39,7 @@
 | # | 项 | macOS | Windows | Linux（开发机） | 落点 |
 |---|---|---|---|---|---|
 | 1 | 沙箱 | 系统/安装包保证 `chrome-sandbox` 归 root 且有 setuid 位 | 不适用（没有 setuid 这套东西） | 开发机上的 `chrome-sandbox` 既不是 root 也没有 setuid 位，Electron **直接拒绝启动** | [`apps/app/scripts/electron-sandbox.mjs`](../../../../apps/app/scripts/electron-sandbox.mjs) |
-| 2 | 托盘图标 | `trayTemplate.png`：模板字形，系统按菜单栏配色自动反色 | `build/icon-win.ico`（多尺寸 16/20/24/32/48/64/256），**原尺寸交给 `Tray`**，不预缩放 | **没有模板语义**，彩色 `icon.png` 缩到 22px 再放上去 | `trayIcon()`，`apps/app/source/main.ts` |
+| 2 | 托盘图标 | `trayTemplate.png`：纯白 + alpha 的模板字形，系统按菜单栏配色自动反色（开发版走 `trayTemplate-dev.png`，多一颗圆点） | `build/icon-win.ico`（多尺寸 16/20/24/32/48/64/256），**原尺寸交给 `Tray`**，不预缩放 | **没有模板语义**，彩色 `icon.png` 缩到 22px 再放上去 | `trayIcon()` / `trayTemplate()`，`apps/app/source/main.ts` |
 | 3 | 托盘锚点 | `Tray.getBounds()` 给出菜单栏图标位置，面板贴它下方 | `getBounds()` 给出任务栏通知区域图标的位置；任务栏可以在上下左右任一边 | 没有托盘宿主，`getBounds()` 没有可信值 | `panelPosition()`，[`apps/app/source/panel-position.ts`](../../../../apps/app/source/panel-position.ts) —— **纯函数、有单测；真机外观未验证，见 §5** |
 | 4 | 透明窗口 | 有合成器：alpha 真的透明，28px 留白是空的 | 有合成器（DWM） | Xvfb 没有合成器：alpha=0 被画成**纯黑** | 环境问题，非代码问题，见 §4 |
 | 5 | 拖到托盘图标 | `Tray` 的 `drop-files`（**macOS only**） | 该事件不存在 | 该事件不存在 | 面板内的 HTML5 拖放三个平台都能用 |
@@ -51,9 +51,10 @@
 | 11 | **舱内路径** | 永远是 Linux 路径 | 永远是 Linux 路径 | 永远是 Linux 路径 | [`session/cell-path.ts`](../../../../packages/core/source/session/cell-path.ts) —— 舱内路径**不跟着宿主分叉**，这是最容易在 Windows 上写错的一处 |
 | 12 | 打包目标 | `dmg` + `zip`（未签名） | `nsis` 安装包 + `portable` 单文件（**未签名**） | `AppImage` + `deb` | [`electron-builder.config.cjs`](../../../../apps/app/electron-builder.config.cjs)、根 `package.json` 的 `release:*` |
 
-**第 2、3 条为什么在 Windows 上要单独分叉。** macOS 的模板图是「黑 + alpha」，
-靠系统反色；Windows 的托盘没有模板语义，也没有 Linux 那种「缩到 22px」的理由
-——`.ico` 里本来就装着 16 到 256 的六档尺寸，系统按 DPI 自己挑，
+**第 2、3 条为什么在 Windows 上要单独分叉。** macOS 的模板图是「纯白 + alpha」，
+靠系统反色（系统只取 alpha，我们给的 RGB 根本不参与）；Windows 的托盘没有模板语义，
+也没有 Linux 那种「缩到 22px」的理由
+——`.ico` 里本来就装着 16 到 256 的七档尺寸（16/20/24/32/48/64/256），系统按 DPI 自己挑，
 我们**再缩一次反而会把 256 那档毁掉**。锚点那边则是几何问题：macOS 的菜单栏固定在
 屏幕顶，Windows 的任务栏可以在四条边的任意一条上，所以位置得由
 「托盘图标矩形 + 工作区矩形」算出来，而不是写死「贴下方」。那套计算被抽成纯函数
@@ -83,8 +84,10 @@
 > 也就是说**装出来的 deb 不需要用户手动加 `--no-sandbox`**；而 `AppImage` 走的是
 > electron-builder 内建的取舍，它的 `.desktop` 里直接写着 `Exec=AppRun --no-sandbox %U`。
 
-**#2 托盘图标。** macOS 那份 16×16 的模板字形在别的平台会变成一块黑色方块（模板图的
-像素本来就是黑 + alpha，靠系统反色）。Linux 用彩色应用图标 `icon.png`，但它是 1024px 的
+**#2 托盘图标。** macOS 那份 16×16 的模板字形在别的平台会变成一块白色方块（模板图的
+像素本来就是纯白 + alpha，靠系统反色；白色压在浅色菜单栏上同样是隐形的，
+所以 `trayIcon()` 显式调 `setTemplateImage(true)`，不赌文件名那套启发式）。
+Linux 用彩色应用图标 `icon.png`，但它是 1024px 的
 方图，直接塞进 20 出头像素的托盘槽位会被缩得没法看，所以先 `resize` 到 22px 再交给 `Tray`。
 Windows 用 `icon-win.ico`：`.ico` 自带多档尺寸（16/20/24/32/48/64/256），
 **交给 `Tray` 时不做预缩放**——缩一次等于把 256 那档废掉，而 DPI 缩放时系统要的正是它。
@@ -233,7 +236,7 @@ X11 的透明要靠合成器（compositing manager）实现；**纯 Xvfb 没有�
 | 项 | 为什么还没验 |
 |---|---|
 | **macOS 真机** | 开发机与 CI 都不是 macOS。**托盘、签名、`drop-files`、`/private/...` 软链、VM 网关地址全部只按文档与代码推过** |
-| **托盘图标长什么样**（三个平台） | 图标文件在、被 `Tray` 接受、不抛异常，这三条在 Windows 与 Linux 上验得到；**「看着对不对」要人眼，而跑 CI 的机器没有桌面**。`icon-win.ico` 的多档尺寸是**按 Electron 的要求生成的，不是按观感挑的** |
+| **托盘图标长什么样**（三个平台） | 图标文件在、被 `Tray` 接受、不抛异常，这三条在 Windows 与 Linux 上验得到；**「看着对不对」要人眼，而跑 CI 的机器没有桌面**。`icon-win.ico` 的多档尺寸是**按 Electron 的要求生成的，不是按观感挑的**；macOS 那份还多一个只有真机能走到的地方——`app.isPackaged` 挑正式/开发两张模板图（开发版右下角多一颗圆点，见 `trayTemplate()`） |
 | **托盘锚点定位** | 无头环境里 `Tray.getBounds()` 没有可信值。**几何计算**（`panelPosition()`）有 7 条单测，覆盖任务栏在下/上/左/右与贴边夹取；**真机上面板到底落在哪，三个平台都没看过** |
 | **Windows 安装包** | `package-windows.yml` 会产出 `nsis` 与 `portable`，并对**真实产物**断言（两个 exe 都在、PE32+ 头 `0x20b`、子系统 `2` = GUI、`app.asar` 里的图标清单）。但 **`nsis` 从没装过、`portable` 从没双击过**；也**没有签名**，所以 Windows 上一定会弹 SmartScreen |
 | **Windows 上起真容器** | CI 上不跑 e2e（那几个脚本是 bash + docker）。`abx open` 在 Windows 上到底能不能把舱起起来，**没有证据** |

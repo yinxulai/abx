@@ -160,25 +160,41 @@ function togglePanel(): void {
 }
 
 /**
- * 托盘图标。三个平台各取一份，因为「模板图」是 **macOS 独有**的语义：
- * 带 `Template` 后缀的图由系统按菜单栏明暗自动反色，所以那里只放一张纯黑字形；
- * 别的平台不做反色，同一张黑字形放到深色托盘上就是隐形的。
+ * macOS 的模板字形。**开发版与正式版各一张**，按 `app.isPackaged` 挑。
  *
- * Windows 与 Linux 都用彩色应用图标（深底白字，深浅两种托盘上都看得见），
- * 但**形式不一样**：
- *   - Windows 走 ICO。通知区按 DPI 挑尺寸（100% 是 16px，150% 是 24px，200% 是 32px），
- *     一张固定像素的 PNG 交上去只会被 shell 硬缩放，在高 DPI 上发虚；
+ * 同时开着打包版与 `pnpm dev` 时，菜单栏里会是两枚一模一样的图标，分不清哪个是哪个。
+ * 开发版那张在标志右下角多一颗圆点（`scripts/generate-icons.mjs` 画的），一眼能分清。
+ *
+ * `setTemplateImage(true)` **必须显式调**，不能只靠文件名：Electron 的启发式认的是
+ * 「文件名以 `Template` 结尾」，正式版那张正好满足，开发版那张（`trayTemplate-dev.png`）
+ * 不满足——不显式声明的话，系统会把这张纯白图当彩色图画出来，而纯白压在浅色菜单栏上
+ * 就是隐形的。模板图的形状只由 alpha 表达，macOS 自己着色。
+ */
+function trayTemplate(): Electron.NativeImage {
+  const file = app.isPackaged ? 'trayTemplate.png' : 'trayTemplate-dev.png'
+  const image = nativeImage.createFromPath(path.join(here, '../../build', file))
+  image.setTemplateImage(true)
+  return image
+}
+
+/**
+ * 托盘图标。三个平台各取一份，因为「模板图」是 **macOS 独有**的语义：
+ * 模板字形由系统按菜单栏明暗自动反色，所以那里给的是一张纯白 + alpha 的字形
+ * （RGB 不参与，只取 alpha）；别的平台不做反色，同一张字形放到深色托盘上就是隐形的。
+ *
+ * Windows 与 Linux 都用彩色应用图标（亮暗底色上都看得见），但**形式不一样**：
+ *   - Windows 走 ICO。通知区按 DPI 挑尺寸（100% 是 16px，125% 是 20px，150% 是 24px，
+ *     200% 是 32px），一张固定像素的 PNG 交上去只会被 shell 硬缩放，在高 DPI 上发虚；
  *   - Linux 走 PNG，按托盘槽位那个 22px 先降好再交（托盘实现自己不做高质量缩放）。
  *
  * **外观没有在真机上验过**（见 `apps/docs/roadmap.md` 的未验证清单）：这台开发机是
  * Linux，没有 Windows 也没有 macOS。能确证的只有「文件在、尺寸对、`Tray` 收得下」
- * 这几件——`build/icon-win.ico` 是从 `icon.png`（1024px 方图）降采样出来的多尺寸 ICO
- * （16/20/24/32/48/64/256），深色底 + 白色字形，在浅色和深色通知区里都应当可见。
+ * 这几件——`build/icon-win.ico` 里是 16/20/24/32/48/64/256 七张**各自按目标尺寸
+ * 光栅化**的位图（不是把 1024 那张缩下去：那样 16px 的像素对齐只能靠运气），
+ * 由系统按 DPI 自己挑一档。
  */
 function trayIcon(): Electron.NativeImage {
-  if (process.platform === 'darwin') {
-    return nativeImage.createFromPath(path.join(here, '../../build/trayTemplate.png'))
-  }
+  if (process.platform === 'darwin') return trayTemplate()
   if (process.platform === 'win32') {
     // ICO 自己带整套尺寸，**不要**再 resize：那样等于先把多尺寸压成一个尺寸，
     // 正好把 ICO 唯一的好处丢掉。

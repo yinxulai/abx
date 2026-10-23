@@ -35,7 +35,7 @@
 | Linux 打包与 CI | 🟡 AppImage 与 deb 都在本机打出来了，deb 解包后的可执行文件也能起；**CI 流水线尚未在 runner 上跑过，deb 也从未装过** |
 | `apps/docs`（文档站） | ✅ 已上线 <https://abx-docs.yinxulai.workers.dev>（33 页，中文为源语言、英文增量补译，机器审计校验与清单一致）；**英文侧 10 页仍回退中文** |
 
-**当前基线：** `pnpm lint` / `pnpm typecheck` / `pnpm test` / `pnpm build` 全绿，**1035 个测试**（68 个文件）；
+**当前基线：** `pnpm lint` / `pnpm typecheck` / `pnpm test` / `pnpm build` 全绿，**1074 个测试**（70 个文件）；
 `pnpm build` 四个包都出产物；`e2e-local.sh` / `e2e-docker.sh` / `e2e-shared.sh` /
 `e2e-persist.sh` / `e2e-transom.sh` 在**并入 main 之后的树**上全绿（五个脚本各自的真退出码都是 0）。**Windows 上这四条（lint / typecheck / test / build）在
 `windows-latest` 上跑，见下一节。**
@@ -137,6 +137,7 @@ Windows 专属规则（盘根 / UNC / 备用数据流 / `PATHEXT` / 大小写不
 | **共享链路在 macOS 上** | `e2e-shared.sh` 是在 Linux 上跑的：macOS 的共享路径默认值、uid 映射与 `/private/...` 软链都不同，**必须重跑**；面板那一半（拖放、即时预览）根本没在真机上点过 |
 | **Windows 上起真容器** | e2e 那几个脚本是 bash + docker，CI 上不跑（Windows runner 也没有那套 shell 语义）。`abx open` 在 Windows 上一次都没走过，所以「Windows 上能不能真的把舱起起来」**没有证据** |
 | **Windows 托盘图标长什么样** | `icon-win.ico` 的多档尺寸是**按 Electron 的要求**（`.ico` 里要有多分辨率）生成的，不是按观感挑的；跑 CI 的机器没有桌面会话，看不了 |
+| **macOS 菜单栏图标与开发版标记** | `trayTemplate.png` / `trayTemplate-dev.png` 在 Linux 上只能验到「文件在、尺寸对、`Tray` 收得下」；`setTemplateImage(true)` 之后系统把它反色成什么样、开发版那颗圆点在 16px 的菜单栏里到底分不分得出来，**要一台 Mac 才知道**。开发版标记也只在 macOS 上接了线——另两个平台还没有对应的开发版产物（见 [`assets/brand/README.md`](./assets/brand/README.md)） |
 | **Windows 安装包（`nsis` / `portable`）** | 产物与 PE 头在 CI 上断言得到，但**没装过、没双击过**；也**没有签名**，所以真机上第一次运行一定弹 SmartScreen |
 | **`decideCellHost()` 接进会话路径** | 判定、候选表、失败文案都已落地并单测；`abx open` 还没调用它。探一次要起一个容器，而那会改到 `e2e-persist.sh` 里「这一次 `docker run` 有几条」那组断言的语义——接线本身是下一步，不是漏掉的一行 |
 | **传递窗的打开动作在 macOS / Windows 上** | 只有 `openCommandFor` 的映射表与单测；`e2e-transom.sh` 里的 `xdg-open` 是替身，真机没点过 |

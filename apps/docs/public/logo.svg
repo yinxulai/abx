@@ -1,7 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="abx">
-  <rect width="32" height="32" rx="8" fill="#0a0d13" />
-  <!-- 气闸：两道同心的舱门弧，中间是可以通过的开口。 -->
-  <circle cx="16" cy="16" r="9" fill="none" stroke="#7dd3fc" stroke-width="2" />
-  <circle cx="16" cy="16" r="4.5" fill="none" stroke="#7dd3fc" stroke-width="1.5" opacity="0.55" />
-  <path d="M16 7v4M16 21v4" stroke="#7dd3fc" stroke-width="2" stroke-linecap="round" />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="abx">
+  <defs>
+    <linearGradient id="abx-mark" gradientUnits="userSpaceOnUse" x1="41" y1="16" x2="215" y2="241">
+      <stop offset="0" stop-color="#FFE066"/>
+      <stop offset="0.42" stop-color="#FF9500"/>
+      <stop offset="1" stop-color="#F0297C"/>
+    </linearGradient>
+    <mask id="abx-eyes">
+      <rect width="256" height="256" fill="#fff"/>
+      <circle cx="85" cy="128" r="24" fill="#000"/>
+      <circle cx="171" cy="128" r="24" fill="#000"/>
+    </mask>
+  </defs>
+  <rect x="16" y="34" width="224" height="188" rx="62" fill="url(#abx-mark)" mask="url(#abx-eyes)"/>
 </svg>
