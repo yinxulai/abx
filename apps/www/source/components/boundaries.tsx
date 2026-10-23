@@ -163,7 +163,7 @@ export const Boundaries = () => {
       </h3>
       <div className="mt-3 overflow-hidden rounded-lg border border-line">
         <table className="w-full border-collapse text-left text-sm">
-          <caption className="sr-only">
+          <caption className="off-screen">
             {t('boundaries.platformCaption', '三个平台的桌面版支持程度与原因')}
           </caption>
           <thead>

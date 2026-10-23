@@ -37,7 +37,7 @@ export const App = () => {
   return (
     <div className="relative min-h-screen overflow-x-hidden bg-void text-ink">
       <a
-        className="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-50 focus:rounded-md focus:bg-ink focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-void"
+        className="off-screen z-50 inline-flex min-h-11 items-center rounded-md bg-ink px-4 text-sm font-medium text-void focus:fixed focus:top-4 focus:left-4"
         href="#main"
       >
         {t('app.skipToContent', '跳到主要内容')}

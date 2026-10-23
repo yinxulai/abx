@@ -72,4 +72,22 @@ describe('site header', () => {
 
     expect(localStorage.getItem('abx-language')).toBe('en')
   })
+
+  it('keeps every control at least 44px tall on a phone', async () => {
+    await renderApp('zh')
+
+    // jsdom 不做排版，量不出真实像素，所以这里查的是「有没有那条最小高度」。
+    // 真正的判据是 `audit.mjs --viewport 390x844`：它是有布局的浏览器，
+    // 量的是实际矩形，手机上一个 <44px 的可点元素就直接判 fatal。
+    const controls = [
+      ...screen.getAllByRole('button'),
+      ...within(navOf()).getAllByRole('link'),
+    ]
+    const tooShort = controls.filter(control => {
+      const classes = control.className
+      return !classes.includes('size-11') && !classes.includes('min-h-11') && !classes.includes('py-3')
+    })
+
+    expect(tooShort.map(control => control.textContent)).toEqual([])
+  })
 })

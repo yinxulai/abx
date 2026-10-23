@@ -91,7 +91,7 @@ export const CredentialModel = () => {
       <h3 className="mt-16 text-sm font-medium text-ink-3">{t('model.whoTitle', '谁拿着什么')}</h3>
       <div className="mt-3 overflow-hidden rounded-lg border border-line">
         <table className="w-full border-collapse text-left text-sm">
-          <caption className="sr-only">
+          <caption className="off-screen">
             {t('model.tableCaption', 'OSW、气闸与舱内 agent 各自持有的东西')}
           </caption>
           <thead>

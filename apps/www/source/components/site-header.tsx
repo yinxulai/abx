@@ -127,7 +127,9 @@ function LangSwitch(props: LangSwitchProps) {
       {LANGS.map(lang => (
         <button
           aria-pressed={lang.id === current}
-          className={`rounded-md px-2.5 py-3 text-xs transition-colors md:py-1 ${
+          // 高度在窄屏撑到 44（`min-h-11`）：`py-3` 加 12px 行高只有 40，
+          // 差那 4px 正是 `audit.mjs` 的 tap-target 判据会拦下的。宽屏收回 24。
+          className={`min-h-11 rounded-md px-2.5 py-3 text-xs transition-colors md:min-h-8 md:py-1 ${
             lang.id === current ? 'bg-ink font-medium text-void' : 'text-ink-3 hover:text-ink'
           }`}
           key={lang.id}
