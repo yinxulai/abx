@@ -33,6 +33,23 @@ export interface SandboxConfigFile {
   readonly cellPath: string
 }
 
+/**
+ * 实例状态目录：abx 自己创建、跨会话活下来的那个目录，以 **rw** 挂进舱。
+ *
+ * 与 `SandboxConfigFile` 是同一类东西的两面——都能进舱、都必须过闸，区别只有权限
+ * 和成因：配置是 abx 现写的一份文件（只读），状态目录是 agent 自己往里写历史的
+ * 地方（可写、初始为空）。**可写这一条是持久化的全部实现**，所以它的形状必须是
+ * 一个能过 `assertMountPolicy` 那道闸的对象，而不是随手一个路径字符串。
+ */
+export interface SandboxStateDir {
+  /** 宿主路径，形如 `<instancesRoot>/<instanceId>/<agentId>`。 */
+  readonly hostPath: string
+  /** 舱内挂到哪儿，形如 `<cellHome>/.claude`。 */
+  readonly cellPath: string
+  /** 这个目录属于哪个 agent。挂载策略拿它核对目录名。 */
+  readonly agentId: string
+}
+
 /** 进程的输入输出接到哪儿。 */
 export type SandboxIo =
   /** 直接接到当前终端：agent 多半需要 TTY。 */
@@ -57,6 +74,14 @@ export interface SandboxSpec {
    * 但它照样把它们算进「本应挂什么」，让两种后端在上层看起来一样。
    */
   readonly agentConfigFiles?: readonly SandboxConfigFile[]
+  /**
+   * 这次会话要挂进舱的实例状态目录，由 `planInstance()` + `ensureInstanceStateDir()`
+   * 建出来。缺省为空数组。
+   *
+   * 它是**第二个可写挂载**（第一个是任务目录）。多出来的可写面就是持久化的代价，
+   * 所以它必须过 `mount-policy.ts` 里那几道闸，而不是「调用方说挂就挂」。
+   */
+  readonly stateDirs?: readonly SandboxStateDir[]
   /** 宿主上的任务目录绝对路径。会被挂进舱内的宿主目录之一。 */
   readonly taskDir: string
   /** 任务目录挂进舱内之后的路径，同时也是工作目录。 */

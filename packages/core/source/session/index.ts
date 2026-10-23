@@ -11,6 +11,7 @@ export type {
   SandboxIo,
   SandboxMount,
   SandboxSpec,
+  SandboxStateDir,
 } from './backend'
 
 export { createDockerBackend, buildDockerArgs, containerName, isExecutableOnPath, probeDocker } from './docker-backend'
@@ -60,15 +61,24 @@ export {
   DANGEROUS_TASK_DIRS,
   DOCKER_SOCKET_PATH,
   FORBIDDEN_CREDENTIAL_FILE_PATTERNS,
+  FORBIDDEN_INSTANCE_ROOT_SUBDIRS,
   FORBIDDEN_MOUNT_PREFIXES,
   MOUNT_POLICY,
   MountPolicyViolation,
+  assertInstancesRoot,
   assertMountPolicy,
+  assertStateDirPolicy,
   findRiskyFilesInTaskDir,
   isForbiddenMountSource,
   matchCredentialFileRule,
 } from './mount-policy'
-export type { AssertMountPolicyInput, MountPolicy, MountPolicyRule } from './mount-policy'
+export type {
+  AssertMountPolicyInput,
+  AssertStateDirPolicyInput,
+  MountPolicy,
+  MountPolicyRule,
+  WritableMountClass,
+} from './mount-policy'
 
 import type { SandboxBackendId } from '@abx/contracts'
 import type { SandboxBackend } from './backend'
