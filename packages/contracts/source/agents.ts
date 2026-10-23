@@ -153,7 +153,8 @@ export interface AgentDefinition {
   /**
    * 拿什么起服务：镜像 + 舱内命令。
    *
-   * 镜像必须按 agent 给；配置里的 `session.image` 只作兜底默认（不写就用这里这个），
+   * 镜像必须按 agent 给。配置里的 `session.image` 是可选的**覆盖口**：不写就用这里
+   * 这个（默认值住在清单里），写了才以配置为准——那是跑裸容器做验证时的出口。
    * 见 `packages/core/source/commands/open.ts`。
    */
   readonly image: AgentImage
