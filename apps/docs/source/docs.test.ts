@@ -345,6 +345,28 @@ describe('界面描述与真面板一致', () => {
     expect(installation).not.toContain('几个 agent 在跑')
     expect(installation).not.toContain('未配置上游')
   })
+
+  it('示意图源码画的是现形态，不是上一版', () => {
+    // 图本身是二进制，断言不了；但它**是**从这份源码导出的，所以守源码就是守图。
+    // 注释里会提到被删掉的东西（「停止全部在管理面板顶部」），所以先把注释和标签去掉，
+    // 只对**画出来的字**下判断。
+    const mock = readFileSync(join(docsDir, 'assets', 'tray-mock.html'), 'utf8')
+    const drawn = mock
+      .replace(/<!--[\s\S]*?-->/g, ' ')
+      .replace(/<style>[\s\S]*?<\/style>/g, ' ')
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/\s+/g, ' ')
+
+    expect(drawn).toContain('运行中 · 它拿不到你的密钥')
+    expect(drawn).toContain('拖到这里 → 全部 agent 立刻可见')
+    // 一次落后四处形态的旧图：胶囊、方块上的名字、dsh、footer。一处都不许回来。
+    for (const gone of ['2 舱', 'dsh', '停止全部', '审计流水', '气闸', '凭据', 'Claude Code', 'Codex']) {
+      expect(drawn, `示意图上还有旧形态：${gone}`).not.toContain(gone)
+    }
+    // 两个方块 × 两套主题：在跑的那个是实线描边 + 实心点，没跑的是虚线 + 空心圈。
+    expect(mock.match(/class="agent claude running"/g)).toHaveLength(2)
+    expect(mock.match(/class="agent idle"/g)).toHaveLength(2)
+  })
 })
 
 describe('译制进度表', () => {
