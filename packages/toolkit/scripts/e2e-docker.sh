@@ -333,8 +333,26 @@ for (const host of candidates) {
 }
 '
 
-run "docker run --rm $IMAGE node -e '<尝试 host.docker.internal / 172.17.0.1 / 192.168.65.2>' $CELL_PORT"
-raw '（探的是 /healthz 且不带令牌：HTTP 401 = 请求到了舱面；ECONNREFUSED = 压根没连上）'
+# 先解决「host.docker.internal 这个名字在不在」。Docker Desktop 会注入它，
+# 原生 linux docker 不会 —— 没有的话显式补一条映射，那时它指向 docker0 网关。
+# 注意**不要无条件加 `--add-host`**：在 Docker Desktop 上它会把这个名字改指到
+# 一个 IPv6 ULA 地址（实测 `fdc4:f303:9324::254`），而舱面绑的是纯 IPv4 的 0.0.0.0。
+run "docker run --rm $IMAGE getent hosts host.docker.internal"
+RAW_RESOLVE="$("${DOCKER_RUN[@]}" sh -c 'getent hosts host.docker.internal || echo "(解析不出来)"')"
+raw "结果：$RAW_RESOLVE"
+HOST_DOCKER_IP="$(printf '%s' "$RAW_RESOLVE" | awk '/^[0-9]/{print $1; exit}')"
+if [ -z "$HOST_DOCKER_IP" ]; then
+  DOCKER_RUN+=(--add-host=host.docker.internal:host-gateway)
+  raw "解析不出来，已加 --add-host=host.docker.internal:host-gateway 重试"
+  RAW_RESOLVE="$("${DOCKER_RUN[@]}" sh -c 'getent hosts host.docker.internal || echo "(还是解析不出来)"')"
+  raw "结果：$RAW_RESOLVE"
+fi
+
+# 探测三条候选地址。探的是 /healthz 且不带令牌：
+#   HTTP 401 = 请求到了舱面（舱面本来就要令牌，401 正是「通了」的证据）
+#   ECONNREFUSED / 超时 = 那条路压根没通
+run "docker run --rm $IMAGE node -e '<依次尝试 host.docker.internal / 172.17.0.1 / 192.168.65.2>' $CELL_PORT"
+raw '（探 /healthz 不带令牌：HTTP 401 = 到了舱面；ECONNREFUSED = 没连上）'
 ADDRESS_PROBE_OUT="$("${DOCKER_RUN[@]}" node --input-type=module -e "$ADDRESS_PROBE_JS" "$CELL_PORT")"
 printf '%s\n' "$ADDRESS_PROBE_OUT" | while read -r line; do raw "$line"; done
 
@@ -342,24 +360,25 @@ REACH_HOST_DOCKER="$(printf '%s\n' "$ADDRESS_PROBE_OUT" | sed -n 's/^host\.docke
 REACH_BRIDGE_GW="$(printf '%s\n' "$ADDRESS_PROBE_OUT" | sed -n 's/^172\.17\.0\.1 -> \(.*\)$/\1/p')"
 REACH_VM_GATEWAY="$(printf '%s\n' "$ADDRESS_PROBE_OUT" | sed -n 's/^192\.168\.65\.2 -> \(.*\)$/\1/p')"
 
-run "docker run --rm $IMAGE getent hosts host.docker.internal"
-RAW_RESOLVE="$("${DOCKER_RUN[@]}" sh -c 'getent hosts host.docker.internal || echo "(解析不出来)"')"
-raw "结果：$RAW_RESOLVE"
+# 探测结论：按候选表顺序取第一条真的能到舱面的地址。
+# 这一步就是「探测后决定」——不照抄任何文档里的约定值。
+# core 里目前**没有**这个探测（第 5 步给出落点），所以这里用 shell 实现同一套判定。
+CELL_HOST=''
+for candidate in host.docker.internal 172.17.0.1 192.168.65.2; do
+  case "$ADDRESS_PROBE_OUT" in
+    *"$candidate -> HTTP "*) CELL_HOST="$candidate"; break ;;
+  esac
+done
 
-# 探测结论：按顺序试，第一个通的地址就是舱面地址。
-# core 里现在**没有**这个探测（见第 5 步的说明），所以这里用 shell 实现同一套判定。
-HOST_DOCKER_IP="$(printf '%s' "$RAW_RESOLVE" | awk '/^[0-9]/{print $1; exit}')"
-if [ -z "$HOST_DOCKER_IP" ]; then
-  # 原生 linux docker 不会注入这个 DNS 名，需要显式加一条 hosts 映射，
-  # 那时它指向 docker0 网关，也就是舱内能连到宿主的地址。
-  DOCKER_RUN+=(--add-host=host.docker.internal:host-gateway)
-  CELL_HOST='host.docker.internal'
-  raw "host.docker.internal 解析不出来，已加 --add-host=host.docker.internal:host-gateway"
-else
-  CELL_HOST='host.docker.internal'
+if [ -z "$CELL_HOST" ]; then
+  fail '三条候选地址一条都不通，舱内连不上宿主的舱面'
+  raw '车到山前必有路，但这里没有：这说明这台机器上「容器 → 宿主」这条链路整个不通，'
+  raw '不是 abx 的问题（宿主防火墙、docker 网络模式、VPN 都可能）。'
+  printf '\n'
+  exit 1
 fi
 CELL_BASE="http://$CELL_HOST:$CELL_PORT"
-ok "探测出的舱面地址：$CELL_BASE（解析为 ${HOST_DOCKER_IP:-host-gateway}）"
+ok "探测出的舱面地址：$CELL_BASE（host.docker.internal 解析为 ${HOST_DOCKER_IP:-host-gateway}）"
 
 # ── 3. 硬断言：连通性与令牌 ───────────────────────────────────────────────
 step '3. 硬断言：舱内能不能连上，以及舱面认不认令牌'
