@@ -1,5 +1,5 @@
 import type { SharedEntry, SharedEntryKind, SharedListSnapshot } from '@abx/contracts'
-import { AGENT_DEFINITIONS } from '@abx/contracts/agents'
+import { AGENT_DEFINITIONS, AGENT_IMAGE_UNBUILT, agentImageRef } from '@abx/contracts/agents'
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
 import { getBridge } from './bridge'
 import { AgentStatusRow, type PanelAgent } from './components/AgentStatusRow'
@@ -16,6 +16,10 @@ const PANEL_AGENTS: readonly PanelAgent[] = AGENT_DEFINITIONS.map((agent) => ({
   label: agent.label,
   // 图标也来自注册表；没有的 agent 就是 undefined，方块回退到首字母。
   icon: agent.icon,
+  // 镜像引用与「构建了没有」也来自注册表：面板据此把「不可用」和「未运行」分开——
+  // 前者要说清是哪个镜像、下一步是构建，后者是点一下（见 tray-ui.md 与设计体系 §5）。
+  image: agentImageRef(agent),
+  imageBuilt: agent.image.version !== AGENT_IMAGE_UNBUILT,
 }))
 
 /** 宿主还没答话时的空态。 */
