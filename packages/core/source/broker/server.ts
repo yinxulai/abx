@@ -9,10 +9,14 @@
  * 两个面的处理器是同一个，只有鉴权那一步不同。分成两份实现的话，迟早会出现
  * 「宿主面修了、舱面没修」的洞。
  *
- * 每个请求都会走到同一个收口（`handleRequest`），决策链是固定顺序：
- *   舱令牌 → 路由 → 白名单 → 凭据 → 转发 → 审计
- * 顺序本身也是安全属性：白名单在凭据之前，所以一个不在白名单的域名
- * **不会**让 broker 去读它的密钥。
+ * 每个请求都会走到同一个收口（`handleRequest`），决策链是固定顺序（舱面）：
+ *   来源网段 → 舱令牌 → 舱身份 → 路由 → 白名单 → 凭据 → 转发 → 审计
+ * 顺序本身也是安全属性，有两处：
+ *
+ *   - **来源在令牌之前**：来源不对的连接根本不该走到令牌比对那一步。否则一个
+ *     网段外的探测者能拿「令牌对不对」的响应差异（401 还是 403）当 oracle，
+ *     把舱令牌一位一位试出来——而它打进来的这件事本身已经在审计里了。
+ *   - **白名单在凭据之前**：不在白名单的域名**不会**让 broker 去读它的密钥。
  */
 
 import http from 'node:http'
@@ -21,7 +25,12 @@ import { readFileSync } from 'node:fs'
 import type { AddressInfo } from 'node:net'
 import type { AbxConfig } from '@abx/contracts'
 import { buildUpstreamIndex } from '../policy/index'
-import { normalizeRemoteAddress } from './cell-source'
+import {
+  DEFAULT_ALLOWED_CELL_SUBNETS,
+  classifyCellSource,
+  findInvalidCellSubnets,
+  normalizeRemoteAddress,
+} from './cell-source'
 import { createFileAuditSink, type AuditDecision, type AuditSink, type BrokerFace } from './audit'
 import type { SecretDependencies } from './credentials'
 import { forwardRequest, writeJson } from './forward'
@@ -75,6 +84,17 @@ export interface BrokerOptions {
   readonly cellPort?: number | null
   /** 同时登记的舱上限（含默认舱）。默认 64。 */
   readonly cellRegistryLimit?: number | null
+  /**
+   * 舱面接受的来源网段（IPv4 CIDR）。默认 {@link DEFAULT_ALLOWED_CELL_SUBNETS}。
+   *
+   * **这是配置项 `broker.allowedCellSubnets` 的过渡落点。** 配置层合并之后，
+   * 这个字段由 `packages/contracts/source/config.ts` 的 `BrokerConfig` 承载、
+   * 在 `load-config.ts` 里解析并给出默认值，`commands/` 再把它递进来；
+   * 在那之前只从代码传，别为了它去改 `packages/contracts/**`。
+   *
+   * 空数组 = 全部拒绝，这是有意的默认方向：判不了就不放行。
+   */
+  readonly allowedCellSubnets?: readonly string[] | null
   readonly logger?: BrokerLogger
 }
 
@@ -106,6 +126,7 @@ export async function startBroker(options: BrokerOptions): Promise<BrokerHandle>
 
   const token = resolveCellToken(config, options, log)
   const cellHost = options.cellHost ?? config.broker.cellHost
+  const allowedCellSubnets = options.allowedCellSubnets ?? DEFAULT_ALLOWED_CELL_SUBNETS
 
   // 固定令牌也要在表里，但只对应一个默认舱。它不是「绕过注册表」的口子：
   // 舱面校验仍然要求令牌能在表里查到，只是查出来的身份固定。
@@ -119,6 +140,7 @@ export async function startBroker(options: BrokerOptions): Promise<BrokerHandle>
     log,
     registry,
     upstreamIndex,
+    allowedCellSubnets,
   })
 
   const hostServer = http.createServer((request, response) => handler('host', request, response))
@@ -149,6 +171,13 @@ export async function startBroker(options: BrokerOptions): Promise<BrokerHandle>
 
   log.info(`[abx] 宿主面 ${hostOrigin}（不校验令牌，绑在回环上）`)
   log.info(`[abx] 舱面   ${cellOrigin}（校验 ${CELL_TOKEN_HEADER}）`)
+  log.info(`[abx] 舱面来源 ${allowedCellSubnets.length === 0 ? '（空：全部拒绝）' : allowedCellSubnets.join(', ')}`)
+  // 网段写错的唯一表现是「所有来源都 403」——包括舱里正常的 agent，且没有任何
+  // 别的线索。所以启动时就要把它喊出来，而不是等人对着审计猜。
+  const invalidSubnets = findInvalidCellSubnets(allowedCellSubnets)
+  if (invalidSubnets.length > 0) {
+    log.warn(`[abx] 舱面来源网段里有 ${invalidSubnets.length} 条写错了，不会生效：${invalidSubnets.join('、')}`)
+  }
   log.info(`[abx] 审计   ${audit.describe}`)
   if (token.source === 'ephemeral') {
     log.warn(
@@ -186,10 +215,11 @@ interface HandlerContext {
   readonly log: BrokerLogger
   readonly registry: CellTokenRegistry
   readonly upstreamIndex: ReturnType<typeof buildUpstreamIndex>
+  readonly allowedCellSubnets: readonly string[]
 }
 
 function createHandler(context: HandlerContext) {
-  const { config, audit, log, registry, upstreamIndex } = context
+  const { config, audit, log, registry, upstreamIndex, allowedCellSubnets } = context
 
   return (face: BrokerFace, request: IncomingMessage, response: ServerResponse): void => {
     const startedAt = performance.now()
@@ -212,6 +242,8 @@ function createHandler(context: HandlerContext) {
     // 审计里记的是**剥掉令牌之后**的路径。记原文的话，走 `/c/<token>/` 那条路的
     // 请求会把舱令牌一字不差地写进审计文件——审计文件恰恰是最容易被收集走的东西。
     const auditPath = `${extraction.pathname}${url.search}`
+    // 来源取对端地址，**不读任何请求头**：请求头是请求方自己能写的。
+    const remoteAddress = normalizeRemoteAddress(request.socket.remoteAddress)
     // 宿主面没有舱身份。舱面的身份在下面由令牌反查得出，**不读请求头**：
     // 请求头是外部输入，只能用来做「与令牌绑定值是否一致」的辅助检查。
     let cellId = face === 'cell' ? 'unknown-cell' : 'host'
@@ -220,8 +252,7 @@ function createHandler(context: HandlerContext) {
       audit.write({
         ts: new Date().toISOString(),
         cellId,
-        // 来源是对端地址，不是请求头——请求头是请求方自己能写的。
-        sourceAddress: normalizeRemoteAddress(request.socket.remoteAddress),
+        sourceAddress: remoteAddress,
         method,
         path: auditPath,
         upstreamId: extra.upstreamId ?? null,
@@ -233,7 +264,29 @@ function createHandler(context: HandlerContext) {
         face,
       })
 
-    // ── 1. 舱令牌与舱身份。宿主面不走这一步。 ───────────────────────────────
+    // ── 1. 来源网段。只对舱面，且必须在令牌之前。 ───────────────────────────
+    //
+    // 顺序是**刻意的**：来源不对的连接不该走到令牌比对那一步。放在令牌之后的话，
+    // 网段外的探测者就能拿「401 还是 403」的差别判断令牌猜中没猜中——一次一位，
+    // 这就是个 oracle。放在前面，网段外的请求无论带什么令牌都是同一个 403。
+    //
+    // 宿主面不判来源：它绑死在回环上，没有鉴权，能连上它的本来就只有本机；
+    // 这里再加一道只会让本机的桌面客户端被自己的配置绊倒。
+    if (face === 'cell') {
+      const source = classifyCellSource(remoteAddress ?? undefined, allowedCellSubnets)
+      if (!source.allowed) {
+        writeJson(response, 403, {
+          // 只说「你不在网段里」，不说允许的是哪些：告诉打进来的人网段范围，
+          // 等于把「从哪台机器能打」这份地图送给他。
+          error: 'abx_cell_source_denied',
+          detail: '来源地址不在舱面允许的网段内',
+        })
+        await writeAudit('denied-cell-source', 403, {})
+        return
+      }
+    }
+
+    // ── 2. 舱令牌与舱身份。宿主面不走这一步。 ───────────────────────────────
     if (face === 'cell') {
       const provided = extraction.token
       // 令牌必须存在，并且**反查得出**舱 id。未知令牌不猜身份。
@@ -263,7 +316,7 @@ function createHandler(context: HandlerContext) {
       cellId = boundCellId
     }
 
-    // ── 2. 路由。 ────────────────────────────────────────────────────────
+    // ── 3. 路由。 ────────────────────────────────────────────────────────
     const route = resolveRoute({ pathname: extraction.pathname, search: url.search, headers: request.headers })
 
     if (route.kind === 'health') {
@@ -283,7 +336,7 @@ function createHandler(context: HandlerContext) {
       return
     }
 
-    // ── 3+4. 白名单与凭据。 ──────────────────────────────────────────────
+    // ── 4+5. 白名单与凭据。 ──────────────────────────────────────────────
     const target = resolveTarget({
       config,
       route,
@@ -310,7 +363,7 @@ function createHandler(context: HandlerContext) {
       return
     }
 
-    // ── 5. 转发。 ────────────────────────────────────────────────────────
+    // ── 6. 转发。 ────────────────────────────────────────────────────────
     const outcome = await forwardRequest(
       {
         origin: target.origin,
@@ -324,7 +377,7 @@ function createHandler(context: HandlerContext) {
       response,
     )
 
-    // ── 6. 审计。记的是「注入了没有」，不是注入了什么。 ────────────────────
+    // ── 7. 审计。记的是「注入了没有」，不是注入了什么。 ────────────────────
     await writeAudit(outcome.ok ? 'allowed' : outcome.kind === 'timeout' ? 'upstream-timeout' : 'upstream-error', outcome.ok ? outcome.status : 502, {
       upstreamId: target.upstreamId,
       targetHost: target.targetHost,

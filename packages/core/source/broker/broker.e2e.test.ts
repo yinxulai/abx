@@ -85,10 +85,24 @@ interface StartTestBrokerOptions {
   readonly upstreamOrigin: string
   readonly config?: AbxConfig
   readonly cellRegistryLimit?: number
+  /**
+   * 舱面允许的来源网段。
+   *
+   *   - 不给：`['127.0.0.1/32']`——这里的舱面绑在回环上，来源就是回环；
+   *   - 给 `null`：**不传这个选项**，让 `startBroker` 用它自己的默认值（docker 网段）；
+   *   - 给数组：照传。
+   */
+  readonly allowedCellSubnets?: readonly string[] | null
 }
+
+/** 需求里给 docker 的那两条网段。用来验「网段外拒绝」。 */
+const DOCKER_SUBNETS = ['192.168.65.0/24', '172.17.0.0/16']
 
 async function startTestBroker(options: StartTestBrokerOptions): Promise<TestBroker> {
   const audit = createMemoryAuditSink()
+  // 舱面绑在回环上，这些用例的来源就都是回环，所以默认要把回环写进允许列表——
+  // `startBroker` 的默认那份只认 docker 网段，而「网段外拒绝」的用例正是靠它生效的。
+  const allowedCellSubnets = options.allowedCellSubnets === undefined ? ['127.0.0.1/32'] : options.allowedCellSubnets
   const config =
     options.config ??
     makeConfig({
@@ -112,6 +126,8 @@ async function startTestBroker(options: StartTestBrokerOptions): Promise<TestBro
     auditSink: audit,
     // 绑回环 + 端口 0：不碰 docker 网桥，也不占用固定端口。
     cellHost: '127.0.0.1',
+    // null = 不传，用 startBroker 的默认值。
+    ...(allowedCellSubnets === null ? {} : { allowedCellSubnets }),
     hostPort: 0,
     cellPort: 0,
     cellRegistryLimit: options.cellRegistryLimit ?? null,
@@ -340,6 +356,96 @@ describe('broker 端到端', () => {
     broker.handle.registerCell('cell-a')
     expect(() => broker.handle.registerCell('cell-b')).toThrow(/当前 2 个舱/)
     expect(() => broker.handle.registerCell('cell-b')).toThrow(/上限 2 个舱/)
+  })
+
+  // 这一组是「来源网段」那道闸的判据。实测过的事实：宿主回环打舱面 → 200，
+  // 也就是说这道闸当时根本不存在。
+  describe('来源网段', () => {
+    it('网段外的来源，令牌正确也是 403', async () => {
+      const upstream = await startEchoUpstream()
+      cleanups.push(() => upstream.close())
+      // 只认 docker 网段，而这条连接来自 127.0.0.1。
+      const broker = await startTestBroker({ upstreamOrigin: upstream.origin, allowedCellSubnets: DOCKER_SUBNETS })
+
+      const response = await fetch(cellUrl(broker, '/u/anthropic/v1/messages'), {
+        headers: { 'x-abx-cell': CELL_TOKEN },
+      })
+
+      expect(response.status).toBe(403)
+      expect(await response.json()).toMatchObject({ error: 'abx_cell_source_denied' })
+      // 被挡在令牌之前，所以上游一个字节都没收到。
+      expect(upstream.requests).toHaveLength(0)
+
+      // 审计里要有这件事，并且要能看出是谁在打。
+      expect(broker.audit.records).toHaveLength(1)
+      expect(broker.audit.records[0]).toMatchObject({
+        decision: 'denied-cell-source',
+        status: 403,
+        sourceAddress: '127.0.0.1',
+        face: 'cell',
+      })
+    })
+
+    it('来源在网段外时，令牌对不对都是同一个 403', async () => {
+      const upstream = await startEchoUpstream()
+      cleanups.push(() => upstream.close())
+      const broker = await startTestBroker({ upstreamOrigin: upstream.origin, allowedCellSubnets: DOCKER_SUBNETS })
+      const goodToken = broker.handle.registerCell('cell-source-order')
+
+      const withGoodToken = await fetch(cellUrl(broker, '/u/anthropic/v1/messages'), {
+        headers: { 'x-abx-cell': goodToken },
+      })
+      const withJunkToken = await fetch(cellUrl(broker, '/u/anthropic/v1/messages'), {
+        headers: { 'x-abx-cell': 'not-even-close' },
+      })
+
+      // 顺序的可观察证据：一个 401 都不该出现。先比令牌的话，网段外的探测者
+      // 就能拿 401 / 403 的差别一位一位地把令牌试出来。
+      expect(withGoodToken.status).toBe(403)
+      expect(withJunkToken.status).toBe(403)
+      expect(broker.audit.records.map((record) => record.decision)).toEqual([
+        'denied-cell-source',
+        'denied-cell-source',
+      ])
+    })
+
+    it('允许列表为空时全部拒绝', async () => {
+      const upstream = await startEchoUpstream()
+      cleanups.push(() => upstream.close())
+      const broker = await startTestBroker({ upstreamOrigin: upstream.origin, allowedCellSubnets: [] })
+
+      const response = await fetch(cellUrl(broker, '/u/anthropic/v1/messages'), {
+        headers: { 'x-abx-cell': CELL_TOKEN },
+      })
+
+      expect(response.status).toBe(403)
+      expect(broker.audit.records[0]).toMatchObject({ decision: 'denied-cell-source', sourceAddress: '127.0.0.1' })
+    })
+
+    it('不传允许列表时用默认值，而默认值不含回环', async () => {
+      const upstream = await startEchoUpstream()
+      cleanups.push(() => upstream.close())
+      const broker = await startTestBroker({ upstreamOrigin: upstream.origin, allowedCellSubnets: null })
+
+      const response = await fetch(cellUrl(broker, '/u/anthropic/v1/messages'), {
+        headers: { 'x-abx-cell': CELL_TOKEN },
+      })
+
+      expect(response.status).toBe(403)
+      expect(broker.audit.records[0]).toMatchObject({ decision: 'denied-cell-source' })
+    })
+
+    it('宿主面不受网段限制', async () => {
+      const upstream = await startEchoUpstream()
+      cleanups.push(() => upstream.close())
+      // 宿主面绑在回环上、本来就没有鉴权，来源判定只加在舱面。
+      const broker = await startTestBroker({ upstreamOrigin: upstream.origin, allowedCellSubnets: DOCKER_SUBNETS })
+
+      const response = await fetch(`${broker.handle.hostOrigin}/u/anthropic/v1/messages`)
+
+      expect(response.status).toBe(200)
+      expect(broker.audit.records[0]).toMatchObject({ face: 'host', decision: 'allowed', sourceAddress: '127.0.0.1' })
+    })
   })
 
   it('宿主面不校验令牌', async () => {
