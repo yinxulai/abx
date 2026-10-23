@@ -1,0 +1,130 @@
+name: Package Windows
+
+# Windows 产物流水线：装依赖 -> lint / typecheck / test -> 打包 -> 校验产物 -> 上传。
+#
+# 形状与 `package-linux.yml` 一致，理由也一样：`ci.yml` 的 Windows job 回答的是
+# 「源码在 Windows 上还跑不跑得动」，这里回答的是「打出来的到底是不是我们要的那个包」。
+# 两件事分开，是因为打包要十几分钟，而前者两分钟就能给出结论。
+#
+# 为什么 Windows 值得有一条自己的打包流水线，而 Linux 只是顺手验一下：
+# Windows 是**用户日常测试平台**（见 `apps/docs/specs/overview/platforms.md` §0）。
+# 日常要用的东西，产物得先站得住。
+#
+# 签名：与其他两条一样**不使用任何签名凭据**（见 `electron-builder.config.cjs` 的
+# `forceCodeSigning: false`）。所以这条流水线不需要任何 secret。未签名的代价是
+# 用户第一次运行会看到 SmartScreen 警告——这是这一版没有证书的结果，不是配置错误。
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Package Windows
+    runs-on: windows-latest
+    # 与 macOS / Linux 两条同因：默认 6 小时的上限会让一条卡住的下载占满整个下午。
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      # `pnpm release:win` 的第一段是 `turbo run build`，turbo 缓存保持默认开启；
+      # lint 与 typecheck 会用 node_modules/.cache，一并打开。
+      - name: Set up environment
+        uses: ./.github/actions/setup
+        with:
+          tool-cache: 'true'
+
+      # 三样检查放在打包之前：包打好了才发现 lint 红，等于白烧一台 runner。
+      - name: Run lint
+        run: pnpm lint
+
+      - name: Run typecheck
+        run: pnpm typecheck
+
+      - name: Run tests
+        run: pnpm test
+
+      # `pnpm release:win` = `turbo run build` + `electron-builder --win --x64`。
+      # 打包全程 `--publish never`（见 `apps/app/scripts/build.mjs`），产物只往下走一步。
+      - name: Build the Windows packages
+        run: pnpm release:win
+
+      # 打包成功不等于产物对。下面每一条查的都是**开发机上没法确认**的事：
+      # 安装器里有没有 exe、exe 是不是真的 GUI 子系统程序、托盘图标进没进包。
+      #
+      # 用 pwsh 的 `Get-ChildItem` / `Expand-Archive`，不写 bash：Windows runner 上
+      # `shell: bash` 走的是 Git 的 bash，路径语义与真实 Windows 差一层，
+      # 而这里要验的恰恰是 Windows 的产物。
+      - name: Verify the packaged artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $installer = Get-ChildItem -Path release -Recurse -Filter '*.exe' |
+            Where-Object { $_.Name -notlike '*portable*' } | Select-Object -First 1
+          if (-not $installer) { throw 'no NSIS installer produced' }
+          Write-Host "installer: $($installer.FullName) ($($installer.Length) bytes)"
+
+          $portable = Get-ChildItem -Path release -Recurse -Filter '*.exe' |
+            Where-Object { $_.Name -like '*portable*' } | Select-Object -First 1
+          if (-not $portable) { throw 'no portable exe produced' }
+          Write-Host "portable: $($portable.FullName) ($($portable.Length) bytes)"
+
+          # `win.icon` 有没有生效，只能从 exe 自己身上看：图标是嵌在 PE 资源里的，
+          # 开发机上（Linux）连这个文件都不存在。
+          #
+          # 判据用「exe 比一个没有资源的空壳大得多」是不够的——Electron 的 exe 本来
+          # 就有 100MB 上下。这里查的是内核对象里那条 GUI 子系统标志：
+          # 子系统 2 = IMAGE_SUBSYSTEM_WINDOWS_GUI，托盘应用必须是它。
+          # 用 0 之外的退出码表示「不是 GUI」会立刻在 CI 上暴露。
+          $bytes = [System.IO.File]::ReadAllBytes($portable.FullName)
+          $peOffset = [System.BitConverter]::ToInt32($bytes, 0x3c)
+          $magic = [System.BitConverter]::ToUInt16($bytes, $peOffset + 0x18)
+          $subsystem = [System.BitConverter]::ToUInt16($bytes, $peOffset + 0x18 + 0x44)
+          Write-Host "PE magic: 0x$('{0:x}' -f $magic), subsystem: $subsystem"
+          if ($magic -ne 0x20b) { throw "not a PE32+ image (magic 0x$('{0:x}' -f $magic))" }
+          if ($subsystem -ne 2) { throw "not a GUI subsystem binary (subsystem $subsystem)" }
+
+          # 托盘图标是**运行期**由主进程按 `../../build/*.ico` 读的。没收进包的话，
+          # 唯一的表现是「app 起来了，通知区里什么都没有」——而那正是开发机上
+          # 验不到的一步（见 `electron-builder.config.cjs` 的 `files`）。
+          #
+          # 不装安装器、不解包 portable（那是个自解压的 7z，解出来是临时目录），
+          # 直接从 electron-builder 自己的 unpacked 目录里查：它就是被塞进
+          # 安装器里的那棵树的来源。
+          $unpacked = Get-ChildItem -Path release -Recurse -Directory -Filter 'win-unpacked' |
+            Select-Object -First 1
+          if (-not $unpacked) { throw 'no win-unpacked directory produced' }
+          $asar = Join-Path $unpacked.FullName 'resources\app.asar'
+          if (-not (Test-Path $asar)) { throw "no app.asar inside $($unpacked.FullName)" }
+          Write-Host "app.asar: $asar ($((Get-Item $asar).Length) bytes)"
+
+          # app.asar 里的文件清单可以直接读：asar 是一串 JSON 头 + 内容。
+          # 只查头部就能确认图标在不在，不必解包。
+          $head = [System.IO.File]::ReadAllBytes($asar)
+          $headerSize = [System.BitConverter]::ToInt32($head, 12)
+          $header = [System.Text.Encoding]::UTF8.GetString($head, 16, $headerSize)
+          foreach ($asset in @('icon-win.ico', 'icon.png', 'trayTemplate.png')) {
+            if ($header -notlike "*$asset*") { throw "$asset is missing from app.asar" }
+          }
+          Write-Host 'all three tray assets are inside app.asar'
+
+      - name: Upload the installers
+        uses: actions/upload-artifact@v6
+        with:
+          name: abx-windows-${{ github.run_number }}
+          # NSIS 安装器负责装到机器上，portable 那个单文件负责「换台机器试一下」。
+          # 两者都由同一份 `electron-builder.config.cjs` 的 `artifactName` 命名。
+          path: |
+            release/**/*.exe
+          if-no-files-found: error
+          # 与另外两条一致：内部自测包，7 天足够。
+          retention-days: 7

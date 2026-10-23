@@ -160,14 +160,29 @@ function togglePanel(): void {
 }
 
 /**
- * 托盘图标。两个平台各取一份，因为「模板图」是 **macOS 独有**的语义：
+ * 托盘图标。三个平台各取一份，因为「模板图」是 **macOS 独有**的语义：
  * 带 `Template` 后缀的图由系统按菜单栏明暗自动反色，所以那里只放一张纯黑字形；
- * 别的平台不做反色，同一张黑字形放到深色托盘上就是隐形的。Linux 用彩色应用图标——
- * 它是深底白字，深浅两种托盘上都看得见。
+ * 别的平台不做反色，同一张黑字形放到深色托盘上就是隐形的。
+ *
+ * Windows 与 Linux 都用彩色应用图标（深底白字，深浅两种托盘上都看得见），
+ * 但**形式不一样**：
+ *   - Windows 走 ICO。通知区按 DPI 挑尺寸（100% 是 16px，150% 是 24px，200% 是 32px），
+ *     一张固定像素的 PNG 交上去只会被 shell 硬缩放，在高 DPI 上发虚；
+ *   - Linux 走 PNG，按托盘槽位那个 22px 先降好再交（托盘实现自己不做高质量缩放）。
+ *
+ * **外观没有在真机上验过**（见 `apps/docs/roadmap.md` 的未验证清单）：这台开发机是
+ * Linux，没有 Windows 也没有 macOS。能确证的只有「文件在、尺寸对、`Tray` 收得下」
+ * 这几件——`build/icon-win.ico` 是从 `icon.png`（1024px 方图）降采样出来的多尺寸 ICO
+ * （16/20/24/32/48/64/256），深色底 + 白色字形，在浅色和深色通知区里都应当可见。
  */
 function trayIcon(): Electron.NativeImage {
   if (process.platform === 'darwin') {
     return nativeImage.createFromPath(path.join(here, '../../build/trayTemplate.png'))
+  }
+  if (process.platform === 'win32') {
+    // ICO 自己带整套尺寸，**不要**再 resize：那样等于先把多尺寸压成一个尺寸，
+    // 正好把 ICO 唯一的好处丢掉。
+    return nativeImage.createFromPath(path.join(here, '../../build/icon-win.ico'))
   }
   // 应用图标是 1024px 的方图，托盘槽位只有 20 出头，先降下来再交给 Tray。
   return nativeImage

@@ -22,15 +22,26 @@ const arguments_ = process.argv.slice(2)
 const shouldPackage = arguments_.includes('--package')
 const electronBuilderArguments = arguments_.filter(argument => argument !== '--package')
 
-const run = (command, args) => {
-  const result = spawnSync(command, args, { cwd: appDirectory, stdio: 'inherit' })
+// Windows 上 `pnpm` 是 `pnpm.cmd`，而从 Node 18.20 / 20.12 起**直接 spawn 一个 .cmd
+// 会以 EINVAL 失败**（CVE-2024-27980 之后加的限制：.cmd / .bat 必须经 shell 启动）。
+// 不处理的话，`pnpm build` 在 Windows 上的表现是「构建到这一步就没了」，
+// 报错还只说 spawnSync 失败，指不到 pnpm 身上。
+//
+// 与 `packages/toolkit/scripts/lib/run.mjs` 里那条是同一条规则。那份属于工具链本身，
+// 这个脚本不依赖工具链，所以这里单独写一遍——**两处要一起改**。
+const pnpm = process.platform === 'win32'
+  ? { file: 'cmd.exe', prefix: ['/c', 'pnpm.cmd'] }
+  : { file: 'pnpm', prefix: [] }
+
+const run = (args) => {
+  const result = spawnSync(pnpm.file, [...pnpm.prefix, ...args], { cwd: appDirectory, stdio: 'inherit' })
   if (result.error) throw result.error
   if (result.status !== 0) process.exit(result.status ?? 1)
 }
 
 // 面板来自工作区的 `@abx/console`，产物直接落进本包的 `output/panel` ——
 // 与主进程读它的相对路径是同一处约定，改一边必须改另一边。
-run('pnpm', [
+run([
   '--filter',
   '@abx/console',
   'exec',
@@ -39,14 +50,14 @@ run('pnpm', [
   '--outDir',
   '../../apps/app/output/panel',
 ])
-run('pnpm', ['exec', 'vite', 'build', '--config', 'vite.config.ts'])
-run('pnpm', ['exec', 'vite', 'build', '--config', 'vite.preload.config.ts'])
+run(['exec', 'vite', 'build', '--config', 'vite.config.ts'])
+run(['exec', 'vite', 'build', '--config', 'vite.preload.config.ts'])
 
 if (!shouldPackage) process.exit(0)
 
 // `--publish never`：本仓库还没有更新器，产物只作为 CI 的 artifact，
 // 打包过程一律不许往外发东西。手动发布时同理（见 electron-builder.config.cjs）。
-run('pnpm', [
+run([
   'exec',
   'electron-builder',
   '--config',
