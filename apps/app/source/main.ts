@@ -10,6 +10,8 @@ const PANEL_WIDTH = 422
 /** 卡片外面的透明留白，专给阴影用。 */
 const PANEL_GUTTER = 28
 const PANEL_MIN_HEIGHT = 120
+/** 托盘槽位尺寸。Linux 托盘按 20–24px 渲染图标，22 是这套主题里最接近的一档。 */
+const TRAY_ICON_SIZE = 22
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 /** 面板产物：`@abx/console` 构建到 `output/panel`，与主进程产物同级。 */
@@ -83,10 +85,24 @@ function togglePanel(): void {
   panel.show()
 }
 
+/**
+ * 托盘图标。两个平台各取一份，因为「模板图」是 **macOS 独有**的语义：
+ * 带 `Template` 后缀的图由系统按菜单栏明暗自动反色，所以那里只放一张纯黑字形；
+ * 别的平台不做反色，同一张黑字形放到深色托盘上就是隐形的。Linux 用彩色应用图标——
+ * 它是深底白字，深浅两种托盘上都看得见。
+ */
+function trayIcon(): Electron.NativeImage {
+  if (process.platform === 'darwin') {
+    return nativeImage.createFromPath(path.join(here, '../../build/trayTemplate.png'))
+  }
+  // 应用图标是 1024px 的方图，托盘槽位只有 20 出头，先降下来再交给 Tray。
+  return nativeImage
+    .createFromPath(path.join(here, '../../build/icon.png'))
+    .resize({ width: TRAY_ICON_SIZE, height: TRAY_ICON_SIZE, quality: 'best' })
+}
+
 function createTray(): Tray {
-  // 模板图（`Template` 后缀）由 macOS 自动按明暗反色，不需要准备两套资源。
-  const icon = nativeImage.createFromPath(path.join(here, '../../build/trayTemplate.png'))
-  const created = new Tray(icon)
+  const created = new Tray(trayIcon())
   created.on('click', togglePanel)
   // 拖文件到托盘图标：macOS only。这是「共享给全部 agent」的主入口之一。
   created.on('drop-files', (_event, files) => {
@@ -114,6 +130,15 @@ ipcMain.on('panel:dropped-files', (_event, paths: unknown) => {
 app.whenReady().then(() => {
   tray = createTray()
   panel = createPanel()
+  // 无头验证用的开关：`Xvfb` 里没有托盘宿主，`getBounds()` 恒为 0×0，也没东西可点，
+  // 面板就永远不会显示。置 1 时开局直接摊开面板，好让截图与 DOM 转储有东西可看。
+  //
+  // 默认关闭，产品路径一个字节都不变——它是「怎么看到面板」的开关，
+  // 不是「面板长什么样」的开关。
+  if (process.env.ABX_PANEL_SHOW_ON_START === '1') {
+    placePanel(panel)
+    panel.show()
+  }
 })
 
 // 托盘应用：最后一个窗口关掉不等于退出，退出只由「退出」动作触发。
