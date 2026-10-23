@@ -1,0 +1,105 @@
+name: Package macOS
+
+# macOS 产物流水线：装依赖 -> lint / typecheck / test -> 打包 -> 上传产物。
+#
+# 与 `ci.yml` 的分工：那个跑在 ubuntu 上，回答「还能不能构建」；
+# 这里跑在 macOS 上，回答「打出来的到底是不是我们要的那个包」。
+# 打包只能在 macOS 上做（dmg 要 hdiutil、签名要 codesign），Linux runner 做不到，
+# 所以这条流水线是「产物对不对」唯一的机器验证。
+#
+# 签名与公证：本仓库目前**不使用**任何签名凭据——`mac.identity` 为 null、
+# `notarize` 为 false，产物由 `afterPack` 做 ad-hoc 签名（见
+# `apps/app/electron-builder.config.cjs`），因此这里不需要任何 secret。
+# 将来要真签名/公证时，electron-builder 读的是 CSC_LINK / CSC_KEY_PASSWORD
+# （签名）与 APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID（公证），
+# 从仓库 secret 注入，值不进仓库。
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Package macOS
+    runs-on: macos-latest
+    # 默认上限是 6 小时：一条卡住的下载会把 runner 占满整个下午。
+    # 这条流水线正常十几分钟跑完（两次 Electron 下载 + 两次打包）。
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      # `pnpm release:mac` 的第一段是 `turbo run build`，所以 turbo 缓存保持默认开启；
+      # lint 与 typecheck 还会用到 node_modules/.cache，一并打开。
+      - name: Set up environment
+        uses: ./.github/actions/setup
+        with:
+          tool-cache: 'true'
+
+      # 三样检查放在打包之前：包打好了才发现 lint 红，等于白烧一台 macOS runner。
+      - name: Run lint
+        run: pnpm lint
+
+      - name: Run typecheck
+        run: pnpm typecheck
+
+      - name: Run tests
+        run: pnpm test
+
+      # `pnpm release:mac` = `turbo run build` + `electron-builder --mac --arm64 --x64`。
+      # 打包全程 `--publish never`（见 `apps/app/scripts/build.mjs`），产物只往下走一步。
+      - name: Build the macOS app
+        run: pnpm release:mac
+
+      # 打包成功不等于产物对。`LSUIElement` 决定这个应用会不会在 Dock 里多出一个图标，
+      # 而它只写在打包生成的 Info.plist 里——开发机上（Linux，`DISPLAY` 为空）
+      # 根本看不到，只有这里能验。
+      #
+      # 注意：macOS runner 的 `/bin/bash` 是 3.2，没有 `mapfile`，所以用 while 逐条读。
+      - name: Verify the packaged app
+        shell: bash
+        run: |
+          set -euo pipefail
+          found=0
+          while IFS= read -r app; do
+            [ -n "$app" ] || continue
+            found=$((found + 1))
+            if [ ! -f "$app/Contents/Resources/app.asar" ]; then
+              echo "no app.asar inside $app" >&2
+              exit 1
+            fi
+            # 缺失时 PlistBuddy 会非零退出，`|| true` 是为了让下面那句给出可读的报错，
+            # 而不是被 `set -e` 直接掐断。
+            element=$(/usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$app/Contents/Info.plist" 2>/dev/null || true)
+            echo "$app -> LSUIElement=$element"
+            if [ "$element" != "true" ]; then
+              echo "not a tray-only app: LSUIElement is '$element' in $app" >&2
+              exit 1
+            fi
+          done < <(find release -maxdepth 3 -name 'ABX.app' -type d)
+          # `package:mac` 一次要两份（arm64 + x64），少一份就说明构架参数没生效。
+          if [ "$found" -ne 2 ]; then
+            echo "expected 2 bundles (arm64 + x64), found $found" >&2
+            exit 1
+          fi
+
+      - name: Upload the installers
+        uses: actions/upload-artifact@v6
+        with:
+          # 名字里带 run number：同一个分支连着触发两次，下载区不会互相覆盖。
+          name: abx-macos-${{ github.run_number }}
+          # DMG 负责首次安装，ZIP 解出来就是 `ABX.app`（也是将来自动更新的载体）。
+          # 两者都由同一份 `electron-builder.config.cjs` 的 `artifactName` 命名。
+          path: |
+            release/**/*.dmg
+            release/**/*.zip
+          if-no-files-found: error
+          # 内部自测包，7 天足够，不占 artifact 配额。
+          retention-days: 7
