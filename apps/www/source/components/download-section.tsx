@@ -29,7 +29,7 @@ export const DownloadSection = () => (
           <span aria-hidden="true" className="size-1.5 rounded-full bg-amber" />
           第一版只做 macOS
         </p>
-        <p className="mt-4 text-xl font-medium text-ink">发布后，下载入口会出现在这里。</p>
+        <p className="mt-4 text-lg font-medium text-ink">发布后，下载入口会出现在这里。</p>
         <p className="mt-3 max-w-xl text-sm leading-relaxed text-ink-3">
           在此之前这里不放占位链接。产品能力和进度以项目路线图为准，
           不在这里提前承诺一个日期。
