@@ -180,6 +180,16 @@ const HOST_FACE_ADDRESS: string = '127.0.0.1'
 /** 环境变量名的写法，按 POSIX 的规矩来。 */
 const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 
+/**
+ * 舱内那个 home 的默认值。
+ *
+ * `node:22-slim` 镜像里 uid 1000 是 `node` 用户，它的 home 就是这里，
+ * 而 `session.user` 默认也正是 `1000:1000`。写成一个常量而不是在 schema 里
+ * 直接写字面量，是因为**别处也要用它**：生成 agent 配置时展开 `~/.claude/...`
+ * 用的就是这个值（见 `core/session/agent-config.ts`），两处写两遍迟早会漂。
+ */
+export const DEFAULT_CELL_HOME = '/home/node'
+
 // ---------------------------------------------------------------------------
 // broker
 // ---------------------------------------------------------------------------
@@ -404,6 +414,21 @@ const sessionSchema = withFieldDefaults(
       workdir: orDefault(
         stringField().refine((value) => value.startsWith('/'), '必须是舱内的绝对路径，例如 /workspace'),
         '/workspace',
+      ),
+      /**
+       * **舱内**那个 home，不是宿主上的 home。
+       *
+       * 它决定两件事，两件都必须跟着它走：
+       *   1. `--env HOME=` 注入什么（不依赖镜像默认值）；
+       *   2. 注册表里 `~/.claude/settings.json` 这类路径展开到哪儿 ——
+       *      展开成宿主 home 的话，生成的配置会落在舱内 agent 根本不会读的地方。
+       *
+       * 默认值等于 `node:22-slim` 里 uid 1000 那个用户的 home，与 `user` 的默认值配套。
+       * 换镜像换了 uid 时，这个值要跟着改；它是配置，不是猜出来的。
+       */
+      cellHome: orDefault(
+        stringField().refine((value) => value.startsWith('/'), '必须是舱内的绝对路径，例如 /home/node'),
+        DEFAULT_CELL_HOME,
       ),
       limits: resourceLimitsSchema,
       /** `/tmp` 的 tmpfs 大小（MB）；舱内根文件系统只读，可写的地方只有这里和任务目录。 */
