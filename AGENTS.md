@@ -17,6 +17,23 @@
 - 配置里只写环境变量名（如 `ABX_API_TOKEN`），真实值留在本地文件或 CI secret 里。
 - `.env` 系列文件已在 `.gitignore` 中，需要样例时提交 `.env.example` 并只填占位符。
 
+## 依赖选型
+
+- **新增任何依赖前，先确认 `/home/openclaw/Project/osw` 里有没有对应物。**
+  能与 osw 同版本就用同版本（版本范围照抄 osw 的 `package.json`，不要自己挑、不要 latest）；
+  **不引入 osw 没有的技术栈**。两侧保持同构，将来才能合并为一个应用。
+- 例外只有一种：abx 明确不需要的 osw 库可以不引（例如 `electron`、`drizzle`），
+  这属于「少」，不属于「多一个 osw 没有的东西」。
+
+### 暂缓未加依赖（等对应能力落地时再按 osw 的版本补）
+
+osw 里有、abx 暂时没引的：`electron`、`electron-updater`、`drizzle-orm`、`drizzle-kit`、
+CodeMirror 系列（`@codemirror/*`、`@lezer/highlight`）、Radix 系列（`radix-ui`、`@base-ui/react`）、
+TanStack 系列（`@tanstack/react-query`、`@tanstack/react-router`）、`recharts`、`@xyflow/react`，
+以及 Tailwind 系列、`zustand`、`motion` 等界面库。
+
+要加时先读 osw 的 `package.json` 取版本，不要凭记忆写。
+
 ## 代码约定
 
 - `packages/toolkit/` 里的脚本是工具链本身，**除非必要不要改动其逻辑**；
@@ -25,3 +42,18 @@
   `packages/*` 不得依赖 `apps/*`，跨包引用必须在 `package.json` 里声明依赖。
 - 新增包时同步更新 `packages/<name>/package.json`、`tsconfig.json`，版本号与根保持一致
   （`pnpm version:set <version>` 会把根版本刷到每一个包）。
+- 目录职责：`packages/*` 放库（contracts=类型/schema、core=领域逻辑、console=Web UI、
+  toolkit=工具链），`apps/*` 放入口程序。产品能力（代理、沙箱）只落在 `packages/core` 里，
+  由 `apps/cli` 这样的宿主跑起来。
+
+## 预留目录
+
+以下目录**尚未创建**，将在对应能力落地时按 osw 的方式建：
+
+- `apps/app/` —— Electron 桌面壳（osw 里是 `@osw/app`，含托盘、更新器、打包脚本）。
+  abx 需要桌面形态时再建，届时同步引 electron 系列依赖。
+- `apps/docs/` —— 文档站（osw 里放 `specs/` 规格文档与构建配置）。
+  abx 的规格文档多到需要站点承载时再建。
+
+两者都是 `pnpm-workspace.yaml` 的 `apps/*` 通配范围内的成员，创建后
+包边界校验与版本校验会自动纳入，无需改工具链脚本。

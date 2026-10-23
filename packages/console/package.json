@@ -1,0 +1,12 @@
+{
+  "name": "@abx/console",
+  "version": "0.1.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "description": "Web 控制台，构建为纯静态产物；只通过管理 API 与核心通信。",
+  "exports": {
+    ".": "./source/index.ts",
+    "./*": "./source/*.ts"
+  }
+}

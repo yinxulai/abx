@@ -1,0 +1,12 @@
+{
+  "name": "@abx/core",
+  "version": "0.1.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "description": "核心领域逻辑。纯 Node，不含任何宿主依赖。",
+  "exports": {
+    ".": "./source/index.ts",
+    "./*": "./source/*.ts"
+  }
+}
