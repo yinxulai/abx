@@ -1,0 +1,160 @@
+name: Package Linux
+
+# Linux 产物流水线：装依赖 -> lint / typecheck / test -> 打包 -> 校验产物 -> 上传。
+#
+# 与 `package-macos.yml` 是**两条独立流水线**，共用同一份
+# `apps/app/electron-builder.config.cjs`，但各自只跑自己那半边：`--mac` 与 `--linux`
+# 是两个互不相干的参数，谁红了也影响不到对方。macOS 那条的签名/公证步骤（`mac.identity`、
+# `notarize`、`afterPack` 的 ad-hoc 签名）在这条里一次都不会被碰到——`afterPack` 自己
+# 就先判了平台（`electronPlatformName !== 'darwin'` 直接返回）。
+#
+# Linux 不是发布平台（产品只做 macOS，见 `apps/docs/specs/overview/platforms.md` §0）。
+# 这条流水线存在的理由是：**开发机就是 Linux**，所以「Linux 上打出来的包能不能站得住」
+# 是能顺手验的一件事，而不是等到将来才补。
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-linux-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Package Linux
+    runs-on: ubuntu-latest
+    # 与 macOS 那条同因：默认 6 小时的上限会让一条卡住的下载占满整个下午。
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      # `pnpm release:linux` 的第一段是 `turbo run build`，turbo 缓存保持默认开启；
+      # lint 与 typecheck 会用 node_modules/.cache，一并打开。
+      - name: Set up environment
+        uses: ./.github/actions/setup
+        with:
+          tool-cache: 'true'
+
+      # 三样检查放在打包之前：包打好了才发现 lint 红，等于白烧一台 runner。
+      - name: Run lint
+        run: pnpm lint
+
+      - name: Run typecheck
+        run: pnpm typecheck
+
+      - name: Run tests
+        run: pnpm test
+
+      # `pnpm release:linux` = `turbo run build` + `electron-builder --linux --x64`。
+      # 打包全程 `--publish never`（见 `apps/app/scripts/build.mjs`），产物只往下走一步。
+      - name: Build the Linux packages
+        run: pnpm release:linux
+
+      # 打包成功不等于产物对。这里逐条查的都是**开发机上没法确认**的那几件事：
+      # 包名、可执行文件名、应用图标进没进包、.desktop 的分类与 Exec。
+      #
+      # 下面每一条断言的期望值都是在开发机上真的拆开产物量出来的（不是照文档猜的），
+      # 见 `apps/docs/specs/overview/platforms.md` §5。
+      # 不装系统依赖：`dpkg-deb` 是 ubuntu runner 自带的，只用来读产物，不参与构建。
+      - name: Verify the packaged artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          appimage=$(find release -maxdepth 3 -name '*.AppImage' -type f | head -n 1)
+          if [ -z "$appimage" ]; then
+            echo 'no AppImage produced' >&2
+            exit 1
+          fi
+          # 免安装包必须是可执行的，否则双击等于什么都没发生。
+          if [ ! -x "$appimage" ]; then
+            echo "AppImage is not executable: $appimage" >&2
+            exit 1
+          fi
+          echo "AppImage: $appimage ($(stat -c %s "$appimage") bytes)"
+
+          deb=$(find release -maxdepth 3 -name '*.deb' -type f | head -n 1)
+          if [ -z "$deb" ]; then
+            echo 'no deb produced' >&2
+            exit 1
+          fi
+          echo "deb: $deb ($(stat -c %s "$deb") bytes)"
+
+          # 包名不能带 npm 作用域：`@abx/app` 去掉非法字符会变成 `@abxapp`，
+          # 而 AppImage 会直接拒绝这种可执行文件名。配置里显式写了
+          # `executableName: 'abx'`，这里确认它真的落进了产物。
+          for field in Package Version Homepage; do
+            printf '%s: %s\n' "$field" "$(dpkg-deb --field "$deb" "$field")"
+          done
+          [ "$(dpkg-deb --field "$deb" Package)" = 'abx' ]
+
+          # 清单只列一次存下来：`dpkg-deb --contents | grep -q` 会让 grep 提前退出、
+          # 把 dpkg-deb 打成 SIGPIPE，在 `pipefail` 下这条管道的状态就不可靠了。
+          contents=$(mktemp)
+          dpkg-deb --contents "$deb" > "$contents"
+
+          # 托盘图标是**运行期**由主进程按 `../../build/*.png` 读的。不显式收进
+          # electron-builder 的 `files`，打包后只有一种表现：app 起来了，
+          # 菜单栏里什么都没有——而那正是开发机上验不到的一步。
+          if ! grep -q 'app\.asar$' "$contents"; then
+            echo 'app.asar missing from the deb' >&2
+            exit 1
+          fi
+          echo 'app.asar is inside the deb'
+
+          # .desktop 决定应用出现在菜单里的名字、分类与启动命令，只存在于产物里。
+          extract=$(mktemp -d)
+          dpkg-deb -x "$deb" "$extract"
+          desktop=$(find "$extract" -name '*.desktop' -type f | head -n 1)
+          if [ -z "$desktop" ]; then
+            echo 'no .desktop entry inside the deb' >&2
+            exit 1
+          fi
+          echo "--- $desktop"
+          cat "$desktop"
+          grep -q '^Categories=Development;' "$desktop"
+          # Exec 必须落在 `abx` 这个可执行文件名上：换成别的名字说明
+          # `executableName` 没生效，装完之后命令行的名字也会跟着变。
+          grep -q '^Exec=/opt/ABX/abx ' "$desktop"
+          # 图标必须进 hicolor 主题目录，否则菜单里是个空白方块。
+          if ! grep -q 'usr/share/icons/hicolor/.*/apps/abx\.png$' "$contents"; then
+            echo 'the app icon is missing from the deb' >&2
+            exit 1
+          fi
+
+          # AppImage 里的 .desktop 是另一份（由 AppRun 就地使用），单独核一次。
+          # 解包不需要 FUSE。
+          appimage_absolute=$(realpath "$appimage")
+          appimage_dir=$(mktemp -d)
+          ( cd "$appimage_dir" && "$appimage_absolute" --appimage-extract '*.desktop' > /dev/null )
+          appimage_desktop=$(find "$appimage_dir" -name '*.desktop' -type f | head -n 1)
+          if [ -z "$appimage_desktop" ]; then
+            echo 'no .desktop entry inside the AppImage' >&2
+            exit 1
+          fi
+          echo "--- $appimage_desktop"
+          cat "$appimage_desktop"
+          grep -q '^Categories=Development;' "$appimage_desktop"
+          # electron-builder 给 AppImage 的 Exec 自己加了 `--no-sandbox`（与本仓库的
+          # `electron-sandbox.mjs` 无关，是它内建的取舍）。只断言它确实走 AppRun 启动。
+          grep -q '^Exec=AppRun ' "$appimage_desktop"
+
+      # 注意：**不跑** `pnpm --filter @abx/app verify:linux`。
+      # 它是给人看设计的入口（起 Xvfb、截图、UI 审计），不是一条判定门槛：
+      # 它要 CJK 字体、`scrot` 之类的可选工具，还会因为「某个元素浅了 0.1:1」而红。
+      # 那种红应该由人看一眼截图去决定改不改，不该拦住一个打包流水线。
+      - name: Upload the installers
+        uses: actions/upload-artifact@v6
+        with:
+          name: abx-linux-${{ github.run_number }}
+          path: |
+            release/**/*.AppImage
+            release/**/*.deb
+          if-no-files-found: error
+          # 与 macOS 那条一致：内部自测包，7 天足够。
+          retention-days: 7
