@@ -1,0 +1,34 @@
+# abx 官网。部署形状与 `apps/docs` 一致：Cloudflare 侧是一个 **Worker + 静态资源**
+# （Workers Static Assets），**不是**经典 Pages 项目。所以配置里用 `[assets]`，
+# 部署命令是 `npx wrangler deploy`，而不是 `npx wrangler pages deploy`。
+#
+# 判断形状看部署命令，不看文档、不看直觉：
+#   用 `npx wrangler deploy`         → Worker 形状，配 `[assets] directory`
+#   用 `npx wrangler pages deploy`   → Pages 形状，配 `pages_build_output_dir`
+# 两者写混了不会在构建期暴露，只在部署那一步报：
+#   ✘ Missing entry-point to Worker script or to assets directory
+# 而构建明明是成功的，于是很容易误判成缓存没刷或后台没保存。
+
+name = "abx-www"
+
+# 固定兼容日期，不跟 Latest。站点是纯静态资源、没有运行时逻辑，但写死可以躲开
+# 「后台某天改成 Latest」这种仓库外漂移。
+compatibility_date = "2026-10-01"
+
+# 这两个默认值显式写出来，是为了让「实际状态」和「仓库里的配置」一致。
+# 不写的话 wrangler 每次部署都会告警，而告警里说的默认行为已经在生效——
+# 于是「配置里没写」和「线上没开」就成了两件事，只能靠记性分辨。
+#
+# workers.dev 域名现在就当预览地址用：https://abx-www.yinxulai.workers.dev
+# 等自定义域名定下来，在顶层加 `routes`，那时再把这里改成 false。
+workers_dev = true
+preview_urls = true
+
+# 静态资源：Vite 的构建产物。
+#
+# 站点是**单页**（没有 router，产物只有一个 index.html），未知路径应当按 404 处理，
+# 所以用 `not_found_handling = "404-page"` 而不是 `single-page-application`——
+# 后者会让任何手造路径都返回首页，对单页站是伪装成「能访问」的错误。
+[assets]
+directory = "./output"
+not_found_handling = "404-page"
