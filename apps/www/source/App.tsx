@@ -1,3 +1,4 @@
+import { Boundaries } from './components/boundaries'
 import { CredentialModel } from './components/credential-model'
 import { Hero } from './components/hero'
 import { HowItWorks } from './components/how-it-works'
@@ -30,6 +31,7 @@ export const App = () => (
       <Hero />
       <CredentialModel />
       <HowItWorks />
+      <Boundaries />
     </main>
 
     <SiteFooter />
