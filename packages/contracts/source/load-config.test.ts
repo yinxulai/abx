@@ -299,4 +299,74 @@ describe('其他形状校验', () => {
     })
     expect(issues.length).toBeGreaterThanOrEqual(2)
   })
+
+  it('五处错一起报出来，一处都不少', () => {
+    // 形状校验搬进 zod 之后最容易丢掉的性质：zod 默认遇到第一个错就抛。
+    // 这条用例把那 5 处错一次性喂进去，逐个钉住「它在、位置对、顺序稳」——
+    // 少报一处就等于用户要多跑一轮「改一个错、再跑一次」。
+    const issues = issuesOf({
+      broker: { hostPort: 70_000 },
+      upstreams: [{ id: 'BAD ID', baseUrl: 'https://api.example.com', authHeader: 'authorization' }],
+      egress: { allow: ['*'] },
+      session: { backend: 'firecracker' },
+    })
+
+    expect(issues.map((issue) => issue.path)).toEqual([
+      'broker.hostPort',
+      'upstreams[0].id',
+      'upstreams[0]',
+      'egress.allow[0]',
+      'session.backend',
+    ])
+    expect(issues.every((issue) => issue.message.length > 0)).toBe(true)
+  })
+
+  it('每一处错的文案都说清了是哪一处', () => {
+    const issues = issuesOf({
+      broker: { hostPort: 70_000 },
+      upstreams: [{ id: 'BAD ID', baseUrl: 'https://api.example.com', authHeader: 'authorization' }],
+      egress: { allow: ['*'] },
+      session: { backend: 'firecracker' },
+    })
+    const said = (path: string) => issues.find((issue) => issue.path === path)?.message ?? ''
+
+    expect(said('broker.hostPort')).toContain('不能大于 65535')
+    expect(said('upstreams[0].id')).toContain('小写字母')
+    expect(said('upstreams[0]')).toContain('secretEnv')
+    expect(said('egress.allow[0]')).toContain('`*`')
+    expect(said('session.backend')).toContain('docker')
+  })
+
+  it('同一个上游里，字段写错不会吞掉「凭据来源没写」', () => {
+    // zod 默认把一条问题当成「到此为止」：一个字段报错之后，挂在同一个对象上的
+    // 跨字段检查会被跳过。表现是「改完 baseUrl 再跑一次，才被告知还缺凭据」——
+    // 正是这个项目要避免的那种来回。
+    const issues = issuesOf({
+      upstreams: [{ id: 'x', baseUrl: 'ftp://api.example.com', authHeader: 'authorization' }],
+      egress: { allow: ['api.example.com'] },
+    })
+    expect(issues.map((issue) => issue.path)).toEqual(['upstreams[0].baseUrl', 'upstreams[0]'])
+  })
+
+  it('同一个上游里，字段写错不会吞掉「id 重复」', () => {
+    const issues = issuesOf({
+      upstreams: [
+        { id: 'x', baseUrl: 'https://a.example.com', authHeader: 'bad header', secretEnv: 'K' },
+        { id: 'x', baseUrl: 'https://b.example.com', authHeader: 'authorization', secretEnv: 'K' },
+      ],
+      egress: { allow: ['a.example.com', 'b.example.com'] },
+    })
+    expect(issues.map((issue) => issue.path)).toEqual(['upstreams[0].authHeader', 'upstreams'])
+  })
+
+  it('别的段写错也不会吞掉交叉校验', () => {
+    // 交叉校验要同时看到 upstreams 和 egress，而这时候整份配置已经判过不合格了。
+    // 「上游没进白名单」是解释「配置看着齐全、请求却全 403」的唯一线索，不能丢。
+    const issues = issuesOf({
+      broker: { hostPort: 70_000 },
+      upstreams: [{ id: 'x', baseUrl: 'https://api.notallowed.com', authHeader: 'authorization', secretEnv: 'K' }],
+      egress: { allow: ['api.example.com'] },
+    })
+    expect(issues.map((issue) => issue.path)).toEqual(['broker.hostPort', 'upstreams[0].baseUrl'])
+  })
 })
