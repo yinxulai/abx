@@ -8,9 +8,10 @@
  *
  * 窗口是透明 + 无边框的：留白必须真的透明，卡片阴影才有地方落。
  *
- * 文字只有两档（文档 §2）：`--text` 与 `--text-muted`。原来那套「`foreground` 的透明度」
- * 造出来的中间档已经去掉——文档只定义了两档，多出来的每一档都要重新验一遍对比度。
- * 弱化文字用 `--text-muted`（浅色 5.73:1 / 深色 5.15:1 @ `--raised`），不再用透明度压更低。
+ * 文字是**四级**（文档 §2）：`--text-primary` / `-secondary` / `-tertiary` / `-quaternary`。
+ * 四级各自是一个**绝对色值**，不是「`foreground` 的透明度」——那条路上浅色下没有第四级的
+ * 合法取值空间（`foreground/.35` 只有 2.22:1），所以早期版本只有两档。定成绝对色值之后
+ * 四级都成立，且**每一级都在窗口 / 卡片 / 浮起块三种底上量过**（实测值见文档 §2 两张表）。
  */
 
 :root {
@@ -26,19 +27,22 @@
   /* 有意义边界：拖放区、输入框、控件的边。凡是用它识别一个控件的地方都必须 ≥ 3:1，
      否则那条边等于没画（浅色 3.74:1 / 深色 4.02:1 @ surface）。 */
   --border-strong: #82848a;
-  --text: #1a1b1d;
-  --text-muted: #5c5e65;
-  /* 点缀色当**图形**用（图标、状态点）：4.13:1，够 3:1；当正文不够 4.5:1。 */
+  --text-primary: #1a1b1d;
+  --text-secondary: #3f4147;
+  --text-tertiary: #55575d;
+  --text-quaternary: #6b6d74;
+  /* 点缀色当**图形**用（运行中的状态点与方块、焦点环）：4.13:1，够 3:1；当正文不够 4.5:1。 */
   --accent: #0e8c80;
-  /* 浅色独有的第二档：当正文用，以及实心按钮的底（白字 5.80:1）。
-     **不要用 `--accent` 在浅色下写正文**——这是这份体系里最容易犯的错。
-     深色下 `--accent` 本身就够（9.91:1），所以深色不定义它，用到的地方取回退值。 */
+  /* 浅色独有的第二档：胶囊里的**字**（5.14:1 @accent-soft）。
+     **不要用 `--accent` 在浅色下写正文**——这是这份体系里最容易犯的错。 */
   --accent-deep: #0a7268;
+  /* 胶囊的底。浅底 + 同色深字：文字永远在，颜色只是加速识别（文档 §9）。
+     底与字必须**一起**量：`--accent-deep` 压在这一档上是 5.14:1。 */
+  --accent-soft: #e7f4f1;
   --danger: #c0362c;
+  --danger-soft: #fbecea;
 
   /* ---------- 字号（文档 §3）：五档封顶 ---------- */
-  /* 原来的第六档 `--text-xl`（20px，给「管理面板页面标题」）已删：主面板改成单页之后
-     没有页面标题了。一档没人用就不该留着——字阶的意义就是每一档都有归属。 */
   /* 字重只用 400 / 500 / 600，再多一档就不会有人分得清该用哪个。 */
   --text-2xs: 11px;
   --text-2xs-leading: 14px;
@@ -69,10 +73,13 @@
   --radius-pill: 999px;
 
   /* 面板宽 422、卡片宽 366 = 422 − 28×2；宿主 `setContentSize` 用的是同一个 28。
-     这一档不是间距刻度上的值，是窗口几何，所以单独命名、不参与 §4 的对账。 */
+     这一档不是间距刻度上的值，是**窗口几何**，所以单独命名、不参与 §4 的对账。 */
   --panel-gutter: 28px;
   --panel-width: 422px;
   --card-width: 366px;
+  /* 同样是窗口几何（文档 §4 末段）：标题栏 36、列表行 40。 */
+  --titlebar-height: 36px;
+  --row-height: 40px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -82,8 +89,10 @@
     --raised: #2b2c2f;
     --border: #35373b;
     --border-strong: #7e8288;
-    --text: #f2f3f4;
-    --text-muted: #9b9da3;
+    --text-primary: #f2f3f4;
+    --text-secondary: #c6c8cd;
+    --text-tertiary: #a8aab0;
+    --text-quaternary: #92949a;
     --accent: #3fd9c6;
     /* 深色下没有第二档：`--accent` 自己就够亮（当正文 9.91:1），所以这个名字在深色里
        指向同一个值。**这一行不能省**：`var(--accent-deep, var(--accent))` 那套回退写法
@@ -91,7 +100,9 @@
        浅色那档墨绿（#0a7268）配 `--surface` 的字，只有 **2.68:1**——这是 audit.mjs 在
        深色下量出来的真错，不是理论问题。 */
     --accent-deep: var(--accent);
+    --accent-soft: #1f3a38;
     --danger: #ff7a72;
+    --danger-soft: #3a2626;
   }
 }
 
@@ -115,7 +126,7 @@ body {
   box-sizing: border-box;
   /* 这圈留白是给卡片阴影的，不能涂底色。 */
   padding: var(--panel-gutter);
-  color: var(--text);
+  color: var(--text-primary);
   font-family: var(--font-sans);
   font-size: var(--text-xs);
   line-height: var(--text-xs-leading);
@@ -159,7 +170,7 @@ body {
   width: 28px;
   height: 28px;
   border-radius: var(--radius-md);
-  background: var(--text);
+  background: var(--text-primary);
   color: var(--surface);
   font-size: var(--text-sm);
   font-weight: 600;
@@ -184,7 +195,8 @@ body {
 
 .abx-title-sub {
   overflow: hidden;
-  color: var(--text-muted);
+  /* 说明句 = tertiary（文档 §2 的四级表）。 */
+  color: var(--text-tertiary);
   font-size: var(--text-xs);
   font-weight: 400;
   line-height: var(--text-xs-leading);
@@ -200,7 +212,8 @@ body {
   padding: var(--space-2) var(--space-8);
   border-radius: var(--radius-pill);
   background: var(--raised);
-  color: var(--text-muted);
+  /* 计数/状态 = quaternary；它在 `--raised` 上实测 4.58:1（文档 §2 浅色表）。 */
+  color: var(--text-quaternary);
   font-size: var(--text-2xs);
   font-weight: 500;
   line-height: var(--text-2xs-leading);
@@ -252,8 +265,9 @@ body {
   cursor: pointer;
 }
 
+/* 焦点环用点缀色：这是 `--accent` 允许出现的**两处**之一（文档 §1 第 2 条）。 */
 .abx-agent:focus-visible {
-  outline: 2px solid var(--text);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -266,18 +280,20 @@ body {
 }
 
 .abx-agent[data-state='idle']:hover {
-  border-color: var(--text);
+  border-color: var(--text-primary);
   background: var(--raised);
 }
 
-/* 运行中：靠**加强**表达，而不是把「未运行」削弱（文档 §8 定的那一条）。 */
+/* 运行中：靠**加强**表达，而不是把「未运行」削弱（文档 §12 定的那一条）。
+   底用 `--accent-soft`（不透明）：它比 `color-mix` 更可查、也能被对比度实测量到，
+   而且与状态胶囊（§9）用的是同一档底——同一件事在界面里只有一种样子。 */
 .abx-agent[data-state='running'] {
   border: 2px solid var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  background: var(--accent-soft);
 }
 
 .abx-agent[data-state='running']:hover {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--accent-soft));
 }
 
 /* 不可用（镜像还没构建）：唯一被压暗的一档。中性块、没有描边语言、光标说不能点。
@@ -297,7 +313,7 @@ body {
   /* 方块底是中性底，只掺一点品牌色：标识本身（图形的对比度责任豁免）不适用 WCAG，
      但**容器**适用，所以底色永远由中性档打底。 */
   background: color-mix(in srgb, var(--abx-agent-color, transparent) 16%, var(--raised));
-  color: var(--text);
+  color: var(--text-primary);
   font-size: var(--text-sm);
   font-weight: 600;
   line-height: 1;
@@ -313,17 +329,17 @@ body {
   color: var(--surface);
 }
 
-/* 「运行中 · 聚焦」这行字坐在点缀色的浅底上——那是文档 §2 的三张表里都没有的第四种底，
-   而它比 `--surface` 亮，弱化文字在这儿只剩 4.65:1（深色，hover 掺到 16% 还要再掉）。
+/* 「运行中 · 聚焦」这行字坐在 `--accent-soft` 上——那是文档 §2 两张表之外的一种底，
+   而它比 `--surface` 亮（浅色）/ 暗（深色），三级文字压在上头不是同一批实测值。
    这一行本来就是状态的说明，不是次要信息：文档说「运行中」靠**加强**表达，
-   所以它用 `--text`（浅色 15.2:1 / 深色 11.3:1），把余量一次留够。
-   未运行那格仍然是 `--text-muted`——它坐在纯 `--surface` 上，5.73:1，本来就稳。 */
+   所以它用 `--text-primary`，把余量一次留够。
+   未运行那格仍然是 `--text-tertiary`——它坐在纯 `--surface` 上，本来就稳。 */
 .abx-agent[data-state='running'] .abx-agent-state {
-  color: var(--text);
+  color: var(--text-primary);
 }
 
 .abx-agent[data-state='unavailable'] .abx-agent-square {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
 }
 
 /* agent 名字**永不随状态变淡**：它是这一排里最该被读到的字。
@@ -331,7 +347,7 @@ body {
    这里没有 `[data-state]` 选择器，是故意的——`styles.test.ts` 会盯着这一点。 */
 .abx-agent-name {
   max-width: 100%;
-  color: var(--text);
+  color: var(--text-primary);
   font-size: var(--text-sm);
   font-weight: 500;
   line-height: var(--text-sm-leading);
@@ -345,7 +361,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: var(--space-4);
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: var(--text-2xs);
   font-weight: 400;
   line-height: var(--text-2xs-leading);
@@ -371,14 +387,14 @@ body {
 /* 不可用的标记是三角警示，不是点：它要说的是「没装」，不是「没跑」。 */
 .abx-agent-warn {
   flex: none;
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: var(--text-2xs);
   line-height: var(--text-2xs-leading);
 }
 
 /* 不可用的下一步。是**说明**不是按钮：它没有描边、没有下划线，不会看起来能点。 */
 .abx-agent-next {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
   font-size: var(--text-2xs);
   font-weight: 400;
   line-height: var(--text-2xs-leading);
@@ -397,16 +413,18 @@ body {
   margin-bottom: var(--space-6);
 }
 
+/* 区块标题是**标题**：它下面那行说明才是 tertiary（文档 §8）。
+   原来这里是弱化文字，于是「共享给全部 agent」看起来像一个标签而不是一段的开始。 */
 .abx-section-title {
   margin: 0;
-  color: var(--text-muted);
+  color: var(--text-primary);
   font-size: var(--text-xs);
   font-weight: 500;
   line-height: var(--text-xs-leading);
 }
 
 .abx-section-count {
-  color: var(--text-muted);
+  color: var(--text-quaternary);
   font-size: var(--text-2xs);
   font-weight: 400;
   line-height: var(--text-2xs-leading);
@@ -422,7 +440,8 @@ body {
   display: flex;
   align-items: center;
   gap: var(--space-8);
-  min-height: 40px;
+  /* 行高 40：文档 §7 的行规格（osw 的行也是 ~40，极淡分隔线、不用斑马纹）。 */
+  min-height: var(--row-height);
   padding: var(--space-8) var(--space-12);
   /* 行与行之间是装饰性分隔，不是控件边界。 */
   border-top: 1px solid var(--border);
@@ -432,16 +451,17 @@ body {
   border-top: 0;
 }
 
+/* 行图标是**非文字标记**：它只要求 3:1，而 quaternary 在两种底上都有 4.9 以上。 */
 .abx-list-icon {
   flex: none;
-  color: var(--text-muted);
+  color: var(--text-quaternary);
   font-size: var(--text-xs);
 }
 
 .abx-list-name {
   overflow: hidden;
   flex: 1;
-  color: var(--text);
+  color: var(--text-primary);
   font-size: var(--text-sm);
   line-height: var(--text-sm-leading);
   text-overflow: ellipsis;
@@ -449,11 +469,11 @@ body {
 }
 
 /* 预览行（宿主还没答话）与失效行：一个还没生效、一个已经没用了，都用弱化文字。
-   弱化的最小档是 `--text-muted`（6.47:1 @ surface），不再往更浅处压——
-   比它更浅就没有合法的取值空间了（文档 §2 只定义了两档文字）。 */
+   弱化用 tertiary（7.22:1 @ surface），**不压到 quaternary**——那是「计数 / 时间戳」那一档，
+   把一整行名字压到那一档就分不清「这行是次要信息」还是「这行快没了」。 */
 .abx-list-row[data-state='pending'] .abx-list-name,
 .abx-list-row[data-state='missing'] .abx-list-name {
-  color: var(--text-muted);
+  color: var(--text-tertiary);
 }
 
 .abx-list-row[data-state='missing'] .abx-list-name {
@@ -465,7 +485,9 @@ body {
   padding: var(--space-2) var(--space-6);
   border-radius: var(--radius-pill);
   background: var(--raised);
-  color: var(--text-muted);
+  /* 「只读」是一个**词**，不是计数：它用 tertiary（raised 上 6.40:1），
+     比纯数字的 quaternary 高一档。 */
+  color: var(--text-tertiary);
   font-size: var(--text-2xs);
   font-weight: 500;
   line-height: var(--text-2xs-leading);
@@ -478,7 +500,8 @@ body {
   margin: 0 0 var(--space-8);
   padding: var(--space-8) var(--space-12);
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  /* 与「被拦」胶囊同一档底（文档 §9）：同一个语义在界面里只有一种样子。 */
+  background: var(--danger-soft);
 }
 
 .abx-rejected-head {
@@ -513,7 +536,7 @@ body {
   overflow: hidden;
   flex: none;
   max-width: 40%;
-  color: var(--text);
+  color: var(--text-primary);
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -522,7 +545,8 @@ body {
 .abx-rejected-reason {
   min-width: 0;
   flex: 1;
-  color: var(--text-muted);
+  /* 原因是**要说清的那句话**，不是元信息：它用 secondary，不压到 tertiary。 */
+  color: var(--text-secondary);
   overflow-wrap: anywhere;
 }
 
@@ -532,7 +556,8 @@ body {
   padding: var(--space-8) var(--space-12);
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-md);
-  color: var(--text-muted);
+  /* 拖放提示是一句**指示**，用户要读得懂才敢拖：secondary，不压到 tertiary。 */
+  color: var(--text-secondary);
   font-size: var(--text-xs);
   line-height: var(--text-xs-leading);
   text-align: center;

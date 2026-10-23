@@ -135,8 +135,8 @@ describe('字号：五档封顶，字重只用 400 / 500 / 600', () => {
   )
 
   it('五档，不多不少', () => {
-    // 第六档 `--text-xl` 随「主面板改成单页、不再有页面标题」一起删掉了（文档 §3 那条注）。
-    // 当时只删了文档、没删样式表，于是这条测试红过一阵。
+    // 第六档 `--text-xl` 随「主面板改成单页、不再有页面标题」一起删掉了
+    // （文档 §3 的那条注）。当时只删了文档、没删样式表，于是这条测试红过一阵。
     expect(rows.map((row) => row.name)).toEqual([
       '--text-2xs',
       '--text-xs',
@@ -154,7 +154,7 @@ describe('字号：五档封顶，字重只用 400 / 500 / 600', () => {
   })
 
   it('样式表里没有第六档字号', () => {
-    // `--text-*` 里既有字号也有颜色（`--text` / `--text-muted`），还有成对的行高
+    // `--text-*` 里既有字号也有颜色（`--text-primary` / `--text-tertiary`），还有成对的行高
     // （`--text-sm-leading`）：按值是不是像素、名字带不带 `-leading` 区分。
     const sizes = [...lightTokens.entries()].flatMap(([name, value]) =>
       /^--text-/.test(name) && /px$/.test(value) && !name.endsWith('-leading') ? [name] : [],
@@ -243,6 +243,6 @@ describe('状态：样式表里的分段与组件能发出的状态一致', () =
     // 于是最该点的那一个看起来像禁用。名字这一行现在只有一个颜色来源。
     const coloured = rules.filter((rule) => rule.selector.includes('.abx-agent-name') && valueOf(rule.body, 'color') !== undefined)
     expect(coloured.map((rule) => rule.selector)).toEqual(['.abx-agent-name'])
-    expect(valueOf(coloured[0]?.body ?? '', 'color')).toBe('var(--text)')
+    expect(valueOf(coloured[0]?.body ?? '', 'color')).toBe('var(--text-primary)')
   })
 })

@@ -29,7 +29,7 @@ export interface AgentStatusRowProps {
 }
 
 /**
- * 一个方块的三种状态。**状态表来自 `apps/docs/specs/product/design-system.md` §5**，
+ * 一个方块的三种状态。**状态表来自 `apps/docs/specs/product/design-system.md` §9**，
  * 与它一一对应；样式在 `styles.css` 里按 `data-state` 各写一段（三段的差别是
  * 线的样式、填充、标记形状和文字，不只是颜色）。
  *
