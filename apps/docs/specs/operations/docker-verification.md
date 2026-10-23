@@ -234,7 +234,8 @@ HTTP 200 {"method":"POST","url":"/v1/messages",
    环境变量里的真密钥 —— 真密钥从来没进过容器。
 2. **占位符没有漏出去**：上游那一侧不含 `abx-placeholder`。
 3. **`x-abx-cell-id` 没有转发给上游**（回显里是 `null`）：舱内自报的身份没有跟着请求
-   跑出去，`STRIPPED_AUTH_HEADERS` 那一层在跨容器这条路上是生效的。
+   跑出去。机制是 `forward.ts` 的 `buildOutboundHeaders` 出站时丢掉**所有** `x-abx-`
+   前缀的头（不是只丢鉴权头）——abx 自己的协议头不会漏给上游。
 
 第 1 条是 abx 的立身之本（「舱里压根不存在一个可以泄漏的密钥」），
 **这是它第一次在真容器里被验过**。
