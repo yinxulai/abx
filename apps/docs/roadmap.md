@@ -15,8 +15,8 @@
 | `packages/contracts` | ⏳ 待落地（airlock 阶段已有 12 文件 / 1663 行，未搬入） |
 | `packages/core`（broker / policy / session） | ⏳ 待落地（airlock 阶段已有 29 文件 / 4880 行、310 测试全绿，未搬入） |
 | `packages/core/mounts`（共享区与文件闸口） | ⬜ 未开始 |
-| `packages/console`（React 面板） | ⬜ 占位 |
-| `apps/app`（Electron 托盘） | ⬜ 未开始 |
+| `packages/console`（React 面板） | 🟡 基础面板：状态块 / 高度回报 / 拖放区，jsdom 测试通过；真机未看 |
+| `apps/app`（Electron 托盘） | 🟡 骨架 + 面板加载 + 拖放 IPC；Electron 未在真机验证 |
 | `apps/docs`（文档站） | ⬜ 未建站，仅有 Markdown |
 
 > 上表里「airlock 阶段」指本项目在 `/home/openclaw/Project/airlock` 下完成的第一次实现。
