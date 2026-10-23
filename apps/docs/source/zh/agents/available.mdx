@@ -1,0 +1,127 @@
+---
+title: claude / codex / dsh
+description: 三个内置 agent 的命令、配置落点、上游与状态；这些数据全部来自 agent 清单。
+keywords:
+  - Claude Code
+  - Codex
+  - dsh
+  - agent 清单
+---
+
+import { AGENT_COUNT, AGENT_DOCS, IMAGES_DECLARED, SESSION_IMAGE_FALLBACK, STATE_PATHS_DECLARED } from '../../data/agents'
+
+# claude / codex / dsh
+
+当前清单里有 **{AGENT_COUNT} 个 agent**。名字、命令、配置落点、上游和状态都取自
+`packages/contracts/source/agents.ts` —— **清单是唯一真相**，面板、配置生成与这份文档都从它读，
+不在各自的地方再抄一份。
+
+## 一览
+
+<table>
+  <thead>
+    <tr>
+      <th>agent</th>
+      <th>舱内命令</th>
+      <th>默认上游</th>
+      <th>状态</th>
+    </tr>
+  </thead>
+  <tbody>
+    {AGENT_DOCS.map((agent) => (
+      <tr key={agent.id}>
+        <td>{agent.label}（<code>{agent.id}</code>）</td>
+        <td><code>{agent.command}</code></td>
+        <td><code>{agent.upstreamId}</code></td>
+        <td>{agent.status === 'stable' ? '已核对' : '待确认'}</td>
+      </tr>
+    ))}
+  </tbody>
+</table>
+
+「待确认」表示这条定义还没跟上游工具的真实行为核对过。**dsh 目前是待确认**：
+命令名与配置字段名都缺少权威来源，`abx open dsh` 会照跑，但跑之前请自己确认一遍。
+
+## 配置落点
+
+abx 只为标着「生成」的文件写内容；标着「只登记」的文件不写、也不挂，列出来只为把配置面写全。
+
+<table>
+  <thead>
+    <tr>
+      <th>agent</th>
+      <th>配置文件</th>
+      <th>格式</th>
+      <th>abx 做什么</th>
+    </tr>
+  </thead>
+  <tbody>
+    {AGENT_DOCS.flatMap((agent) =>
+      agent.registeredFiles.map((file) => (
+        <tr key={`${agent.id}-${file.path}`}>
+          <td>{agent.label}</td>
+          <td><code>{file.path}</code></td>
+          <td>{file.format}</td>
+          <td>{file.generated ? '生成并只读挂载' : '只登记，不生成也不挂载'}</td>
+        </tr>
+      )),
+    )}
+  </tbody>
+</table>
+
+生成出来的内容只有一扇门（气闸）和一个占位符，没有 `model` 字段；你本机那份配置与
+同目录的登录凭据不会进舱。细节见[配置是生成的，只读](/inside/config)。
+
+## 镜像
+
+{IMAGES_DECLARED ? (
+  <p>每个 agent 使用清单里登记的自有镜像，各自装好自己的 CLI。</p>
+) : (
+  <p>
+    清单里<strong>还没有</strong>登记每个 agent 自己的镜像。起舱时统一使用配置项 <code>session.image</code>
+    的默认值：<code>{SESSION_IMAGE_FALLBACK}</code>。这个默认镜像不包含三个 agent 的命令行，
+    所以实际跑之前必须换成装好对应 CLI 的镜像。每个 agent 各自装 CLI 的镜像仍在清单化中。
+  </p>
+)}
+
+## 历史目录
+
+{STATE_PATHS_DECLARED ? (
+  <p>清单已登记每个 agent 要跨舱保留的历史目录；abx 按实例把它们挂到宿主的持久化目录上。</p>
+) : (
+  <p>
+    清单里<strong>还没有</strong>登记历史目录，因此当前起舱不会挂任何持久化目录：agent
+    自己的会话历史随舱销毁。任务目录、共享区、取回区与审计仍会保留，见
+    <a href="/inside/history">历史留在哪里</a>。
+  </p>
+)}
+
+## 三个名字对得上
+
+abx 的 id 与 OSW 客户端注册表里的 key 不是一一同名的，谈路径和字段时需要对得上：
+
+<table>
+  <thead>
+    <tr>
+      <th>abx agent id</th>
+      <th>OSW 客户端 key</th>
+    </tr>
+  </thead>
+  <tbody>
+    {AGENT_DOCS.map((agent) => (
+      <tr key={agent.id}>
+        <td><code>{agent.id}</code></td>
+        <td><code>{agent.oswClientKey}</code></td>
+      </tr>
+    ))}
+  </tbody>
+</table>
+
+## 加一个 agent 是加数据
+
+清单里的每条定义由展示信息、镜像、历史目录、配置模板与上游接线组成。新增一个 agent 的正常路径是
+往清单里加一条，**不改会话编排、不改界面**。面板那一排、配置生成和这页表格都会跟着清单走。
+
+---
+
+这些 agent 的请求最后都去同一处：[唯一的生产上游：OSW](/agents/upstream)。

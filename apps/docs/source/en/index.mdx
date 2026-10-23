@@ -1,0 +1,74 @@
+---
+title: What abx is
+description: A macOS tray app that hands folders to a throwaway cell for AI coding agents. There is no real credential inside to leak, egress is denied by default, and everything is logged.
+keywords:
+  - abx
+  - airlock
+  - isolation cell
+  - AI coding agent
+  - credentials
+---
+
+# What abx is
+
+abx (airlock box) is a **macOS tray app**. Drop a folder or file onto the tray, pick an agent, and abx starts a **throwaway isolation cell** running Claude Code, Codex or dsh. The agent can read code, run tests and write files as if it were on your machine — but it **cannot reach your real credentials** and **cannot leave the allowlist**.
+
+It solves one concrete dilemma:
+
+| Today's choice | Consequence |
+|---|---|
+| Hand the agent an API key | It can do the whole job — and also read `~/.ssh`, `curl` your production database, or `rm -rf` |
+| Give it neither credentials nor folders | It is safe and useless |
+
+abx bets that this is a false choice. Credentials stay outside and are injected by the airlock; only the task folder is mounted; egress is limited to an allowlist. The agent still gets work done, but everything it receives is **borrowed, gated and logged**.
+
+<CardGroup cols={2}>
+  <Card title="No key to leak inside" icon="KeyRound" href="/inside/credentials">
+    The agent sees one baseUrl and one placeholder. The real key lives in the host airlock and is injected on the way out.
+  </Card>
+  <Card title="Generated, read-only config" icon="FileCog" href="/inside/config">
+    abx generates a minimal config for each agent and mounts it read-only. Your own config and credential files never enter.
+  </Card>
+  <Card title="Egress denied by default" icon="Activity" href="/inside/egress">
+    Hosts outside the allowlist are blocked and logged. The default is the tightest setting, not something you have to tighten.
+  </Card>
+  <Card title="Throwaway cells" icon="ShieldCheck" href="/inside/history">
+    A cell is destroyed when it exits. No startup items, no background process; only the task folder and outbox survive.
+  </Card>
+</CardGroup>
+
+## What one task looks like
+
+```text
+You drop repo/ onto the tray
+        │
+        ▼
+  A throwaway cell: repo/ writable, shared area read-only, config read-only
+        │
+        ▼
+  agent in cell ──request──▶ airlock (host) ──▶ OSW (host) ──▶ real provider
+        │                        │
+        │                        └─ validates cell token, egress allowlist,
+        │                           replaces the placeholder, writes the audit
+        └─ only gets one baseUrl + one placeholder
+```
+
+Models and keys are configured in **OSW** on the host — it already funnels all your channels into one local address. abx copies no provider configuration and brings no key into the cell. The airlock is the cell's front door; OSW is the dispatcher behind it.
+
+## What it is not
+
+- **Not another model manager.** Providers, models, routing and failover live in OSW; abx owns the cell, the gates and the record.
+- **Not a virtual machine.** Cells share the host kernel; abx makes no promise about kernel-level escapes.
+- **Not a network anonymiser.** Outbound traffic still uses your own IP.
+- **Not a guard against secrets you hand over yourself.** Drop a `.env` into the shared area and the agent can read it.
+- **Not cross-platform** (V1 is macOS only) and has no command-line form.
+
+## Start here
+
+For a first run, read in order:
+
+1. [Install & first run](/getting-started/installation) — what to prepare and how to get the tray running.
+2. [What happens after you drop](/getting-started/first-run) — three steps to finish one task.
+3. [Credentials never enter](/inside/credentials) — why there is nothing to leak inside the cell.
+
+If you are about to use it, read [Explicit limits](/limits/limitations) first so that "deliberately not done" is not mistaken for "not finished".

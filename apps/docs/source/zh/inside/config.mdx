@@ -1,0 +1,67 @@
+---
+title: 配置是生成的，只读
+description: abx 为每个 agent 现生成一份最小配置，只读挂进舱；你本机那份配置与登录凭据一个字都不进去。
+keywords:
+  - 配置
+  - 只读挂载
+  - settings.json
+---
+
+import { AGENT_DOCS } from '../../data/agents'
+
+export const claude = AGENT_DOCS.find((agent) => agent.id === 'claude')
+
+# 配置是生成的，只读
+
+每个 agent 的配置由 abx **现生成**，然后以**只读**方式挂进舱。舱内 agent 看到的不是
+你本机那份 `settings.json`，而是一份只有一扇门的最小配置。
+
+## 为什么不直接挂宿主那份
+
+宿主的配置目录里混着两类东西：
+
+1. **不属于这次任务的东西**：别家的 key、别的端点、别的模型名。
+2. **登录凭据**：`~/.claude/.credentials.json`、`~/.codex/auth.json`。
+   它们和配置文件是**同目录邻居**。
+
+「把配置目录整个只读挂进去」等于把 OAuth 凭据一起送进舱。所以挂载单位只能是**单个文件**，
+而且只挂 abx 自己生成的那一份。宿主那份、以及任何凭据文件，一律不进舱。
+
+## 生成出来长什么样
+
+以 Claude Code 为例（路径取自 agent 清单，{claude?.generatedFiles[0]?.path ?? '~/.claude/settings.json'}）：
+
+```json
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://<气闸舱面>/u/osw",
+    "ANTHROPIC_AUTH_TOKEN": "abx-placeholder-anthropic"
+  }
+}
+```
+
+三条值得注意：
+
+- **baseUrl 指向气闸，不是 OSW**。agent 以为自己在直连，气闸再把请求交给 OSW。
+- **token 是占位符**。气闸无条件覆盖它，不校验它的内容。
+- **没有 `model` 字段**。换模型是 OSW 的事；把模型名写死在舱里，只会让路由失效。
+
+每个 agent 的配置路径、格式、哪些文件真会被生成，见 [claude / codex / dsh](/agents/available)。
+有些文件只登记、不生成（例如 dsh 的历史遗留配置），清单里标了 `generated: false`，
+用途是把「哪些文件算配置」写全，免得下一个人以为漏了一个。
+
+## 只读意味着什么
+
+- 舱内 agent **改不动**这份配置；改了下一次起舱也会被重新生成覆盖。
+- 配置里没有任何真凭据，所以读它、打印它、把它提交进仓库，都不会泄漏。
+- 配置的落点与 agent 期望的宿主路径**完全一致**（例如 `~/.claude/settings.json`）。
+  路径不一致等于没配：agent 不会去别的地方找。
+
+<Callout title="登录态不走这份配置" type="warning">
+生成配置只解决「请求发到哪、带什么占位符」。Agent 自己的登录态（OAuth、账号缓存）不在里面，
+也**不会**被挂进舱。需要登录态的用法，得先确认它是否支持这种只带 baseUrl 的接法。
+</Callout>
+
+---
+
+配置指向的那扇门，背后是出口白名单与审计：[出口默认拒绝，且留痕](/inside/egress)。
