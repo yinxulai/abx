@@ -28,7 +28,7 @@
 | 后端选择策略（docker 优先 + 留扩展口子） | ✅ 已落地（支持的 id 只在契约里声明一次；工厂是一张 `Record<SandboxBackendId, …>` 映射表，加 id 不加实现**编译不过**；未知 id 响亮失败、绝不回退到 local；见 [`overview/architecture.md`](./specs/overview/architecture.md) §7.2）。**没有任何新后端**：podman / bwrap 都只是口子 |
 | macOS 打包与 CI | ✅ 已落地（electron-builder + macOS workflow）；**未在真机打过包** |
 | Linux 开发链路 | ✅ 已落地（按平台分叉 + `verify:linux` 无头验证入口，见 [`overview/platforms.md`](./specs/overview/platforms.md)）；Linux 只服务开发，不是发布平台 |
-| Windows 上的开发链路（lint / typecheck / test / build） | ✅ 已落地。`ci.yml` 里有一个 `windows-latest` job 在 push 时跑这四条。**第一次跑就抖出 83 条失败，逐条修完**（见下表与 [`platforms.md`](./specs/overview/platforms.md) §5.2） |
+| Windows 上的开发链路（lint / typecheck / test / build） | ✅ 已落地。`ci.yml` 里有一个 `windows-latest` job 在 push 时跑这四条。**第一次跑就抖出 83 条失败，逐条修完**（见下表与 [`platforms.md`](./specs/overview/platforms.md) §5.2）；**并入 main 之后重跑过一次，仍然全绿**（见 §二） |
 | Windows 托盘形态（图标分叉 + 锚点几何） | 🟡 代码已落地并有单测（`icon-win.ico`、`panelPosition()` 7 条）；**长什么样没人看过**，无头机器上验不了 |
 | Windows 打包与 CI | 🟡 `nsis` + `portable` 目标与 `release:win` 已落地，`package-windows.yml` 会在真产物上做断言；**安装包没装过、没双击过，也没有签名** |
 | Windows 上起真容器（`abx open`） | ❌ **没验过。** e2e 那几个脚本是 bash + docker，CI 上不跑；Windows 上这条路一次都没走过 |
@@ -37,7 +37,7 @@
 
 **当前基线：** `pnpm lint` / `pnpm typecheck` / `pnpm test` / `pnpm build` 全绿，**1035 个测试**（68 个文件）；
 `pnpm build` 四个包都出产物；`e2e-local.sh` / `e2e-docker.sh` / `e2e-shared.sh` /
-`e2e-persist.sh` 在本机全绿。**Windows 上这四条（lint / typecheck / test / build）在
+`e2e-persist.sh` / `e2e-transom.sh` 在**并入 main 之后的树**上全绿（五个脚本各自的真退出码都是 0）。**Windows 上这四条（lint / typecheck / test / build）在
 `windows-latest` 上跑，见下一节。**
 
 > 上表里「airlock 阶段」指本项目在 `/home/openclaw/Project/airlock` 下完成的第一次实现。
@@ -78,8 +78,15 @@
 Windows 专属规则（盘根 / UNC / 备用数据流 / `PATHEXT` / 大小写不敏感）在 Linux 上
 **跑完整单测**，靠的是「平台是注入的参数」而不是 `process.platform`
 
-> 上面这一段的绿色是**并入 main 之前**那次的。基线换了以后它不再覆盖合并后的树，
-> 所以并入 main 之后必须重跑一遍才算数——见下一次 `Windows` job 的结果。
+> **并入 main 之后重新挣过一次**（run `39973712154`，sha `fbf3f30`，`push` 事件）：
+> 六个 job 全绿，`Windows` job 的 `test` 步是 `Test Files 68 passed (68)` /
+> `Tests 1031 passed | 4 skipped (1035)`。
+> 合并那一刻它是**红的**（同一个 job，sha `1b1a344`：`Test Files 6 failed | 62 passed (68)` /
+> `Tests 12 failed | 1020 passed | 3 skipped (1035)`），十二条全部落在 main 新写的传递窗用例里
+> ——写死的 POSIX 路径与分隔符（`/home/dev/...` 对 `C:\Users\...`），逐条改成按平台造夹具；
+> 第四条 skip 是「交付格只读」那条（Windows 没有 POSIX 权限位，前提造不出来，`skipIf` 并写明理由）。
+> 那十二条的着落：**十一条变绿、一条变成写明理由的 skip，没有一条被删掉**
+> （passed 1020 → 1031 是 +11，skipped 3 → 4 是 +1，failed 12 → 0）。
 
 **传递窗（`e2e-transom.sh`，真容器 + 真 shim + 真 broker，26 条断言）**
 
@@ -135,9 +142,10 @@ Windows 专属规则（盘根 / UNC / 备用数据流 / `PATHEXT` / 大小写不
 | **传递窗的打开动作在 macOS / Windows 上** | 只有 `openCommandFor` 的映射表与单测；`e2e-transom.sh` 里的 `xdg-open` 是替身，真机没点过 |
 | **HTML / SVG 预览** | 这轮没做，它们只显示不打开；「sandbox iframe 不给 allow-scripts」的形态还没有实现 |
 | **真实 agent 主动使用 MCP 工具** | 验到的是「舱内注册了、`claude mcp list` 连得上、工具结果正确」；真 claude 会不会在该用的时候用它，没有验 |
+| **交付格写不进去时的失败路径（Windows）** | 那条用例在 Windows 上是 `skipIf(win32)`：没有 POSIX 权限位，造不出一个「写不进去的目录」当前提。产品逻辑与平台无关（`deliverToOutbox` 报错、绝不静默成功），但在 Windows 上这条错误路径**一次都没走到过** |
 
 > 前四条（平台那几张表）各自对应 [`overview/platforms.md`](./specs/overview/platforms.md) §5.4 里的一行；
-> 那一篇按平台分开写，这里按「什么时候能补上」排。后三条是传递窗这一轮的。
+> 那一篇按平台分开写，这里按「什么时候能补上」排。后四条是传递窗这一轮的。
 > 另外：`Windows 上起真容器` 这一条**在合并 main 之后更紧了**——运行期文件那条新挂载
 > （`~/.abx/runtime/<cellId>/abx-mcp-shim.mjs`）走的是同一套挂载闸门，而它在 Windows 上
 > 同样没起过真容器。
