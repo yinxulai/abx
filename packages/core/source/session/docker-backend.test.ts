@@ -446,7 +446,19 @@ describe('后端契约', async () => {
     })
 
     const handle = await backend.create(spec(), { mode: 'pipe', onStdout: () => undefined, onStderr: () => undefined })
-    await expect(handle.exit).rejects.toThrow(/找不到 docker 可执行文件/)
+    const error = await handle.exit.then(
+      () => null,
+      (reason: Error) => reason,
+    )
+
+    // 这里钉的是**走哪条分支**，不是某一句原文：原文按平台不同（Windows 上要提
+    // PATHEXT 和「装完没重开终端」），那两句的逐字原文由下面那条
+    // `missingDockerMessage` 的用例负责。判据因此写成「说了找不到」+「没给守护进程
+    // 那条建议」——写死一句 `找不到 docker 可执行文件` 的话，这条断言会在 Windows
+    // 上红在一个跟分支无关的地方（第一次 windows run 就是这么红的）。
+    expect(error).not.toBeNull()
+    expect(error?.message).toContain('找不到 docker')
+    expect(error?.message).not.toContain('abx doctor')
   })
 
   it('装了但守护进程没起：给的是另一条路——abx doctor，或者临时走 local', async () => {

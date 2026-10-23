@@ -1,9 +1,21 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { makeConfig, makeEgressRule, makeUpstream } from '@abx/contracts/test-support'
 import { RUNNING_PLATFORM } from '../test-support'
 import type { CommandOptions } from './options'
 import type { CommandContext } from './runtime'
 import { collectChecks, findDangerousHostEnv } from './doctor'
+
+/*
+ * 这一份的用例**不是纯函数**：`collectChecks` 会真的去问这台机器——找可执行文件、
+ * 起 docker 客户端、试绑端口、看 user namespace。所以它花多久取决于跑它的那台机器，
+ * 而默认的 5 秒是照着一台空闲 Linux 机器定的。
+ *
+ * Windows runner 上实测超时（39966247380 的 Windows job：`Test timed out in 5000ms`），
+ * 那里起一次进程要贵得多，而 PATH 还是要一段一段扫的。**升的是超时，不是断言**：
+ * 每一条仍然按原样跑、按原样判，只是不再用一台快机器的秒数去卡另一台慢机器。
+ * 真挂住的话仍然有 CI job 自己的超时兜着，不会变成「永远转圈」。
+ */
+vi.setConfig({ testTimeout: 30_000 })
 
 function context(overrides: Parameters<typeof makeConfig>[0] = {}, env: Record<string, string | undefined> = {}): CommandContext {
   return {
