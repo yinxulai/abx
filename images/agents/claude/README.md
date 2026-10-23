@@ -95,3 +95,23 @@ docker run --rm abx-agent-claude:local claude --version
   **不靠改 flag 绕过去**——那样验的就不是 abx 的真实约束了。
 - 反过来，镜像**不**为这个约束做任何预置（不预建可写目录、不设 `HOME`），
   理由同上：镜像是「一个能跑的 agent 命令」，不是对沙箱参数的补偿。
+
+## 在 abx 的 flag 下跑它，会先撞上两件跟镜像无关的事（实测）
+
+两条都不是这个镜像的问题，但都会让人以为「镜像不对」，所以写在这儿：
+
+- **`--interactive --tty` 要求 docker 客户端自己的 stdin 是终端。**
+  `buildDockerArgs` 里这两个 flag 是写死的（终端里的 `abx open` 需要它们），
+  而 docker 客户端在 stdin 不是终端时直接拒绝，容器根本起不来：
+
+  ```
+  cannot attach stdin to a TTY-enabled container because stdin is not a terminal
+  ```
+
+  也就是说「非交互地起一个舱」这条路今天走不通。要跑就给它一个终端
+  （`script -qec "<命令>" /dev/null`）——`e2e-agent-claude.sh` 就是这么做的，
+  安全相关的 flag 一个都没动。
+- **被挂进舱的路径必须是 docker 共享的宿主路径。** Docker Desktop 只共享一部分
+  （这台机器上实测只有 `$HOME` 下的路径；把 `/tmp` 下的目录挂进去会被拒：
+  `mounts denied: The path /tmp/... is not shared from the host`）。
+  任务目录和 abx 生成的那份配置都在挂载清单里，所以跑 e2e 时的临时目录要落在能共享的地方。
