@@ -6,6 +6,7 @@
   "type": "module",
   "description": "桌面宿主：Electron 主进程与 preload。只做宿主适配（托盘、窗口、IPC），不写领域逻辑。",
   "author": "AlainClaw <yinxulai@hotmail.com>",
+  "homepage": "https://github.com/yinxulai/abx",
   "main": "output/main/index.js",
   "desktopName": "com.yinxulai.abx",
   "scripts": {

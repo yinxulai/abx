@@ -44,7 +44,25 @@ module.exports = {
   // 打包一律 `--publish never`，产物只作为 CI artifact 供下载。
   // 接上更新器时再按 OSW 的写法补 GitHub provider。
   afterPack: 'scripts/macos-adhoc-sign.cjs',
-  // 第一版只做 macOS（见 `apps/www` 的首页文案）。Windows / Linux 的目标等真要做时再加。
+  // Linux 不是发布平台，存在的理由是「开发机能把它跑起来、看得出样子」——
+  // 开发机是 Linux 且没有物理显示器，详见 `apps/docs/specs/overview/platforms.md`。
+  // 产物与 macOS 一样只作为 CI artifact（全程 `--publish never`）。
+  //
+  // `icon` 指回同一张应用图标：Linux 的 .desktop / AppImage 要的是彩色方图，
+  // 而 macOS 那份 `icon-mac.png` 是给 `.icns` 用的，两边不能共用一条配置。
+  linux: {
+    icon: 'build/icon.png',
+    // 必须显式写：不写时 electron-builder 拿包名 `@abx/app` 去推导可执行文件名，
+    // 去掉非法字符后得到 `@abxapp`，AppImage 会直接拒绝：
+    //   executableName contains characters that cannot be safely used in file paths
+    // 写在各平台分支里而不是顶层，是为了不碰 macOS 既有的产物命名。
+    executableName: 'abx',
+    // AppImage 免安装、直接双击；deb 覆盖走包管理器的机器。两个都不需要签名。
+    target: ['AppImage', 'deb'],
+    // freedesktop 分类：abx 是给开发者用的工具，不是系统实用程序。
+    category: 'Development',
+  },
+  // 第一版只做 macOS + Linux（见 `apps/www` 的首页文案）。Windows 的目标等真要做时再加。
   mac: {
     icon: 'build/icon-mac.png',
     // ZIP 是将来 electron-updater 做自动更新用的，DMG 只负责首次安装；
