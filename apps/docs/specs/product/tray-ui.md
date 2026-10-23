@@ -135,7 +135,7 @@ html[data-surface='tray'] body {
 │ header  56px  [icon16] abx                      ⚙   │
 │               气闸运行中 · 凭据全部在舱外            │
 ├─────────────────────────────────────────────────────┤
-│ agents  上排 icon · gap 8 · padding 12/14           │
+│ agents  上排 icon · gap 8 · padding 12/16           │
 │   ┌──────┐ ┌──────┐ ┌──────┐                        │
 │   │  ✳   │ │  ⬡   │ │  ⌘   │   ← 44×44，只有 icon   │
 │   └──────┘ └──────┘ └──────┘                        │
@@ -156,12 +156,12 @@ html[data-surface='tray'] body {
 
 | 区域 | 高度/间距 | 备注 |
 |---|---|---|
-| header | `min-height: 56px`，`padding: 0 14px`，`gap: 10px` | 标志 16px（`--mark-size`，`design-system.md` §5）；**没有方块底**——标志自带容器 |
-| agents | `padding: 12px 14px`，`flex`，`gap: 8px` | **tile 44×44**，只有 icon，**无名字** |
-| section | `padding: 0 14px 12px` | 段落标题 `--text-primary` + 右侧计数 `--text-quaternary` |
-| list 行 | `min-height: 40px`（`--row-height`），`padding: 8px 10px` | 行间分隔 `--border`（装饰性，不用斑马纹） |
-| drop zone | `padding: 12px 10px`，虚线 `--border-strong` | 常驻提示，拖拽悬停时高亮。虚线是**控件边界**，必须 ≥ 3:1 |
-| footer | `padding: 8px 10px`，上边框 `--border` | **两个**动作：`停止全部`（`--danger`）· `退出` |
+| header | `min-height: 56px`，`padding: 0 16px`，`gap: 8px` | 标志 16px（`--mark-size`，`design-system.md` §5）；**没有方块底**——标志自带容器 |
+| agents | `padding: 12px 16px`，`flex`，`gap: 8px` | **tile 44×44**，只有 icon，**无名字** |
+| section | `padding: 0 16px 12px` | 段落标题 `--text-primary` + 右侧计数 `--text-quaternary` |
+| list 行 | `min-height: 40px`（`--row-height`），`padding: 8px 12px` | 行间分隔 `--border`（装饰性，不用斑马纹） |
+| drop zone | `padding: 8px 12px`，虚线 `--border-strong` | 常驻提示，拖拽悬停时高亮。虚线是**控件边界**，必须 ≥ 3:1 |
+| footer | `padding: 8px 12px`，上边框 `--border` | **两个**动作：`停止全部`（`--danger`）· `退出`；**面板还没渲染这一块**（`design-system.md` §4 的刻度上不允许 10px，所以照着刻度写） |
 
 ### 3.1 icon-only 的四条硬规则
 
