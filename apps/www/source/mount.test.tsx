@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderLandingPage } from './entry-server'
 import i18n from './i18n'
 import { mountApp } from './mount'
+import { FULL_PAGE_TIMEOUT } from './test-support'
 
 /**
  * 预渲染只有配上水合才有价值：`createRoot` 会把已有的正文扔掉重画。
@@ -51,7 +52,8 @@ async function prerenderIntoDocument(theme: string, lang: 'zh' | 'en'): Promise<
   return container
 }
 
-describe('mounting the prerendered page', () => {
+// 每一条都预渲染 + 挂载整页，所以用整页那一档超时（理由见 `test-support.tsx`）。
+describe('mounting the prerendered page', { timeout: FULL_PAGE_TIMEOUT }, () => {
   it('hydrates Chinese + dark without replacing the prerendered nodes', async () => {
     const container = await prerenderIntoDocument('dark', 'zh')
 

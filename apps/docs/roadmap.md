@@ -20,6 +20,7 @@
 | agent 清单（镜像 / 持久化目录 / 图标 / 配置模板） | ✅ 已落地（**加一个 agent = 一条数据**；构建期拒绝空的、`latest` 的镜像版本，并有守卫禁止别处再声明 agent）；镜像按 agent id 构建（`build-agent-image.sh <agent-id>`），**codex 已构建、dsh 仍未构建**——镜像没构建时 `abx open <agent>` 在起容器之前就停下来说清该跑哪条命令 |
 | `packages/core/session` 的挂载与 agent 配置生成 | ✅ 已落地（生成最小配置、单文件只读挂载、凭据文件黑名单） |
 | 共享给全部 agent（文件 / 目录，只读） | ✅ 已落地（契约 / 解析四道闸 / `~/.abx/shared.json` 持久化 / 面板列表 / 宿主 IPC；真 docker 验证见 `../packages/toolkit/scripts/e2e-shared.sh`）；**会话接线未做** |
+| 传递窗（舱内产出递给宿主） | ✅ 已落地（`publish` / `open` 两个工具、`/mcp` 舱面入口带令牌、只读 shim 挂进舱、生成配置里的 MCP 注册、交付格与流水；真容器验证见 [`e2e-transom.sh`](../../packages/toolkit/scripts/e2e-transom.sh)，规格 [`overview/transom.md`](./overview/transom.md)）；**HTML/SVG 预览未做（只显示）** |
 | 配置层（zod schema 为唯一真相） | ✅ 已落地（类型从 schema 推导；手写 readers 已删除） |
 | 舱面来源网段校验 | ✅ 已落地（来源网段判定在令牌解析**之前**、令牌加可扫描前缀、审计记来源地址；实测结论：回环必须进默认放行名单，同机进程仅靠令牌挡住） |
 | `apps/www`（官网） | ✅ 已上线 <https://abx-www.yinxulai.workers.dev>（凭据叙事、三步用法、安全边界、明确不承诺项）；构建期预渲染首屏，**关掉 JS 也能取到正文**（55 KB / 3.7k 中文字） |
@@ -34,7 +35,7 @@
 | Linux 打包与 CI | 🟡 AppImage 与 deb 都在本机打出来了，deb 解包后的可执行文件也能起；**CI 流水线尚未在 runner 上跑过，deb 也从未装过** |
 | `apps/docs`（文档站） | ✅ 已上线 <https://abx-docs.yinxulai.workers.dev>（33 页，中文为源语言、英文增量补译，机器审计校验与清单一致）；**英文侧 10 页仍回退中文** |
 
-**当前基线：** `pnpm lint` / `pnpm typecheck` / `pnpm test` 三样全绿，**827 个测试**（58 个文件）；
+**当前基线：** `pnpm lint` / `pnpm typecheck` / `pnpm test` / `pnpm build` 全绿，**1035 个测试**（68 个文件）；
 `pnpm build` 四个包都出产物；`e2e-local.sh` / `e2e-docker.sh` / `e2e-shared.sh` /
 `e2e-persist.sh` 在本机全绿。**Windows 上这四条（lint / typecheck / test / build）在
 `windows-latest` 上跑，见下一节。**
@@ -76,6 +77,16 @@
 这类造不出来的对象 → `it.skipIf(win32)` 且写明理由，跳过了在报告里看得见）·
 Windows 专属规则（盘根 / UNC / 备用数据流 / `PATHEXT` / 大小写不敏感）在 Linux 上
 **跑完整单测**，靠的是「平台是注入的参数」而不是 `process.platform`
+
+> 上面这一段的绿色是**并入 main 之前**那次的。基线换了以后它不再覆盖合并后的树，
+> 所以并入 main 之后必须重跑一遍才算数——见下一次 `Windows` job 的结果。
+
+**传递窗（`e2e-transom.sh`，真容器 + 真 shim + 真 broker，26 条断言）**
+
+舱内算的 sha256 与交付格里那一份相同 · `.png` 真的被打开、`.sh` / 无后缀 / `.html` 只显示 ·
+名字里带 `$(...)` 的文件原样出现在**一个** argv 里且 canary 没有被创建 ·
+舱外路径 / 软链逃逸 / 65 MiB 超限三条拒绝原话 · 账本一行一件事（含拒绝）且不含令牌 ·
+容器里 `claude mcp list` 报 `abx ... ✔ Connected`
 
 ---
 
@@ -121,9 +132,15 @@ Windows 专属规则（盘根 / UNC / 备用数据流 / `PATHEXT` / 大小写不
 | **Windows 托盘图标长什么样** | `icon-win.ico` 的多档尺寸是**按 Electron 的要求**（`.ico` 里要有多分辨率）生成的，不是按观感挑的；跑 CI 的机器没有桌面会话，看不了 |
 | **Windows 安装包（`nsis` / `portable`）** | 产物与 PE 头在 CI 上断言得到，但**没装过、没双击过**；也**没有签名**，所以真机上第一次运行一定弹 SmartScreen |
 | **`decideCellHost()` 接进会话路径** | 判定、候选表、失败文案都已落地并单测；`abx open` 还没调用它。探一次要起一个容器，而那会改到 `e2e-persist.sh` 里「这一次 `docker run` 有几条」那组断言的语义——接线本身是下一步，不是漏掉的一行 |
+| **传递窗的打开动作在 macOS / Windows 上** | 只有 `openCommandFor` 的映射表与单测；`e2e-transom.sh` 里的 `xdg-open` 是替身，真机没点过 |
+| **HTML / SVG 预览** | 这轮没做，它们只显示不打开；「sandbox iframe 不给 allow-scripts」的形态还没有实现 |
+| **真实 agent 主动使用 MCP 工具** | 验到的是「舱内注册了、`claude mcp list` 连得上、工具结果正确」；真 claude 会不会在该用的时候用它，没有验 |
 
-> 上面每一条都对应 [`overview/platforms.md`](./specs/overview/platforms.md) §5.4 里的一行；
-> 那一篇按平台分开写，这里按「什么时候能补上」排。
+> 前四条（平台那几张表）各自对应 [`overview/platforms.md`](./specs/overview/platforms.md) §5.4 里的一行；
+> 那一篇按平台分开写，这里按「什么时候能补上」排。后三条是传递窗这一轮的。
+> 另外：`Windows 上起真容器` 这一条**在合并 main 之后更紧了**——运行期文件那条新挂载
+> （`~/.abx/runtime/<cellId>/abx-mcp-shim.mjs`）走的是同一套挂载闸门，而它在 Windows 上
+> 同样没起过真容器。
 
 ---
 
@@ -151,6 +168,7 @@ Windows 专属规则（盘根 / UNC / 备用数据流 / `PATHEXT` / 大小写不
 - [ ] 三个口（work / inbox / outbox）完整语义
 - [ ] 出舱审核作为**事务日志**而非拦截器
 - [ ] 挂载时 realpath 校验（防符号链接与硬链接逃逸）
+- [x] 传递窗：舱内两个 MCP 工具 → 交付格 → 宿主打开（规格 [`overview/transom.md`](./overview/transom.md)）；HTML/SVG 预览仍未做
 
 ### 阶段 2 · 体验层完成
 

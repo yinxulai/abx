@@ -2,14 +2,16 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { MCP_SHIM_CELL_PATH, MCP_SHIM_FILE_NAME } from '@abx/contracts'
 import { ALL_VOCABULARIES, RUNNING_PLATFORM, RUNNING_RULES, RUNNING_VOCABULARY } from '../test-support'
-import type { SandboxConfigFile, SandboxMount, SandboxStateDir } from './backend'
+import type { SandboxConfigFile, SandboxMount, SandboxRuntimeFile, SandboxStateDir } from './backend'
 import { INSTANCES_ROOT_ENV, defaultInstancesRoot } from './instance'
 import {
   FORBIDDEN_CREDENTIAL_FILE_PATTERNS,
   FORBIDDEN_INSTANCE_ROOT_SUBDIRS,
   MOUNT_POLICY,
   MountPolicyViolation,
+  RUNTIME_FILE_SHAPES,
   assertInstancesRoot,
   assertMountPolicy,
   assertStateDirPolicy,
@@ -844,5 +846,166 @@ describe('共享挂载', () => {
   it('目标带 .. 的共享挂载也拦得住（形状检查前的通用那几条照样生效）', () => {
     const traversal = { source: SHARED.source, target: `/shared${'/../..'}/etc`, mode: 'ro' as const }
     expect(() => check(MOUNT_POLICY.buildMounts(TASK_DIR, WORKDIR, [], [], [traversal]), [traversal])).toThrow(MountPolicyViolation)
+  })
+})
+
+/**
+ * 运行时文件：abx 自己写、只读挂进舱的那一个**会跑起来**的脚本。
+ *
+ * 这一组的分量在于：前面几类挂载进去的是数据（配置、状态、共享的资料），
+ * 而这一类进舱的东西会被 agent 拿去 `node` 起来。所以断言的重点不是「能挂」，
+ * 是**换个名字、换个落点、换个来源都不行**。
+ */
+describe('运行时文件：只读、单文件、形状写死', () => {
+  const TEMP_DIRS: string[] = []
+
+  afterEach(() => {
+    for (const directory of TEMP_DIRS) rmSync(directory, { recursive: true, force: true })
+    TEMP_DIRS.length = 0
+  })
+
+  interface RuntimeFixture {
+    readonly homeDir: string
+    readonly runtimeRoot: string
+    readonly file: SandboxRuntimeFile
+  }
+
+  /** 造一份真实现场：home 在临时目录里，运行时根在 home 下面（和默认值同形）。 */
+  function fixture(cellId = 'claude-20261023-abc'): RuntimeFixture {
+    const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'abx-runtime-')))
+    TEMP_DIRS.push(base)
+    const homeDir = path.join(base, 'home')
+    const runtimeRoot = path.join(homeDir, '.abx', 'runtime')
+    const directory = path.join(runtimeRoot, cellId)
+    mkdirSync(directory, { recursive: true })
+    writeFileSync(path.join(directory, MCP_SHIM_FILE_NAME), '// shim\n')
+    return {
+      homeDir,
+      runtimeRoot,
+      file: { hostPath: path.join(directory, MCP_SHIM_FILE_NAME), cellPath: MCP_SHIM_CELL_PATH },
+    }
+  }
+
+  function check(f: RuntimeFixture, mounts: readonly SandboxMount[], files: readonly SandboxRuntimeFile[]): void {
+    assertMountPolicy({
+      platform: RUNNING_PLATFORM,
+      mounts: [{ source: TASK_DIR, target: WORKDIR, mode: 'rw' }, ...mounts],
+      taskDir: TASK_DIR,
+      workdir: WORKDIR,
+      runtimeFiles: files,
+      runtimeRoot: f.runtimeRoot,
+      homeDir: f.homeDir,
+    })
+  }
+
+  it('buildMounts 把它当成单个只读文件，可写挂载还是只有一个', () => {
+    const f = fixture()
+    const mounts = MOUNT_POLICY.buildMounts(TASK_DIR, WORKDIR, [], [], [], [f.file])
+    expect(mounts).toEqual([
+      { source: TASK_DIR, target: WORKDIR, mode: 'rw' },
+      { source: f.file.hostPath, target: MCP_SHIM_CELL_PATH, mode: 'ro' },
+    ])
+    expect(mounts.filter((mount) => mount.mode === 'rw')).toHaveLength(1)
+  })
+
+  it('形状对、来源在运行时根里：放行——虽然它整个落在 /home 下面', () => {
+    const f = fixture()
+    expect(() => check(f, [{ source: f.file.hostPath, target: f.file.cellPath, mode: 'ro' }], [f.file])).not.toThrow()
+  })
+
+  it('挂成可写 → 拒绝：那等于舱内能改掉宿主要跑的那份代码', () => {
+    const f = fixture()
+    expect(() =>
+      check(f, [{ source: f.file.hostPath, target: f.file.cellPath, mode: 'rw' }], [f.file]),
+    ).toThrow(/只能只读挂载/)
+  })
+
+  it('换个落点 → 拒绝：agent 的配置里写着用 node 跑那一个固定路径', () => {
+    const f = fixture()
+    const hijack = { ...f.file, cellPath: '/usr/local/bin/node' }
+    expect(() => check(f, [{ source: hijack.hostPath, target: hijack.cellPath, mode: 'ro' }], [hijack])).toThrow(
+      /挂回它自己的位置/,
+    )
+  })
+
+  it('换个名字 → 拒绝：表里只有那一个名字，多一个名字就是多一个能跑的东西', () => {
+    const f = fixture()
+    const renamed = { ...f.file, hostPath: path.join(path.dirname(f.file.hostPath), 'evil.mjs') }
+    writeFileSync(renamed.hostPath, '// evil\n')
+    expect(() => check(f, [{ source: renamed.hostPath, target: renamed.cellPath, mode: 'ro' }], [renamed])).toThrow(
+      /只允许 abx-mcp-shim\.mjs/,
+    )
+  })
+
+  it('来源不在运行时根里 → 拒绝，哪怕名字和落点都对', () => {
+    // 这一条挡的是「运行期给的来源」：名字可以撞，位置撞不了。
+    const f = fixture()
+    const outside = { ...f.file, hostPath: path.join(f.homeDir, '.ssh', MCP_SHIM_FILE_NAME) }
+    mkdirSync(path.dirname(outside.hostPath), { recursive: true })
+    writeFileSync(outside.hostPath, '// planted\n')
+    expect(() => check(f, [{ source: outside.hostPath, target: outside.cellPath, mode: 'ro' }], [outside])).toThrow(
+      /不在运行时根/,
+    )
+  })
+
+  it('来源不是一个真文件 → 拒绝，理由说清 docker 会替你造一个空目录', () => {
+    const f = fixture()
+    // 两种「不是真文件」：路径不存在，以及那是个同名目录。
+    const missing = { ...f.file, hostPath: path.join(f.runtimeRoot, 'other-cell', MCP_SHIM_FILE_NAME) }
+    const isDirectory = { ...f.file, hostPath: path.join(f.runtimeRoot, 'as-dir', MCP_SHIM_FILE_NAME) }
+    mkdirSync(isDirectory.hostPath, { recursive: true })
+
+    for (const ghost of [missing, isDirectory]) {
+      expect(() => check(f, [{ source: ghost.hostPath, target: ghost.cellPath, mode: 'ro' }], [ghost]), ghost.hostPath).toThrow(
+        /不是一个存在的文件/,
+      )
+    }
+  })
+
+  it('运行时根本身也过闸：home、系统目录、相对路径都不行', () => {
+    const f = fixture()
+    // 宿主路径一律出自 `HOST`（见文件头那条规矩）。禁挂那一条用 `/禁挂/` 而不是
+    // `/禁挂前缀/`：POSIX 上命中的是「前缀」，Windows 上命中的是「规则」（盘符 +
+    // 保留目录的名字），两句话里唯一共同的词是「禁挂」。
+    for (const [root, pattern] of [
+      [f.homeDir, /宿主 home/],
+      [HOST.join(HOST.systemDir, 'abx'), /禁挂/],
+      [HOST.join('relative', 'runtime'), /绝对路径/],
+      [HOST.fsRoot, /文件系统的根/],
+      [withParentSegment(HOST.systemDir), /不允许出现 \.\./],
+    ] as const) {
+      expect(() =>
+        assertMountPolicy({
+          platform: RUNNING_PLATFORM,
+          mounts: [{ source: TASK_DIR, target: WORKDIR, mode: 'rw' }],
+          taskDir: TASK_DIR,
+          workdir: WORKDIR,
+          runtimeFiles: [f.file],
+          runtimeRoot: root,
+          homeDir: f.homeDir,
+        }),
+        root,
+      ).toThrow(pattern)
+    }
+  })
+
+  it('没有运行时文件时不碰运行时根——环境变量没配不该让会话起不来', () => {
+    // 给的是一个**真的会被拒**的位置（主机的系统目录）：它照样不该被读到，
+    // 因为这一次没有运行时文件，运行时根那道闸根本不该跑。
+    expect(() =>
+      assertMountPolicy({
+        platform: RUNNING_PLATFORM,
+        mounts: [{ source: TASK_DIR, target: WORKDIR, mode: 'rw' }],
+        taskDir: TASK_DIR,
+        workdir: WORKDIR,
+        runtimeRoot: HOST.systemDir,
+        homeDir: HOST.home,
+      }),
+    ).not.toThrow()
+  })
+
+  it('那张形状表只有一条，而且就是 shim 那一个', () => {
+    // 多一条 = 往舱里多挂一个能跑的脚本。改它必须是一次看得见的改动。
+    expect(RUNTIME_FILE_SHAPES).toEqual([{ fileName: MCP_SHIM_FILE_NAME, cellPath: MCP_SHIM_CELL_PATH }])
   })
 })

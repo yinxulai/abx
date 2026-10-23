@@ -23,8 +23,10 @@ import http from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { readFileSync } from 'node:fs'
 import type { AddressInfo } from 'node:net'
-import type { AbxConfig } from '@abx/contracts'
+import { formatBytes, type AbxConfig } from '@abx/contracts'
 import { buildUpstreamIndex } from '../policy/index'
+import type { TransomMcpHandler } from '../transom/mcp'
+import type { TransomSession } from '../transom/service'
 import {
   DEFAULT_ALLOWED_CELL_SUBNETS,
   classifyCellSource,
@@ -59,6 +61,18 @@ export const consoleLogger: BrokerLogger = {
   warn: (message) => process.stderr.write(`${message}\n`),
   error: (message) => process.stderr.write(`${message}\n`),
 }
+
+/**
+ * MCP 请求体的上限：64 KiB。
+ *
+ * 一条 JSON-RPC 消息里装的是路径、名字和参数——几百字节。上限存在的理由是
+ * 「舱内进程能反复触发」，而这个请求体是**读进 broker 进程内存**的：没有上限，
+ * 一个跑飞的 agent 能用几条请求把宿主上这个进程的内存吃掉。
+ *
+ * 拒绝而不是截断：截断出来的是半条 JSON，报错会变成「解析不了」，
+ * 而真正的原因（太大了）就再也看不见了。
+ */
+export const MCP_MAX_REQUEST_BYTES = 64 * 1024
 
 /** 审计条目里那些「这次请求额外发生了什么」的字段。 */
 interface AuditExtra {
@@ -107,6 +121,14 @@ export interface BrokerOptions {
    * 空数组 = 全部拒绝，这是有意的默认方向：判不了就不放行。
    */
   readonly allowedCellSubnets?: readonly string[] | null
+  /**
+   * 传递窗的 MCP 处理器（`/mcp`）。不传就是「这次没接传递窗」——那条路由会回 503。
+   *
+   * 为什么处理器由调用方给、而不是 broker 自己造：它需要交付根、账本和一个打开文件的
+   * 实现（`createTransomService`），而那三样都属于会话编排那一侧。broker 只做一件事：
+   * **把身份解出来，然后把消息交给处理器**。
+   */
+  readonly transom?: TransomMcpHandler | null
   readonly logger?: BrokerLogger
 }
 
@@ -120,8 +142,8 @@ export interface BrokerHandle {
   readonly config: AbxConfig
   /** 令牌 → 舱 id 的注册表。 */
   readonly registry: CellTokenRegistry
-  /** 起舱时登记，返回该舱专属令牌。 */
-  registerCell(cellId: string): string
+  /** 起舱时登记，返回该舱专属令牌。顺带登记这个舱的传递窗会话（有的话）。 */
+  registerCell(cellId: string, session?: TransomSession | null): string
   /** 舱销毁时注销；注销之后原令牌立刻失效。 */
   unregisterCell(cellId: string): boolean
   close(): Promise<void>
@@ -153,6 +175,7 @@ export async function startBroker(options: BrokerOptions): Promise<BrokerHandle>
     registry,
     upstreamIndex,
     allowedCellSubnets,
+    transom: options.transom ?? null,
   })
 
   const hostServer = http.createServer((request, response) => handler('host', request, response))
@@ -237,7 +260,7 @@ export async function startBroker(options: BrokerOptions): Promise<BrokerHandle>
     audit,
     config,
     registry,
-    registerCell: (cellId) => registry.register(cellId),
+    registerCell: (cellId, session) => registry.register(cellId, session),
     unregisterCell: (cellId) => registry.unregister(cellId),
     async close(): Promise<void> {
       if (closed) return
@@ -258,10 +281,11 @@ interface HandlerContext {
   readonly registry: CellTokenRegistry
   readonly upstreamIndex: ReturnType<typeof buildUpstreamIndex>
   readonly allowedCellSubnets: readonly string[]
+  readonly transom: TransomMcpHandler | null
 }
 
 function createHandler(context: HandlerContext) {
-  const { config, audit, log, registry, upstreamIndex, allowedCellSubnets } = context
+  const { config, audit, log, registry, upstreamIndex, allowedCellSubnets, transom } = context
 
   return (face: BrokerFace, request: IncomingMessage, response: ServerResponse): void => {
     const startedAt = performance.now()
@@ -362,6 +386,100 @@ function createHandler(context: HandlerContext) {
     // ── 3. 路由。 ────────────────────────────────────────────────────────
     const route = resolveRoute({ pathname: extraction.pathname, search: url.search, headers: request.headers })
 
+    /**
+     * 传递窗（`/mcp`）。
+     *
+     * 三步：**认得这个舱 → 读一条消息 → 交给处理器**。身份那一侧没有任何新东西：
+     * 上面第 1、2 步已经做过来源与令牌，`cellId` 是从令牌反查出来的，请求体里
+     * 说什么都不影响它是谁。
+     *
+     * 只挂在舱面。宿主面没有身份可解，而传递窗做的每一件事（把文件写进宿主的交付格、
+     * 让宿主打开它）都要落到**某个**舱头上；在一个不校验身份的面上提供这个能力，
+     * 等于让本机任何一个进程拿别人的名义递东西。所以宿主面上直接拒。
+     */
+    async function handleTransom(response: ServerResponse, incoming: IncomingMessage): Promise<void> {
+      if (face !== 'cell') {
+        writeJson(response, 403, {
+          error: 'abx_transom_cell_face_only',
+          detail: '传递窗挂在舱面：它要按舱记身份，而宿主面不校验身份',
+        })
+        await writeAudit('denied-route', 403, {})
+        return
+      }
+      if (transom === null) {
+        // 这个 broker 进程没有接传递窗。说清楚是「没接」，不是「坏了」。
+        writeJson(response, 503, {
+          error: 'abx_transom_unavailable',
+          detail: '这个 broker 没有接传递窗（没有传 transom）；用 abx open 起的会话会接上它',
+        })
+        await writeAudit('denied-route', 503, {})
+        return
+      }
+
+      const session = registry.session(cellId)
+      if (session === null) {
+        // 令牌有效但没登记交付信息：最常见的一种是「接上了一个已经在跑的 broker」——
+        // 那个进程里的注册表不认这次会话。这时**不能猜**一个默认的交付格与根：
+        // 猜出来的根就是「舱内哪个文件能递出去」那个判据本身。
+        writeJson(response, 409, {
+          error: 'abx_transom_session_unknown',
+          detail: `舱 ${cellId} 没有登记传递窗会话（交付格与可写根都不知道）。这个 broker 不是本次会话起的。`,
+        })
+        await writeAudit('denied-route', 409, {})
+        return
+      }
+
+      const body = await readBody(incoming, MCP_MAX_REQUEST_BYTES)
+      if (!body.ok) {
+        writeJson(response, 413, { error: 'abx_transom_body_too_large', detail: body.reason })
+        await writeAudit('denied-route', 413, {})
+        return
+      }
+
+      // 名字不叫 `message`：那个名字在这个文件里是「把错误说成一句话」的函数，
+      // 遮住它会让下面几句报错信息变成编译错误（真的发生过）。
+      let rpcMessage: unknown
+      try {
+        rpcMessage = JSON.parse(body.text)
+      } catch (error) {
+        // JSON-RPC 说解析不了的请求要回 -32700，id 写 null。回一个 HTTP 400 的话，
+        // 客户端的 MCP 实现会把它当成传输层的失败，而不是「这条消息我读不懂」。
+        writeJson(response, 200, {
+          jsonrpc: '2.0',
+          id: null,
+          error: { code: -32700, message: `请求体不是合法的 JSON：${message(error)}` },
+        })
+        await writeAudit('denied-route', 400, {})
+        return
+      }
+
+      let reply: unknown | null
+      try {
+        reply = await transom.handle(rpcMessage, session)
+      } catch (error) {
+        // 处理器抛了说明是 abx 自己出了问题（不是「工具被拒绝」——那条路是
+        // `result.isError`）。回一条 JSON-RPC 错误，让舱内那个 agent 至少能说出
+        // 「传递窗内部出错了」，而不是连不上。
+        log.error(`[abx] 传递窗处理请求时出错：${message(error)}`)
+        writeJson(response, 200, { jsonrpc: '2.0', id: null, error: { code: -32603, message: `传递窗内部出错：${message(error)}` } })
+        await writeAudit('denied-route', 500, {})
+        return
+      }
+
+      if (reply === null) {
+        // 通知：受理了，但没有回复体。202 而不是 204，是为了让「收到了但没什么可说」
+        // 与「路径不对」在日志里能分开。
+        response.writeHead(202)
+        response.end()
+      } else {
+        writeJson(response, 200, reply)
+      }
+      // 审计记的是**这次网络请求**：哪个舱、什么时候、几条消息、回的是哪一类。
+      // 每一份文件递出去这件事记在传递窗自己的账上（更细，见 transom/ledger.ts）。
+      // 两份流水不合并：这里答「谁在什么时候打了什么」，那里答「哪个文件去哪儿了」。
+      await writeAudit('allowed', 200, {})
+    }
+
     if (route.kind === 'health') {
       // 健康检查不进审计：探活是秒级的，进去会把真正的访问记录淹掉。
       writeJson(response, 200, {
@@ -370,6 +488,11 @@ function createHandler(context: HandlerContext) {
         upstreams: config.upstreams.length,
         egressRules: config.egress.length,
       })
+      return
+    }
+
+    if (route.kind === 'mcp') {
+      await handleTransom(response, request)
       return
     }
 
@@ -479,6 +602,37 @@ function closeServer(server: http.Server): Promise<void> {
     // 基本都会保持长连接，不主动掐掉的话 close() 会挂住。
     server.closeAllConnections()
   })
+}
+
+type ReadBodyResult = { readonly ok: true; readonly text: string } | { readonly ok: false; readonly reason: string }
+
+/**
+ * 读一个请求体，超过上限就回一句理由。
+ *
+ * 超限之后**继续把流读完再回**，不是立刻掐掉连接：掐掉的话那个 413 根本发不出去，
+ * 舱内看到的只是「连接被重置」——而「你的请求体太大了」正是它需要知道的那句话。
+ * 继续读不再往数组里放，所以内存是有界的；天真的发送方由 node 自己的 requestTimeout 收尾。
+ */
+async function readBody(request: IncomingMessage, limit: number): Promise<ReadBodyResult> {
+  const chunks: Buffer[] = []
+  let total = 0
+  let overflowed = false
+
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))
+    total += buffer.length
+    if (total > limit) {
+      overflowed = true
+      chunks.length = 0
+      continue
+    }
+    chunks.push(buffer)
+  }
+
+  if (overflowed) {
+    return { ok: false, reason: `MCP 请求体超过上限 ${formatBytes(limit)}。一条 JSON-RPC 消息只有几百字节，这个大小不对。` }
+  }
+  return { ok: true, text: Buffer.concat(chunks).toString('utf8') }
 }
 
 function headerValue(value: string | string[] | undefined): string | undefined {

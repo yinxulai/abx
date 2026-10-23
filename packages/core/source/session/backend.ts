@@ -51,6 +51,26 @@ export interface SandboxStateDir {
   readonly agentId: string
 }
 
+/**
+ * abx 自己的**运行时文件**：由 abx 写出来、以只读方式挂进舱的一个可执行脚本。
+ *
+ * 今天只有一样东西是这一类：传递窗的 shim（`~/.abx/runtime/<cellId>/abx-mcp-shim.mjs`
+ * → `/usr/local/lib/abx/abx-mcp-shim.mjs`）。它和 `SandboxConfigFile` 长得很像
+ * （都是 abx 现写的一个只读文件），但**不能合成一类**，因为它们的判定不一样：
+ * 配置文件的判据是「文件名必须在 agent 注册表里」，而这一类东西的判据是
+ * 「名字与舱内落点必须逐字等于那一张固定的形状表」。合成一类的话，
+ * 「挂进去一个能跑的脚本」就只需要把文件名写成 `settings.json`。
+ *
+ * 这个类型里没有 `mode`——它只能是只读。想挂成可写不是「传错一个参数」，
+ * 得改这个类型，而改类型会有人在评审里看见。
+ */
+export interface SandboxRuntimeFile {
+  /** 宿主上的那个文件，形如 `<运行时根>/<会话 id>/abx-mcp-shim.mjs`。 */
+  readonly hostPath: string
+  /** 舱内落点，形如 `/usr/local/lib/abx/abx-mcp-shim.mjs`。 */
+  readonly cellPath: string
+}
+
 /** 进程的输入输出接到哪儿。 */
 export type SandboxIo =
   /** 直接接到当前终端：agent 多半需要 TTY。 */
@@ -127,6 +147,16 @@ export interface SandboxSpec {
    * 判定本身在 `../broker/cell-host.ts` 的 `needsHostGatewayMapping()` 里。
    */
   readonly addHostGatewayMapping?: string | null
+  /**
+   * 这次会话要挂进舱的**运行时文件**（abx 自己写的脚本），由 `stageTransomShim()`
+   * 落盘。缺省为空数组。
+   *
+   * 与 `agentConfigFiles` 一样是只读的**单文件**挂载，但它进舱的是**可执行的东西**：
+   * 配置是给 agent 读的数据，这个是让 node 跑起来的代码。所以它的形状由
+   * `mount-policy.ts` 里那张固定表逐字钉住（名字 + 舱内落点），
+   * 不是「调用方说挂哪儿就挂哪儿」。
+   */
+  readonly runtimeFiles?: readonly SandboxRuntimeFile[]
   /** 宿主上的任务目录绝对路径。会被挂进舱内的宿主目录之一。 */
   readonly taskDir: string
   /** 任务目录挂进舱内之后的路径，同时也是工作目录。 */

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { renderApp, textOf } from './test-support'
+import { FULL_PAGE_TIMEOUT, renderApp, textOf } from './test-support'
 
 /**
  * 官网是产品的门面，也是唯一一处把安全承诺写死给人看的地方。
@@ -12,7 +12,8 @@ import { renderApp, textOf } from './test-support'
  */
 afterEach(cleanup)
 
-describe('landing page', () => {
+// 每一条都挂载整页，所以用整页那一档超时（理由见 `test-support.tsx`）。
+describe('landing page', { timeout: FULL_PAGE_TIMEOUT }, () => {
   it('leads with exactly one h1 that states the positioning', async () => {
     await renderApp()
 

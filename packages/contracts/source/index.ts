@@ -76,6 +76,22 @@ export type {
   SharedListSnapshot,
 } from './shared-entry'
 
+export {
+  AUTO_OPEN_EXTENSIONS,
+  INLINE_PREVIEW_EXTENSIONS,
+  MAX_DELIVERABLE_BYTES,
+  MCP_SHIM_CELL_PATH,
+  MCP_SHIM_FILE_NAME,
+  NEVER_AUTO_OPEN_EXTENSIONS,
+  TRANSOM_ENDPOINT_PATH,
+  TRANSOM_SERVER_NAME,
+  TRANSOM_SERVER_VERSION,
+  TRANSOM_TOOL_NAMES,
+  classifyDeliverable,
+  formatBytes,
+} from './transom'
+export type { DeliverableClassification, DeliverableDisposition } from './transom'
+
 export { normalizeHost, isIpv4Literal, isValidHostname, isValidDomainPattern, parseDomainPattern } from './domain-pattern'
 export type { DomainPattern, ParseDomainPatternResult } from './domain-pattern'
 

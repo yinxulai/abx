@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -146,10 +146,14 @@ describe('createFileAuditSink', () => {
     directories.length = 0
   })
 
-  function tempFile(): string {
+  function tempDir(): string {
     const directory = mkdtempSync(path.join(tmpdir(), 'abx-audit-'))
     directories.push(directory)
-    return path.join(directory, 'nested', 'audit.jsonl')
+    return directory
+  }
+
+  function tempFile(): string {
+    return path.join(tempDir(), 'nested', 'audit.jsonl')
   }
 
   it('追加写，目录不存在时自己建', async () => {
@@ -204,5 +208,32 @@ describe('createFileAuditSink', () => {
     expect(lines).toHaveLength(2)
     expect(lines[0]).toContain('before-restart')
     expect(lines[1]).toContain('after-restart')
+  })
+
+  it('**一条都没写过**时，建不出审计文件也不许变成未处理的 rejection', async () => {
+    // 建目录是构造时起跑的，而唯一 await 它的地方是 write。broker 完全可能一个
+    // 审计条目都不产生（只探活），那时没人接住那个失败——node 默认会因此终止进程，
+    // 而「审计文件建不出来」该有的表现是「第一次要写的时候写不进去」。
+    const blocked = path.join(tempDir(), 'blocked')
+    writeFileSync(blocked, 'x')
+
+    const seen: unknown[] = []
+    const onUnhandled = (reason: unknown): void => {
+      seen.push(reason)
+    }
+    process.on('unhandledRejection', onUnhandled)
+    try {
+      const sink = createFileAuditSink(path.join(blocked, 'audit.jsonl'))
+      // 未处理的 rejection 是在这一轮跑完之后才判定的，所以给它几个回合。
+      await new Promise((resolve) => setTimeout(resolve, 20))
+
+      expect(seen).toEqual([])
+      // 失败没有被吞掉：真要写的时候照样走到「写不进去」那一步（这里只是不抛给
+      // 调用方——broker 的审计 sink 是「写失败不阻断请求」，它记在 stderr 上）。
+      await expect(sink.write(record())).resolves.toBeUndefined()
+      expect(sink.describe).toContain('audit.jsonl')
+    } finally {
+      process.off('unhandledRejection', onUnhandled)
+    }
   })
 })

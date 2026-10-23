@@ -103,6 +103,15 @@ export const AGENT_CONFIG_TEMPLATE_VARIABLES: readonly string[] = [
   'cellToken',
   /** 这次会话走的上游 id。 */
   'upstreamId',
+  /** 传递窗 MCP 服务在 agent 配置里的名字（`mcpServers` 的键）。 */
+  'mcpServerName',
+  /**
+   * 传递窗 shim 在**舱内**的固定路径。
+   *
+   * 它必须是个变量，不能在各家模板里把路径抄一遍：那个路径同时被挂载策略核对着
+   * （挂载源的 basename 与目标路径都要对得上），抄出来的第二份不会跟着改。
+   */
+  'mcpShimPath',
 ]
 
 export interface AgentConfigFile {
@@ -134,6 +143,20 @@ export interface AgentConfigFile {
    * 渲染器于是与 agent 无关，它只做替换。
    */
   readonly template?: string
+  /**
+   * 这个文件**故意**不落在任何 `statePaths` 里。只有一种情况用得上它。
+   *
+   * 有些 agent 的**用户级**配置只能落在舱内 home 的根上：claude 的 MCP 服务器注册
+   * 就写在 `~/.claude.json`（实测：写进同目录的 `~/.claude/settings.json` 不被认，
+   * `claude mcp list` 会说一个服务器都没有）。它是用户级配置，当然不跟任何一个
+   * 「历史目录」走。
+   *
+   * 这个标记存在的意义是**让例外留痕**：默认规则是「生成的配置必须落在持久化目录里」，
+   * 破例要写出来并说明，否则下一个人分不清这是设计还是漏了。它同时被限死在一个形状上
+   * （必须是 `~/<名字>`、必须是 `generated`），见 `agentManifestProblems()`——
+   * 不然它会变成一条通往任意路径的后门。
+   */
+  readonly outsideStatePaths?: true
   readonly note: string
 }
 
@@ -259,6 +282,31 @@ export const AGENT_DEFINITIONS: readonly AgentDefinition[] = [
         ].join('\n'),
         note: '主配置：`env` 块里的端点与 token。同目录的 `.credentials.json` 是账户 OAuth 凭据，绝不进舱。',
       },
+      {
+        path: '~/.claude.json',
+        format: 'json',
+        generated: true,
+        // 它落在舱内 home 的**根**上，任何 statePaths 都不是它。理由是实测出来的：
+        // MCP 服务器只认用户级这份文件（`~/.claude/settings.json` 里的 mcpServers 不生效）。
+        outsideStatePaths: true,
+        template: [
+          '{',
+          '  "mcpServers": {',
+          '    "${mcpServerName}": {',
+          '      "command": "node",',
+          '      "args": ["${mcpShimPath}"]',
+          '    }',
+          '  }',
+          '}',
+          '',
+        ].join('\n'),
+        note:
+          '传递窗：把 abx 的 MCP 服务器注册成用户级的 `mcpServers.abx`，指向舱内固定路径上的 shim。' +
+          '命令是 `node`（镜像基于 node:22-slim，`/usr/local/bin/node` 在）。' +
+          '整份文件由 abx 现写、只读挂进去，所以 claude 记在里面的那些本机状态（项目信任、onboarding）活不过一次会话——' +
+          '这是有意的：那份状态属于宿主上的 claude，不属于舱里的这一个。回连地址与令牌不在配置里，' +
+          'shim 从舱内环境变量读（`ABX_BROKER_ORIGIN` / `ABX_CELL_TOKEN`）。',
+      },
     ],
     status: 'stable',
     note: 'ANTHROPIC_AUTH_TOKEN 是 Claude Code 认的变量名；占位符会被 broker 无条件换掉。路径与字段名以 OSW 客户端注册表为准：`~/.claude/settings.json` 的 `env.ANTHROPIC_BASE_URL` / `env.ANTHROPIC_AUTH_TOKEN`。',
@@ -301,8 +349,15 @@ export const AGENT_DEFINITIONS: readonly AgentDefinition[] = [
           'base_url = "${baseUrl}"',
           'wire_api = "responses"',
           '',
+          '# 传递窗：舱内做出来的东西从这里递给宿主。',
+          '# 这是 MCP 的 stdio 服务，命令是 node（镜像基于 node:22-slim）。',
+          '# 回连地址与令牌不在配置里，shim 从舱内环境变量读。',
+          '[mcp_servers.${mcpServerName}]',
+          'command = "node"',
+          'args = ["${mcpShimPath}"]',
+          '',
         ].join('\n'),
-        note: '主配置：`model_provider` 指到 `model_providers.<id>` 表项（`base_url` / `wire_api`）。同目录的 `auth.json` 是登录凭据，绝不进舱。',
+        note: '主配置：`model_provider` 指到 `model_providers.<id>` 表项（`base_url` / `wire_api`），外加传递窗的 `mcp_servers.<id>`。同目录的 `auth.json` 是登录凭据，绝不进舱。',
       },
     ],
     status: 'stable',
@@ -354,7 +409,7 @@ export const AGENT_DEFINITIONS: readonly AgentDefinition[] = [
     status: 'unconfirmed',
     // 这一条还是占位：命令名与配置字段名都没有权威来源，`abx open dsh` 会照跑，
     // 但 doctor 和 open 都会把这条提示打出来。
-    note: '待确认：dsh 的命令名尚未核实。生成进 ~/.dsh/settings.yaml 的那份配置按 OSW 注册表里的 route 形状写，字段名（displayName / api / baseURL / headers）还需在真实的 ~/.dsh/settings.yaml 里核对一次才能转 stable。镜像也还没建（`image.version` 是 `unbuilt`）。',
+    note: '待确认：dsh 的命令名尚未核实。生成进 ~/.dsh/settings.yaml 的那份配置按 OSW 注册表里的 route 形状写，字段名（displayName / api / baseURL / headers）还需在真实的 ~/.dsh/settings.yaml 里核对一次才能转 stable。镜像也还没建（`image.version` 是 `unbuilt`）。**传递窗没有登记**：它的 MCP 注册写在哪、叫什么名字，都要对着真实的 dsh 核一次才能写——编一个字段名比不写更坏，那会让人以为它已经通了。',
   },
 ]
 
@@ -521,6 +576,27 @@ export function agentManifestProblems(definitions: readonly AgentDefinition[] = 
       if (!file.generated && file.template !== undefined) {
         report(agent, `${file.path} 没有 generated 却有 template：不生成的文件不会有人渲染它，模板只会误导下一个人。`)
       }
+
+      // 例外形状的检查放在 `continue` **前面**：它跟模板没关系（标错了这件事，
+      // 有没有模板都成立），放到后面的话，一条「不生成却标了例外」的清单会因为
+      // 没有模板而被跳过，报出来的是另一条问题。
+      // 例外只有一种形状：舱内 home 根上的那一个文件，而且是 abx 现写的。
+      // 不这么限死的话，`outsideStatePaths` 就是一条通往任意宿主路径的后门
+      // （`/etc/...`、`~/../` 都写得出来），而它看起来只是一个布尔字段。
+      if (file.outsideStatePaths === true) {
+        const home = file.path.split('/').slice(0, -1).join('/')
+        if (home !== '~') {
+          report(
+            agent,
+            `${file.path} 标了 outsideStatePaths，但它不在舱内 home 的根上（${home}）：` +
+              `这个例外只给「舱内 home 根上的那一个文件」这一种形状（~/<名字>），别的路径一律要落在持久化目录里。`,
+          )
+        }
+        if (!file.generated) {
+          report(agent, `${file.path} 标了 outsideStatePaths 却不是 generated：不生成的文件既不落盘也不挂载，例外没有意义。`)
+        }
+      }
+
       if (file.template === undefined) continue
 
       for (const name of templateVariableNames(file.template)) {
@@ -537,11 +613,36 @@ export function agentManifestProblems(definitions: readonly AgentDefinition[] = 
       const inside = agent.statePaths.some(
         (statePath) => directory === statePath.path || directory.startsWith(`${statePath.path}/`),
       )
-      if (!inside) {
+      if (!inside && file.outsideStatePaths !== true) {
         report(
           agent,
           `${file.path} 不在任何 statePaths 里面（${agent.statePaths.map((statePath) => statePath.path).join('、')}）：` +
-            `配置文件要么落进持久化目录、跟着它一起挂进舱，要么就没人会去读它。`,
+            `配置文件要么落进持久化目录、跟着它一起挂进舱，要么就没人会去读它。` +
+            `确有用例（用户级配置只能落在舱内 home 根上）时写 outsideStatePaths: true，并把理由写进 note。`,
+        )
+      }
+      if (inside && file.outsideStatePaths === true) {
+        report(agent, `${file.path} 标了 outsideStatePaths，可它本来就在 statePaths 里面：标错了，删掉。`)
+      }
+    }
+
+    // 传递窗：**stable 的 agent 必须把 shim 注册上**。
+    //
+    // 加一个 agent 时最容易漏的就是这一步——配置照样生成、会话照样起得来，
+    // 只是舱内的 agent 永远递不出东西，而且要等到有人真去用才发现。
+    // 判据是模板里出现 `${mcpShimPath}`：路径本身不许抄进模板，只能来自那个变量。
+    //
+    // 只对 stable 要求：`unconfirmed` 的 agent 连自己的配置文件都没核实过，
+    // 编一个 MCP 注册字段进去只会让「它已经通了」这件事看起来成立。
+    if (agent.status === 'stable') {
+      const registered = agent.configFiles.some(
+        (file) => file.generated && (file.template ?? '').includes('${mcpShimPath}'),
+      )
+      if (!registered) {
+        report(
+          agent,
+          '没有登记传递窗：stable 的 agent 至少要让一份生成的配置里出现 ${mcpShimPath}，' +
+            '否则舱内的 agent 做出来的东西永远递不出来（见 transom.ts）。',
         )
       }
     }

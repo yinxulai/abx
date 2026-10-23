@@ -15,8 +15,11 @@
 
 import { existsSync, statSync } from 'node:fs'
 import path from 'node:path'
-import { AGENT_IMAGE_UNBUILT, agentIds, agentImageRef, findAgent } from '@abx/contracts'
+import { AGENT_IMAGE_UNBUILT, MCP_SHIM_CELL_PATH, MCP_SHIM_FILE_NAME, agentIds, agentImageRef, findAgent } from '@abx/contracts'
 import { collectSecretEnvNames } from '../broker/index'
+import { defaultOutboxRoot, outboxDirFor } from '../transom/outbox'
+import type { TransomSession } from '../transom/service'
+import { defaultRuntimeRoot, runtimeDirFor, stageTransomShim } from '../transom/shim'
 import {
   appendSessionRecord,
   assertInstancesRoot,
@@ -141,6 +144,14 @@ export async function runOpen(input: OpenInput): Promise<number> {
   // 但舱内拿到的是可写权限，改坏了回不来。
   const risky = findRiskyFilesInTaskDir(taskDir)
 
+  // 传递窗的 shim 会从哪儿挂进舱。**只算路径**，落盘在起容器之前（见下），
+  // 所以干跑报的和真跑挂的是同一个字符串。
+  //
+  // 运行时根只从配置出来的 env 读默认值，而挂载那侧（`mount-policy`）用同一个
+  // 环境变量自己再算一遍——CLI 里 `context.env` 就是 `process.env`，两处一定一致。
+  const shimDirectory = runtimeDirFor(defaultRuntimeRoot(context.env), cellId)
+  const shimHostPath = path.join(shimDirectory, MCP_SHIM_FILE_NAME)
+
   if (options.dryRun) {
     // 干跑只生成**内容**、不落盘：这时候还没有舱令牌（broker 还没起），
     // 而清单里要报的是路径，路径不依赖令牌。实例目录也一个都不建。
@@ -161,6 +172,7 @@ export async function runOpen(input: OpenInput): Promise<number> {
         instance,
         image,
         configPaths: plan.files.map((file) => file.cellPath),
+        shimHostPath,
       }),
     )
     return 0
@@ -205,12 +217,32 @@ export async function runOpen(input: OpenInput): Promise<number> {
   const lease = await ensureBroker({ context, backend: backendId, cellHost, bindHosts: cellBindHosts, log })
   const cellOrigin = cellOriginFor(context.config, cellHost)
 
+  // 传递窗的 shim：一个**只读的单文件挂载**，和 agent 配置文件同一套机制。
+  //
+  // 它是「舱内多出来的东西」的全部——没有新令牌（用的是这个舱自己的那一个）、
+  // 没有新端口（它往 broker 发，不监听）、没有宿主上的新能力（判定全在宿主这侧）。
+  //
+  // 和配置一样只在 docker 后端做：local 后端跑在宿主上，agent 直接就能跑这个文件，
+  // 没有挂载这回事；硬造一个「挂哪儿」的说法只会让人以为 local 也隔着什么。
+  const shim = backendId === 'docker' ? stageTransomShim({ directory: shimDirectory }) : null
+
   // 舱的令牌从注册表来，不再复用宿主固定令牌。`binding.cellId` 与令牌绑定，
   // 也是审计里会出现的身份；正常情况下就是这次的 cellId。
   //
   // 顺序不能反：**先注册，再生成配置**。生成出来的配置里必须嵌这个舱自己的令牌 ——
   // 用宿主固定令牌的话，舱内请求会落到 `default` 舱上，审计里的归属就是错的。
-  const binding = lease.registerCell(cellId)
+  //
+  // 会话（agentId + 可写根）也一起登记：那几样就是「舱内哪个文件可以被递出来」的
+  // 全部判据，而它们只在这里知道。**它是宿主这一侧的事实，舱内说什么都不影响它。**
+  const transomSession: TransomSession = {
+    cellId,
+    agentId: agent.id,
+    roots: [
+      { cellPath: context.config.session.workdir, hostPath: taskDir, kind: 'workdir' },
+      ...stateDirs.map((dir) => ({ cellPath: dir.cellPath, hostPath: dir.hostPath, kind: 'state' as const })),
+    ],
+  }
+  const binding = lease.registerCell(cellId, transomSession)
 
   // 生成配置 → 落盘 → 只读挂进去。**宿主那份 settings.json 一个字都不进舱**：
   // 里面可能写着别家的 key 和别的端点，而同目录还躺着凭据文件（见 session/agent-config.ts）。
@@ -267,6 +299,7 @@ export async function runOpen(input: OpenInput): Promise<number> {
       cellHome,
       agentConfigFiles: staged === null ? [] : toSandboxConfigFiles(staged),
       stateDirs,
+      runtimeFiles: shim === null ? [] : [{ hostPath: shim.hostPath, cellPath: MCP_SHIM_CELL_PATH }],
       env,
       forbiddenEnvNames: collectSecretEnvNames(context.config.upstreams),
       limits: context.config.session.limits,
@@ -288,6 +321,15 @@ export async function runOpen(input: OpenInput): Promise<number> {
   }
   for (const file of staged?.files ?? []) {
     log(`[abx] 配置 ${file.hostPath} → ${file.cellPath}（只读；abx 生成，宿主那份不进舱）`)
+  }
+  if (shim !== null) {
+    log(`[abx] 传递窗 ${shim.hostPath} → ${MCP_SHIM_CELL_PATH}（只读；agent 用它把做好的东西递给你）`)
+  }
+  if (lease.transom === null) {
+    log(`[abx] 传递窗 不可用：broker 不是本次会话起的（publish / open 会回 409）。`)
+  } else {
+    log(`[abx] 交付格 ${outboxDirFor(lease.transom.outboxRoot, cellId)}（publish 出来的东西落在这儿）`)
+    log(`[abx] 交付流水 ${lease.transom.ledgerPath}`)
   }
   log(`[abx] 上游 ${upstream.id} ← ${upstream.secretEnv ?? upstream.secretFile ?? '(未配置)'}`)
   log(`[abx] 审计 ${context.config.broker.auditPath}`)
@@ -315,10 +357,14 @@ export async function runOpen(input: OpenInput): Promise<number> {
   // 只关掉自己起的那个。接上别人已经在跑的 broker 时不动它——
   // 那可能是用户前台开着的，杀了会把别的会话一起带走。
   if (lease.spawned) await lease.stop()
+  // 传递窗的账收尾：等最后几条记录落盘再走。「记不下来的交付不算数」这句话，
+  // 在进程退出这一步也要成立——上一句话刚说完就退出，那一行就没了。
+  await lease.transom?.close()
 
   log('')
   if (exit.signal !== null) log(`[abx] agent 被信号 ${exit.signal} 终止`)
   log(`[abx] 会话结束（退出码 ${exit.code ?? '未知'}），容器已随退出销毁。`)
+  if (lease.transom !== null) log(`[abx] 交付格：${outboxDirFor(lease.transom.outboxRoot, cellId)}`)
   log(`[abx] 实例流水：${instance.sessionLogPath}`)
   log(`[abx] 审计流水：abx audit --tail`)
 
@@ -337,6 +383,8 @@ interface RenderPlanInput {
   readonly image: string
   /** 本来会生成并挂进去的那几个配置文件（只列舱内路径）。 */
   readonly configPaths: readonly string[]
+  /** 传递窗 shim 的挂载源（宿主上那个文件）。 */
+  readonly shimHostPath: string
 }
 
 function renderPlan(input: RenderPlanInput): string {
@@ -357,6 +405,8 @@ function renderPlan(input: RenderPlanInput): string {
       ? [
           `  实例目录     ${input.instance.stateDir} → ${input.instance.cellPath}（可写，rw；历史留在这儿，所以能跨会话）`,
           `  生成的配置   ${input.configPaths.join('、')}（只读，ro；abx 现写，宿主那份不进舱）`,
+          `  传递窗 shim  ${input.shimHostPath} → ${MCP_SHIM_CELL_PATH}（只读，ro；agent 用它把做好的东西递出来）`,
+          `  交付格       ${outboxDirFor(defaultOutboxRoot(context.env), input.cellId)}（publish 出来的东西落在这儿，宿主打开它）`,
           `  实例流水     ${input.instance.sessionLogPath}（只写宿主，不挂进舱）`,
           `  不挂载       /home、用户主目录、docker socket；也不挂任何配置**目录**（同目录有凭据）`,
         ]

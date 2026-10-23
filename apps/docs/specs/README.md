@@ -96,6 +96,7 @@
 | 核心模块架构 | [architecture.md](./overview/architecture.md) | 目标结构、单向依赖规则、contracts / policy / broker / session / mounts 的边界与接口、后端选择策略（docker 优先 / local 不做回退 / 加后端的口子）、安全不变量清单、文件闸口、舱令牌投递、真实 Docker 验证结论 |
 | 平台差异与三平台链路 | [platforms.md](./overview/platforms.md) | 三个平台各自的角色（macOS 发布 / Windows 日常测试 / Linux 开发机）、必须按平台分叉的十二处（沙箱 / 托盘图标 / 托盘锚点 / 透明窗口 / 拖放 / 字体 / 主题 / 宿主路径规则 / 可执行文件查找 / 分隔符与大小写 / 舱内路径 / 打包目标）、为什么平台必须是注入的参数、舱面地址拆成「绑哪张网卡」与「告诉舱内哪个地址」、无头验证入口与四份产物、**按平台分开列的**实测结论与尚未取得证据的判断 |
 | 实例持久化 | [persistence.md](./overview/persistence.md) | 为什么用宿主目录而不是留着容器、为什么按实例而不是按舱、整目录 rw 而不是子路径白名单、嵌套只读的实测结果、两类可写挂载与四道闸 |
+| 传递窗（舱内产出递给宿主） | [transom.md](./overview/transom.md) | 两个固定工具（publish / open）、shim 与 `/mcp` 的链路、四道闸（来源 / 落点 / 大小 / 记账）、白名单与 HTML/SVG 只显示的决定、打开不经过 shell、真容器证据 |
 
 **这两份冲突时**：产品取舍看 `design.md`，技术边界看 `architecture.md`。
 `architecture.md` §17 记录了它对 `design.md` 的修正，§19 记录了实测推翻的假设。

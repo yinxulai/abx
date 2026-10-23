@@ -161,7 +161,8 @@ export function createDockerBackend(options: DockerBackendOptions = {}): Sandbox
       const agentConfigFiles = spec.agentConfigFiles ?? []
       const stateDirs = spec.stateDirs ?? []
       const sharedMounts = spec.sharedMounts ?? []
-      const mounts = MOUNT_POLICY.buildMounts(taskDir, spec.workdir, agentConfigFiles, stateDirs, sharedMounts)
+      const runtimeFiles = spec.runtimeFiles ?? []
+      const mounts = MOUNT_POLICY.buildMounts(taskDir, spec.workdir, agentConfigFiles, stateDirs, sharedMounts, runtimeFiles)
       assertMountPolicy({
         platform: spec.platform,
         mounts,
@@ -170,6 +171,7 @@ export function createDockerBackend(options: DockerBackendOptions = {}): Sandbox
         agentConfigFiles,
         stateDirs,
         sharedMounts,
+        runtimeFiles,
         cellHome: spec.cellHome,
       })
 

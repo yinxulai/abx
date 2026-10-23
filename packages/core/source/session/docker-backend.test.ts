@@ -10,11 +10,11 @@
  */
 
 import { EventEmitter } from 'node:events'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { agentConfigFileNames } from '@abx/contracts'
+import { MCP_SHIM_CELL_PATH, MCP_SHIM_FILE_NAME, agentConfigFileNames } from '@abx/contracts'
 import { RUNNING_PLATFORM, RUNNING_VOCABULARY } from '../test-support'
 import type { SandboxSpec } from './backend'
 import { buildDockerArgs, containerName, missingDockerMessage } from './docker-backend'
@@ -483,5 +483,56 @@ describe('后端契约', async () => {
     // POSIX 上没有 PATHEXT 这回事，那句话就不该提它——提了等于把人引到一条
     // 在那台机器上不存在的路上。
     expect(missingDockerMessage('docker', 'linux')).not.toContain('PATHEXT')
+  })
+})
+
+describe('运行时文件：一个只读文件挂到固定的落点', async () => {
+  const { createDockerBackend } = await import('./docker-backend')
+
+  const tempDirs: string[] = []
+
+  afterEach(() => {
+    for (const directory of tempDirs) rmSync(directory, { recursive: true, force: true })
+    tempDirs.length = 0
+  })
+
+  /** 真的写一份出来：闸门要求来源是个存在的文件。 */
+  function shimFixture(cellId = 'claude-20261023-ab12cd') {
+    const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'abx-docker-rt-')))
+    tempDirs.push(base)
+    const runtimeRoot = path.join(base, 'runtime')
+    const directory = path.join(runtimeRoot, cellId)
+    mkdirSync(directory, { recursive: true })
+    writeFileSync(path.join(directory, MCP_SHIM_FILE_NAME), '// abx shim\n')
+    const file = { hostPath: path.join(directory, MCP_SHIM_FILE_NAME), cellPath: MCP_SHIM_CELL_PATH }
+    return { runtimeRoot, file }
+  }
+
+  it('一条 -v，:ro，落点是那个写死的舱内路径，可写的仍然只有任务目录', () => {
+    const { file } = shimFixture()
+    const current = spec({ runtimeFiles: [file] })
+    const volumes = allFlagValues(
+      buildDockerArgs(current, MOUNT_POLICY.buildMounts(current.taskDir, current.workdir, [], [], [], [file])),
+      '--volume',
+    )
+
+    expect(volumes).toEqual([`${TASK_DIR}:/workspace:rw`, `${file.hostPath}:${MCP_SHIM_CELL_PATH}:ro`])
+    expect(volumes.filter((volume) => volume.endsWith(':rw'))).toEqual([`${TASK_DIR}:/workspace:rw`])
+  })
+
+  it('来源换成一个同名的假文件时，起容器之前就被拒：spawn 都不会发生', async () => {
+    let spawned = false
+    const backend = createDockerBackend({
+      spawnProcess: (() => {
+        spawned = true
+        return new EventEmitter()
+      }) as never,
+    })
+    const planted = { hostPath: path.join(homedir(), '.ssh', MCP_SHIM_FILE_NAME), cellPath: MCP_SHIM_CELL_PATH }
+
+    await expect(
+      backend.create(spec({ runtimeFiles: [planted] }), { mode: 'pipe', onStdout: () => undefined, onStderr: () => undefined }),
+    ).rejects.toThrow(/不在运行时根|不是一个存在的文件/)
+    expect(spawned).toBe(false)
   })
 })

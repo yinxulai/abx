@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { renderApp, textOf } from '../test-support'
+import { FULL_PAGE_TIMEOUT, renderApp, textOf } from '../test-support'
 
 /**
  * 「开始使用」的判据是**它没有撒谎**：
@@ -15,7 +15,8 @@ afterEach(cleanup)
 
 const section = () => screen.getByRole('region', { name: /三步|Three steps/ })
 
-describe('getting started', () => {
+// 每一条都挂载整页，所以用整页那一档超时（理由见 `test-support.tsx`）。
+describe('getting started', { timeout: FULL_PAGE_TIMEOUT }, () => {
   it('stays at three steps', async () => {
     await renderApp('zh')
 

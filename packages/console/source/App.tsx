@@ -1,5 +1,5 @@
 import type { SharedEntry, SharedEntryKind, SharedListSnapshot } from '@abx/contracts'
-import { AGENT_DEFINITIONS } from '@abx/contracts/agents'
+import { AGENT_DEFINITIONS, AGENT_IMAGE_UNBUILT } from '@abx/contracts/agents'
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
 import { getBridge } from './bridge'
 import { AgentStatusRow, type PanelAgent } from './components/AgentStatusRow'
@@ -11,7 +11,14 @@ import { useReportHeight } from './hooks/useReportHeight'
 
 // 面板里那一排就是舱内能起的 agent，名字取自注册表（`@abx/contracts/agents`），
 // 不在 UI 里再抄一份：加一个 agent 只该改注册表。
-const PANEL_AGENTS: readonly PanelAgent[] = AGENT_DEFINITIONS.map((agent) => ({
+//
+// **只留已安装的**（`tray-ui.md` §3.1 ④）：镜像还没构建的 agent 不进托盘。这一排现在只有
+// 图标，而一个图标代表不了一个还没装的 agent——它既没有可辨认的身份，也没有可执行的动作。
+// 「按注册表现算」这件事在这里同样是判据：镜像建出来那天，它自己会出现在这一排，
+// 没有一行界面代码要改。
+const PANEL_AGENTS: readonly PanelAgent[] = AGENT_DEFINITIONS.filter(
+  (agent) => agent.image.version !== AGENT_IMAGE_UNBUILT,
+).map((agent) => ({
   id: agent.id,
   label: agent.label,
   // 图标也来自注册表；没有的 agent 就是 undefined，方块回退到首字母。
@@ -121,7 +128,7 @@ export function App() {
 
   return (
     <PanelCard
-      runningCount={runningIds.length}
+      running={runningIds.length > 0}
       dragging={dragging}
       cardRef={cardRef}
       onDragOver={handleDragOver}
@@ -158,7 +165,7 @@ export function App() {
         {/* 没进来的那几条不进列表，原因写在共享区下面。 */}
         <SharedRejectionList rejected={snapshot.rejected} />
 
-        <DropZone hasEntries={rows.length > 0} dragging={dragging} />
+        <DropZone dragging={dragging} />
       </section>
     </PanelCard>
   )

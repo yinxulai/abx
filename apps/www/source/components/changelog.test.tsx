@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { renderApp, textOf } from '../test-support'
+import { FULL_PAGE_TIMEOUT, renderApp, textOf } from '../test-support'
 
 /**
  * 更新日志最容易变成两种谎话：编一个发布日期，或者把「打算做」写成「已经做完」。
@@ -11,7 +11,8 @@ afterEach(cleanup)
 
 const section = () => screen.getByRole('region', { name: /只记发布过的东西|Only what has been released/ })
 
-describe('changelog', () => {
+// 每一条都挂载整页，所以用整页那一档超时（理由见 `test-support.tsx`）。
+describe('changelog', { timeout: FULL_PAGE_TIMEOUT }, () => {
   it('has exactly one entry, and it is the unreleased one', async () => {
     await renderApp('zh')
 

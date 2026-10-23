@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { renderApp, textOf } from '../test-support'
+import { FULL_PAGE_TIMEOUT, renderApp, textOf } from '../test-support'
 
 /**
  * 下载区的判据只有一条，但它比看上去重要：**没有东西可下载时，一个链接都不许有**。
@@ -11,7 +11,8 @@ afterEach(cleanup)
 
 const section = () => screen.getByRole('region', { name: /macOS 版|macOS, in progress/ })
 
-describe('download section', () => {
+// 每一条都挂载整页，所以用整页那一档超时（理由见 `test-support.tsx`）。
+describe('download section', { timeout: FULL_PAGE_TIMEOUT }, () => {
   it('says the installer does not exist yet', async () => {
     await renderApp('zh')
 
