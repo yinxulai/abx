@@ -249,8 +249,11 @@ describe('resolveSharedMounts · 凭据文件', () => {
     expect(mounts).toEqual([])
     expect(rejected).toHaveLength(1)
     const reason = rejected[0]?.reason ?? ''
-    expect(reason).toContain('notes/.env')
-    expect(reason).toContain('deploy/tls.pem')
+    // 列出来的是**宿主**相对路径，分隔符跟着宿主走（`shared.ts` 的 `relativeTo`
+    // 写明了这个取舍：用户要拿这一行去自己的文件管理器里找那个文件）。
+    // 所以期望值也得按宿主拼，不能写死 `/`。
+    expect(reason).toContain(RUNNING_RULES.path.join('notes', '.env'))
+    expect(reason).toContain(RUNNING_RULES.path.join('deploy', 'tls.pem'))
     expect(reason).toContain('整个目录')
   })
 

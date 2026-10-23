@@ -224,14 +224,22 @@ describe('生成的 agent 配置：逐个文件、只读', async () => {
   })
 
   it('没有一条挂载是目录形态——目录里躺着凭据文件', () => {
-    for (const volume of allFlagValues(configArgs([SETTINGS, CODEX_CONFIG]), '--volume').slice(1)) {
-      const [source, , mode] = volume.split(':')
-      expect(mode).toBe('ro')
+    const files = [SETTINGS, CODEX_CONFIG]
+    const volumes = allFlagValues(configArgs(files), '--volume').slice(1)
+
+    for (const [index, volume] of volumes.entries()) {
+      const file = files[index]!
+      // 解析走**后缀**，不走 `split(':')`：Windows 的挂载源自带一个冒号
+      // （`C:\Users\dev\...`），从左边数的第三段只是路径的一部分，
+      // 权限位那一格于是永远读成路径——断言会红在一个跟权限无关的地方。
+      const suffix = `:${file.cellPath}:ro`
+      expect(volume.endsWith(suffix)).toBe(true)
+      const source = volume.slice(0, volume.length - suffix.length)
+
       // 源的 basename 必须是注册过的配置文件名。目录形态（`…/agents/claude`）
       // 在这里露馅：它没有任何一个配置文件名。
-      // 源的分隔符跟着宿主走，`path.basename` 用的也是宿主的——两边一致。
-      expect(agentConfigFileNames()).toContain(path.basename(source!))
-      // 舱内那头必须是**目录**形态的挂载点被拒：它后面直接跟 `:`，中间没有文件名。
+      expect(agentConfigFileNames()).toContain(path.basename(source))
+      // 舱内那一头是**文件**：它前面挨着宿主源的分隔冒号，后面直接跟 `:ro`。
       expect(volume).not.toContain(':.claude:')
       expect(volume).not.toContain(':.codex:')
     }

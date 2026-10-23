@@ -134,8 +134,15 @@ describe('renderAgentConfig / 注册表对账', () => {
         expect(file.format).toBe(registered.format)
         // 舱内路径 = 注册表里的 `~/...` 展开之后的样子，而且是绝对路径：
         // 挂载参数只认绝对路径，agent 也只去那个固定的位置找配置（D2）。
-        expect(file.cellPath).toBe(path.join(HOME, registered.path.slice(2)))
-        expect(path.isAbsolute(file.cellPath)).toBe(true)
+        //
+        // **拼它的是 `path.posix`，不是宿主那个 `path`。** 舱内永远是 Linux，
+        // 所以这个路径在 Windows 上也必须是 `/home/dev/.claude/settings.json`；
+        // 用 `path.join` 会拼出 `\home\dev\.claude\settings.json`，而那是个
+        // **相对路径**（Windows 上 `\` 开头指当前盘），下面那句 isAbsolute 会红。
+        expect(file.cellPath).toBe(path.posix.join(HOME, registered.path.slice(2)))
+        expect(path.posix.isAbsolute(file.cellPath)).toBe(true)
+        // 它还是个**舱内**路径：反斜杠一个都不该有。
+        expect(file.cellPath).not.toContain('\\')
       }
       expect(rendered.files.length).toBeGreaterThan(0)
     }

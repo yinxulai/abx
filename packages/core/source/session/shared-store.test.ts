@@ -108,7 +108,13 @@ describe('写与读', () => {
     writeSharedEntries(listPath, [entry(HOST.underHome('notes')), entry(HOST.underHome('data'))])
 
     expect(readSharedEntries(listPath)).toHaveLength(2)
-    expect(readFileSync(listPath, 'utf8')).toContain(HOST.underHome('data'))
+    // 这一条要验的是「文件在磁盘上真的被换过了」，所以读原始文本。
+    // 但比的东西必须是**编码之后**的样子：落盘的是 JSON，Windows 路径里的每个 `\`
+    // 在文件里都写成 `\\`。直接 `toContain(路径)` 会在 Windows 上红，
+    // 而它想说的跟分隔符毫无关系。
+    const raw = readFileSync(listPath, 'utf8')
+    const encoded = JSON.stringify(HOST.underHome('data')).slice(1, -1)
+    expect(raw).toContain(encoded)
   })
 })
 
