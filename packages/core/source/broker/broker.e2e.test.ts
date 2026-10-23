@@ -22,7 +22,9 @@ import { DEFAULT_CELL_ID, startBroker, type BrokerHandle } from './server'
 /** 假的真实密钥。它出现在这个文件里是安全的：它不是一个能用的凭据。 */
 const FAKE_SECRET = 'sk-ant-FAKE-3333333333333333333333333333'
 const PLACEHOLDER = 'abx-placeholder-anthropic'
-const CELL_TOKEN = 'test-cell-token-0123456789'
+// 宿主固定令牌：真实的那份由 generateCellToken() 生成，形状是 `abx_cell_<hex>`。
+// 这里手写一个同形状的值，因为它要塞进环境变量，得是已知的。
+const CELL_TOKEN = 'abx_cell_test-token-0123456789'
 
 interface RecordedRequest {
   readonly method: string
@@ -332,6 +334,29 @@ describe('broker 端到端', () => {
     })
     expect(after.status).toBe(401)
     expect(broker.audit.records[1]).toMatchObject({ decision: 'denied-cell-token', status: 401 })
+  })
+
+  it('按舱注册的令牌带可扫描前缀，走完整条链路还是 200', async () => {
+    const upstream = await startEchoUpstream()
+    cleanups.push(() => upstream.close())
+    const broker = await startTestBroker({ upstreamOrigin: upstream.origin })
+    const token = broker.handle.registerCell('cell-prefixed')
+
+    // 前缀是为了「泄漏之后能 grep 到」，不是为了识别。格式断言只钉住这一点：
+    // 前缀 + 32 字节 hex。
+    expect(token).toMatch(/^abx_cell_[0-9a-f]{64}$/)
+
+    // 带前缀的令牌要照常走完提取、反查、路由、转发：格式变了不代表行为变了。
+    const response = await fetch(cellUrl(broker, `/c/${token}/u/anthropic/v1/messages`), {
+      headers: { 'x-abx-cell': token },
+    })
+
+    expect(response.status).toBe(200)
+    expect(upstream.requests[0]?.url).toBe('/v1/messages')
+    expect(broker.audit.records[0]).toMatchObject({ cellId: 'cell-prefixed', decision: 'allowed' })
+    // 而审计里不许出现令牌本身，前缀也一样。
+    for (const line of broker.audit.lines) expect(line).not.toContain(token)
+    expect(broker.audit.lines.join('\n')).not.toContain('abx_cell_')
   })
 
   it('宿主固定令牌仍然能用，且只对应默认舱', async () => {

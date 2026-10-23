@@ -57,4 +57,11 @@ export type { CellRegistryOptions } from './registry'
 export { DEFAULT_CELL_ID, consoleLogger, formatHostForUrl, startBroker } from './server'
 export type { BrokerHandle, BrokerLogger, BrokerOptions } from './server'
 
-export { CELL_TOKEN_FILE_NAME, defaultCellTokenPath, generateCellToken, readCellTokenFile, writeCellTokenFile } from './token'
+export {
+  CELL_TOKEN_FILE_NAME,
+  CELL_TOKEN_PREFIX,
+  defaultCellTokenPath,
+  generateCellToken,
+  readCellTokenFile,
+  writeCellTokenFile,
+} from './token'
