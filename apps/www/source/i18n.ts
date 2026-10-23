@@ -325,14 +325,14 @@ export const en = {
       },
       firstRun: {
         title: 'Open it for the first time',
-        body: 'An abx icon appears in the menu bar, and nothing in the Dock. Open the panel: the first line already says how many cells are running and where the credentials live. No setup wizard, no key to paste — the keys are in OSW, outside the cell, so there is nowhere here to put one.',
+        body: 'An abx icon appears in the menu bar, and nothing in the Dock. Open the panel: the top line says whether it is running, and that it cannot reach your keys. No setup wizard, no key to paste — the keys stay in OSW, so there is nowhere here to put one.',
       },
       drop: {
         title: 'Drag a directory in',
         body: 'Drop it on the menu bar icon, or on the dashed area in the panel. It becomes a shared item: the agent inside can read it at once, read-only. It works inside that directory, writes what it produces into the outbox of its own cell, and one click puts that in Finder.',
       },
     },
-    note: 'Drag and drop uses the native macOS menu bar, which is why the first version is macOS only. When you want things to stop, "Stop all" stops cells: the files in the shared area and the outbox stay where they are, and removing a shared item only unmounts it — it never deletes your original.',
+    note: 'Drag and drop uses the native macOS menu bar, which is why the first version is macOS only. When you want things to stop, go to the management panel: "Stop all" at the top stops everything at once — the files in the shared area and the outbox stay where they are, and removing a shared item only unmounts it, never deletes your original.',
   },
   footer: {
     line: 'An airlock for your AI coding agent. The first version is macOS only.',

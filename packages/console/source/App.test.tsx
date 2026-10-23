@@ -71,15 +71,21 @@ afterEach(() => {
 
 describe('App', () => {
   it('renders the empty drop hint, and no cell-count pill in the header', () => {
-    render(<App />)
+    const { container } = render(<App />)
 
     // 文案只说面板：拖到**托盘图标**是 macOS only，面板内的正文不提它（`tray-ui.md` §7 第 3 条）。
     expect(screen.getByText('拖到这里 → 全部 agent 立刻可见')).toBeTruthy()
-    // 「N 舱」胶囊按 `design-system.md` §8 去掉了：副标题已经说了气闸在不在跑，
-    // 舱数是管理面板的职责。这里把「它不在了」写下来，免得哪天又被顺手加回来。
+    // 「N 舱」胶囊按 `design-system.md` §8 去掉了：副标题说的是在不在跑，
+    // 数量是管理面板的职责。这里把「它不在了」写下来，免得哪天又被顺手加回来。
     expect(screen.queryByText(/\d+ 舱/)).toBeNull()
     expect(screen.queryByRole('status')).toBeNull()
-    expect(screen.getByText('气闸待启动 · 凭据全部在舱外')).toBeTruthy()
+
+    // 副标题是面板上唯一一句状态。它说**后果**，不说术语也不说数量
+    // （`functional-design.md` §0.2 ②）——曾经逐字是「气闸待启动 · 凭据全部在舱外」，
+    // 这一条守着那次改动：三个词一个都不许回来，数字同样。
+    const subtitle = container.querySelector('.abx-title-sub')?.textContent ?? ''
+    expect(subtitle).toBe('把文件拖进来，它就开始干活')
+    expect(subtitle).not.toMatch(/气闸|凭据|舱|\d/)
   })
 
   it('renders one start button per installed agent, with an accessible name and pressed state', () => {
@@ -128,9 +134,10 @@ describe('App', () => {
     const running = screen.getByRole('button', { name: 'Claude Code · 运行中，点击聚焦' })
     expect(running.getAttribute('aria-pressed')).toBe('true')
     expect(running.getAttribute('data-state')).toBe('running')
-    // 「有几个舱在跑」不再有自己的胶囊：它只剩副标题这一处出口
-    // （`design-system.md` §8 把舱数判给了管理面板）。
-    expect(screen.getByText('气闸运行中 · 凭据全部在舱外')).toBeTruthy()
+    // 在跑这一档说的是「它拿不到你的密钥」——这句话是产品承诺，也是这一档唯一的
+    // 状态出口：没有数字，没有「气闸」「凭据」这些词（`design-system.md` §8 把数量
+    // 判给了管理面板，`functional-design.md` §0.2 ② 要求把术语换算成后果）。
+    expect(screen.getByText('运行中 · 它拿不到你的密钥')).toBeTruthy()
   })
 
   it('asks the host for the list on mount', () => {
