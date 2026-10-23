@@ -313,6 +313,40 @@ describe('不该出现在使用者文档里的东西', () => {
   })
 })
 
+describe('界面描述与真面板一致', () => {
+  // 这几句描述的是 `packages/console` 里那个真面板，所以真面板改了、这里没跟上，
+  // 测试必须喊。**只删旧句不算修好**——旧形态会换一种写法长回来，所以每一条都同时
+  // 断言「新句在」与「旧词不在」。
+  const firstRun = readMdx('zh', 'getting-started/first-run')
+  const installation = readMdx('zh', 'getting-started/installation')
+
+  it('起舱说的是方块的形状，不是头部计数', () => {
+    // 头部没有计数（`design-system.md` §8：数量归管理面板）。
+    expect(firstRun).toContain('右下角的点变成实心')
+    expect(firstRun).not.toContain('头部计数加一')
+  })
+
+  it('取回写的是落地即打开，不是「面板里的列表 + 确认」', () => {
+    // `functional-design.md` §13：面板只列共享项，`publish` 落地即打开。
+    expect(firstRun).toContain('落地即')
+    expect(firstRun).not.toContain('出现在面板的「取回」里')
+    expect(firstRun).not.toContain('要你点一下确认')
+  })
+
+  it('「停止全部」挂在管理面板上，不挂在托盘上', () => {
+    expect(firstRun).toContain('管理面板')
+    expect(firstRun).not.toContain('托盘与气闸继续运行')
+  })
+
+  it('安装页不承诺面板上没有的读数与方块数', () => {
+    // 图上画的是两个方块（dsh 镜像未构建，不进托盘），面板里也没有「几个在跑」这个读数。
+    expect(installation).toContain('两个 agent 方块')
+    expect(installation).not.toContain('三个 agent 方块')
+    expect(installation).not.toContain('几个 agent 在跑')
+    expect(installation).not.toContain('未配置上游')
+  })
+})
+
 describe('译制进度表', () => {
   const readme = readFileSync(join(sourceDir, 'README.md'), 'utf8')
   const rows = [...readme.matchAll(/^\|\s*`([\w/-]+)`\s*\|\s*(✅|⏳)\s*\|\s*(✅|⏳)\s*\|$/gm)].map(
