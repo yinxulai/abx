@@ -38,7 +38,9 @@ export function PanelCard(props: PanelCardProps) {
           a
         </span>
         <span className="abx-title">
-          <strong className="abx-title-name">abx</strong>
+          {/* 面板是一份独立的文档（宿主里的一个窗口），标题层级从它起步——
+              下面的 `共享给全部 agent` 是 `<h2>`，中间不能缺一级。 */}
+          <h1 className="abx-title-name">abx</h1>
           <span className="abx-title-sub">
             {running ? '气闸运行中 · 凭据全部在舱外' : '气闸待启动 · 凭据全部在舱外'}
           </span>
