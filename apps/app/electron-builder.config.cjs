@@ -36,6 +36,10 @@ module.exports = {
     'build/trayTemplate.png',
     'build/trayTemplate@2x.png',
     'build/icon.png',
+    // Windows 那份：多尺寸 ICO，通知区按 DPI 自己挑一档（16/20/24/32/48/64/256）。
+    // 它同时是 `win.icon`（exe 与安装器的图标）——一份资产两个用途，
+    // 因为两边要的本来就是同一张图。
+    'build/icon-win.ico',
     // 面板渲染层（`packages/console` 构建产物）落地后，在这里补一条
     // `{ from: '../../packages/console/output', to: 'output/render' }`，
     // 并让主进程按 `__dirname/../render` 反推它——两边是一组，改一处必须改全部。
@@ -62,7 +66,42 @@ module.exports = {
     // freedesktop 分类：abx 是给开发者用的工具，不是系统实用程序。
     category: 'Development',
   },
-  // 第一版只做 macOS + Linux（见 `apps/www` 的首页文案）。Windows 的目标等真要做时再加。
+  // Windows 是**用户日常测试平台**（见 `apps/docs/specs/overview/platforms.md` §0）：
+  // macOS 是发布平台，Windows 是「改完就在这台机器上看一眼」的那台。所以这里给两种产物：
+  //   - `nsis`     装到机器上、有开始菜单项、能卸载，给日常使用；
+  //   - `portable` 单个 exe，双击就跑，给「换台机器试一下」和 CI 自测。
+  //
+  // 架构只给 x64：`windows-latest` runner 是 x64，而 arm64 的 Windows 上 x64 也能跑
+  // （系统自带仿真）。两个都打会让这条流水线的时间翻倍，而第二种产物现在没人要。
+  //
+  // 与 macOS/linux 一样**不签名**：没有证书，也没有第二台机器去验签名后的行为。
+  // 未签名的后果要说清楚——用户第一次运行会看到 SmartScreen 的蓝色警告，
+  // 要点「更多信息 → 仍要运行」。这不是 bug，是这一版没买证书的代价。
+  win: {
+    // electron-builder 要 ≥256px 的图；这份 ICO 里最大一档就是 256。
+    icon: 'build/icon-win.ico',
+    target: [
+      { target: 'nsis', arch: ['x64'] },
+      { target: 'portable', arch: ['x64'] },
+    ],
+  },
+  // 显式的「不签名」。留着它是有意的：electron-builder 的默认行为是**发现证书就签**，
+  // 而 `forceCodeSigning` 为 false 表示「没签也照样出包」——这两句话合起来才是
+  // 「本仓库不使用签名凭据」这个决定本身，和 `mac.identity: null` 是同一个意思。
+  forceCodeSigning: false,
+  nsis: {
+    // 一键安装（默认 true）会直接开始装、不给选目录的机会。abx 是个开发工具，
+    // 装哪儿用户想说了算。
+    oneClick: false,
+    allowToChangeInstallationDirectory: true,
+    // 按用户装，不按机器装：按机器装要管理员权限，而这个应用的功能
+    // （起容器、挂本地目录）本来就都跑在当前用户名下。
+    perMachine: false,
+    // 快捷方式名字不要带产品名的后缀（默认会生成 `ABX (User)` 那种）。
+    // 第一版不建桌面快捷方式：托盘应用多一个桌面图标只会让人以为要双击启动。
+    createDesktopShortcut: false,
+    shortcutName: 'ABX',
+  },
   mac: {
     icon: 'build/icon-mac.png',
     // ZIP 是将来 electron-updater 做自动更新用的，DMG 只负责首次安装；

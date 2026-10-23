@@ -173,12 +173,20 @@ describe('createTransomRuntime', () => {
     // 账本是**真的文件**：一行一条，字段逐项写死。
     const lines = readFileSync(f.ledgerPath, 'utf8').trim().split('\n')
     expect(lines).toHaveLength(1)
-    expect(JSON.parse(lines[0] ?? '{}')).toMatchObject({
+    const recorded = JSON.parse(lines[0] ?? '{}') as { hostPath?: string }
+    // `hostPath` 落到文件里之前会过一遍 `sanitizeField`（`transom/ledger.ts`），
+    // 而它会把反斜杠转义成两个——账本的字段是「一行就是一行」那个形式，见
+    // `ledger.test.ts` 里对控制字符的那条。所以在 Windows 上账里记的是
+    // `C:\\Users\\...`：那是**记账格式**，不是东西落错了地方。
+    //
+    // 所以这里断言的是**还原之后**它指的就是刚交付的那个文件——比写死一个形状强：
+    // 账里真记错了路径照样红（POSIX 上没有反斜杠，还原就是恒等，与原来那条等价）。
+    expect(recorded.hostPath?.replaceAll('\\\\', '\\')).toBe(deliveredPath)
+    expect(recorded).toMatchObject({
       cellId: CELL_ID,
       agentId: 'claude',
       action: 'publish',
       outcome: 'opened',
-      hostPath: deliveredPath,
       sha256: createHash('sha256').update(content).digest('hex'),
       disposition: 'open',
       opened: true,

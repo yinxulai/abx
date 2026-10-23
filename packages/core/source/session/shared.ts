@@ -28,13 +28,13 @@
 
 import { lstatSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
-import path from 'node:path'
 import type { SharedEntry, SharedEntryKind, SharedEntryRejection } from '@abx/contracts'
+import { hasParentSegment, hostPathRulesFor } from '../host-platform'
+import type { HostPathRules, HostPlatform } from '../host-platform'
 import type { SandboxMount } from './backend'
 import { defaultInstancesRoot } from './instance'
 import {
   FORBIDDEN_INSTANCE_ROOT_SUBDIRS,
-  FORBIDDEN_MOUNT_PREFIXES,
   MountPolicyViolation,
   SHARED_CELL_ROOT,
   isAncestor,
@@ -88,6 +88,8 @@ export const EXTRA_FORBIDDEN_SHARED_PREFIXES: readonly string[] = [
 export const SHARED_SCAN_SKIPPED_DIRS: readonly string[] = ['.git']
 
 export interface ResolveSharedMountsOptions {
+  /** 宿主是什么系统。**必填**：禁挂规则每个平台一套，见 `../host-platform.ts`。 */
+  readonly platform: HostPlatform
   /** 舱内共享区根，默认 `/shared`。 */
   readonly cellRoot?: string
   /** 宿主 home，默认 `os.homedir()`。测试里覆盖它，免得跟着跑测试的人的主目录走。 */
@@ -138,11 +140,14 @@ export function inspectSharedEntry(hostPath: string): SharedEntry | null {
  * `entries` 里的 `kind` **不参与判定**——它以宿主 stat 的结果为准（见
  * `inspectSharedEntry`）。这样「调用方谎报 kind」这件事在结构上就不可能生效。
  */
-export function resolveSharedMounts(entries: readonly SharedEntry[], options: ResolveSharedMountsOptions = {}): ResolveSharedMountsResult {
+export function resolveSharedMounts(entries: readonly SharedEntry[], options: ResolveSharedMountsOptions): ResolveSharedMountsResult {
+  const rules = hostPathRulesFor(options.platform)
   const context: ResolveContext = {
+    rules,
+    platform: rules.platform,
     cellRoot: normalizeCellRoot(options.cellRoot ?? SHARED_CELL_ROOT),
-    homeDir: realpathBestEffort(options.homeDir ?? homedir()),
-    instancesRoot: realpathBestEffort(options.instancesRoot ?? defaultInstancesRoot()),
+    homeDir: realpathBestEffort(options.homeDir ?? homedir(), rules),
+    instancesRoot: realpathBestEffort(options.instancesRoot ?? defaultInstancesRoot(), rules),
     maxScanEntries: options.maxScanEntries ?? MAX_SHARED_SCAN_ENTRIES,
     usedNames: new Set<string>(),
   }
@@ -169,7 +174,9 @@ export function resolveSharedMounts(entries: readonly SharedEntry[], options: Re
   return { mounts, rejected }
 }
 
-interface ResolveContext {
+interface ResolveContext extends SharedSourceContext {
+  /** 宿主的路径规则。共享源是**宿主**路径，所以整条链路都用它，不是跑测试这台机器的那套。 */
+  readonly rules: HostPathRules
   readonly cellRoot: string
   readonly homeDir: string
   readonly instancesRoot: string
@@ -188,20 +195,21 @@ type ResolveOutcome = { readonly mount: SandboxMount; readonly reason?: undefine
  * 而不是「名字不合法」——后者他没法照着改。
  */
 function resolveOne(entry: SharedEntry, index: number, context: ResolveContext): ResolveOutcome {
+  const { rules } = context
   const raw = typeof entry.path === 'string' ? entry.path : ''
 
   if (raw.trim() === '') return { reason: '路径是空的。' }
-  if (!path.isAbsolute(raw)) {
+  if (!rules.path.isAbsolute(raw)) {
     return { reason: `不是绝对路径（${raw}）：相对路径指的是哪儿，取决于谁在什么目录下跑，挂载不能建在这上面。` }
   }
   // `..` 能把一个人畜无害的路径变成 `/home`。契约层已经拦过一次，这里再拦一次：
   // `resolveSharedMounts` 是可以被直接调用的（CLI、测试、将来的会话编排），
   // 不能假设每个调用方都先过了 schema。
-  if (raw.split(path.sep).includes('..')) {
+  if (hasParentSegment(raw)) {
     return { reason: `路径里出现了 ..（${raw}）：它能把一个看起来正常的路径变成宿主的任意位置。` }
   }
 
-  const literal = path.resolve(raw)
+  const literal = rules.path.resolve(raw)
   const link = isSymbolicLink(literal)
   // 软链条目的拒稿理由都要带上这句：用户拖的是一个链接，判的却是链接指向的东西，
   // 不说明的话他会觉得自己那个路径明明没问题。
@@ -239,7 +247,7 @@ function resolveOne(entry: SharedEntry, index: number, context: ResolveContext):
   }
 
   if (kind === 'directory') {
-    const scan = scanDirectory(resolved, context.maxScanEntries)
+    const scan = scanDirectory(resolved, context.maxScanEntries, rules)
     if (scan.exceeded) {
       return reject(
         `目录里的条目超过 ${context.maxScanEntries} 个，扫到上界就停了（已扫 ${scan.visited} 个）：` +
@@ -260,8 +268,10 @@ function resolveOne(entry: SharedEntry, index: number, context: ResolveContext):
   return { mount: { source: resolved, target: `${context.cellRoot}/${name}`, mode: 'ro' } }
 }
 
-/** `sharedSourceViolationReason` 的判据：宿主 home 与实例根。 */
+/** `sharedSourceViolationReason` 的判据：宿主平台、宿主 home 与实例根。 */
 export interface SharedSourceContext {
+  /** 宿主平台。必填，理由见 `../host-platform.ts`。 */
+  readonly platform: HostPlatform
   readonly homeDir: string
   readonly instancesRoot: string
 }
@@ -290,27 +300,31 @@ export interface SharedSourceContext {
  */
 export function sharedSourceViolationReason(resolved: string, context: SharedSourceContext): string | null {
   const { homeDir, instancesRoot } = context
+  const rules = hostPathRulesFor(context.platform)
+  const separator = rules.path.sep
 
-  if (resolved === path.parse(resolved).root) {
+  if (resolved === rules.path.parse(resolved).root) {
     return `它是文件系统的根（${resolved}）：挂进去等于把宿主整块盘交给舱内。`
   }
 
-  if (resolved === homeDir || isAncestor(resolved, homeDir)) {
+  if (resolved === homeDir || isAncestor(resolved, homeDir, separator)) {
     return (
       `它是宿主 home（${homeDir}）本身，或者是它的上级：共享要指到主目录下面的**某个具体目录**，` +
       `而不是整个主目录。`
     )
   }
 
-  if (isUnder(resolved, instancesRoot) || isAncestor(resolved, instancesRoot)) {
+  if (isUnder(resolved, instancesRoot, separator) || isAncestor(resolved, instancesRoot, separator)) {
     return (
       `它和实例状态目录（${instancesRoot}）重叠：那里是 abx 自己造的可写地（会话历史、生成的配置），` +
       `共享源不许是它的祖先或后代。`
     )
   }
 
-  if (isUnder(resolved, homeDir)) {
-    const sensitive = FORBIDDEN_INSTANCE_ROOT_SUBDIRS.find((name) => isUnder(resolved, path.join(homeDir, name)))
+  if (isUnder(resolved, homeDir, separator)) {
+    const sensitive = FORBIDDEN_INSTANCE_ROOT_SUBDIRS.find((name) =>
+      isUnder(resolved, rules.path.join(homeDir, name), separator),
+    )
     if (sensitive !== undefined) {
       return (
         `它在主目录的 ${sensitive}/ 下面：那里的东西读得到就等于拿到了身份（私钥、云凭据、kubeconfig、` +
@@ -319,13 +333,12 @@ export function sharedSourceViolationReason(resolved: string, context: SharedSou
     }
   }
 
-  // 禁挂前缀里，home 那一条（以及它的上级）要**让开**——共享源本来就在主目录下面。
-  // 让开之后剩下的（/etc、/var/run、/proc、/root……）一条都不放。
-  const prefix = [...FORBIDDEN_MOUNT_PREFIXES, ...EXTRA_FORBIDDEN_SHARED_PREFIXES].find(
-    (candidate) => candidate !== homeDir && !isAncestor(candidate, homeDir) && isUnder(resolved, candidate),
-  )
-  if (prefix !== undefined) {
-    return `它落在禁挂前缀 ${prefix} 里：那里是宿主自己的东西（系统配置、内核接口、docker socket），不进舱。`
+  // 禁挂规则里，罩住 home 的那些要**让开**——共享源本来就在主目录下面。
+  // 让开之后剩下的（/etc、/var/run、/proc、/root……，Windows 上是盘根与保留目录）
+  // 一条都不放。让路判据收在规则自己那里，见 `forbiddenSourceViolation()`。
+  const violation = rules.forbiddenSourceViolation(resolved, homeDir, EXTRA_FORBIDDEN_SHARED_PREFIXES)
+  if (violation !== null) {
+    return `${violation}：那里是宿主自己的东西（系统配置、内核接口、docker socket），不进舱。`
   }
 
   return null
@@ -369,7 +382,7 @@ interface CredentialScanResult {
  *   - **读不动的目录算命中**（失败关闭）：证明不了「里面没有凭据」和「里面有凭据」
  *     在这里是同一个结论——都不能挂。
  */
-function scanDirectory(root: string, maxEntries: number): CredentialScanResult {
+function scanDirectory(root: string, maxEntries: number, rules: HostPathRules): CredentialScanResult {
   const stack: string[] = [root]
   const hits: CredentialHit[] = []
   const unreadable: string[] = []
@@ -384,7 +397,7 @@ function scanDirectory(root: string, maxEntries: number): CredentialScanResult {
     try {
       dirents = readdirSync(directory, { withFileTypes: true })
     } catch {
-      unreadable.push(relativeTo(root, directory))
+      unreadable.push(relativeTo(root, directory, rules))
       continue
     }
 
@@ -392,11 +405,11 @@ function scanDirectory(root: string, maxEntries: number): CredentialScanResult {
       visited += 1
       if (visited > maxEntries) return { hits, total, visited, exceeded: true, unreadable }
 
-      const full = path.join(directory, dirent.name)
+      const full = rules.path.join(directory, dirent.name)
       const rule = matchCredentialFileRule(dirent.name)
       if (rule !== null) {
         total += 1
-        if (hits.length < MAX_REPORTED_CREDENTIAL_FILES) hits.push({ relativePath: relativeTo(root, full), rule })
+        if (hits.length < MAX_REPORTED_CREDENTIAL_FILES) hits.push({ relativePath: relativeTo(root, full, rules), rule })
       }
       if (dirent.isDirectory() && !SHARED_SCAN_SKIPPED_DIRS.includes(dirent.name)) stack.push(full)
     }
@@ -437,7 +450,7 @@ function credentialDirectoryReason(scan: CredentialScanResult): string {
  * 而挂载点撞车意味着后一个把前一个盖掉，舱内只剩一个。
  */
 function allocateName(resolved: string, index: number, used: Set<string>): string {
-  const base = safeBaseName(resolved, index)
+  const base = sanitizeSharedName(resolved, index)
   let name = base
   let suffix = 2
   while (used.has(name)) {
@@ -450,7 +463,17 @@ function allocateName(resolved: string, index: number, used: Set<string>): strin
 
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/
 
-function safeBaseName(resolved: string, index: number): string {
+/**
+ * 宿主路径的 basename 消毒之后能不能当舱内挂载点的一段；不行就退回 `shared-<序号>`。
+ *
+ * 消毒的是**能当一段路径用**这件事：不许含分隔符、不许是 `.` / `..`、不许含控制字符
+ * （控制字符能骗过终端显示，而挂载点是会被打进日志和审计的）。
+ *
+ * 导出是为了能在**纯字符串**这一层测它：真正想造一个名字里带控制字符的目录时，
+ * Windows 上 `mkdirSync` 直接拒绝（那边 0x00–0x1f 是非法文件名字符），
+ * 于是这条规则在 Windows 上就只能靠一个纯函数验——而那恰恰是唯一验得到的写法。
+ */
+export function sanitizeSharedName(resolved: string, index: number): string {
   // 两种分隔符都切：路径来自拖放，来源平台不一定跟宿主一样。
   const segments = resolved.split(/[/\\]/)
   const last = segments[segments.length - 1] ?? ''
@@ -465,9 +488,16 @@ function normalizeCellRoot(cellRoot: string): string {
   return trimmed === '' ? SHARED_CELL_ROOT : trimmed
 }
 
-function relativeTo(root: string, target: string): string {
-  const relative = path.relative(root, target)
-  return relative === '' ? path.basename(target) : relative
+/**
+ * `target` 相对 `root` 的位置，给人看的。
+ *
+ * 用的是**宿主**的相对路径（分隔符跟着宿主走）：用户要拿它对着自己文件管理器里的
+ * 那个目录找，Windows 上出现 `notes\.env` 是对的，把它强行写成 `notes/.env`
+ * 反而让人对不上。
+ */
+function relativeTo(root: string, target: string, rules: HostPathRules): string {
+  const relative = rules.path.relative(root, target)
+  return relative === '' ? rules.path.basename(target) : relative
 }
 
 /** 这一条路径**本身**是不是软链。`lstat` 失败（不存在）就是 `false`。 */
@@ -496,11 +526,11 @@ function realpathOrNull(target: string): string | null {
  * 两边格式不一致的话「互斥」那条闸门会**静默失效**。所以改成解析它能解析的最深那一层，
  * 再把剩下的接回去。
  */
-function realpathBestEffort(target: string): string {
-  const literal = path.resolve(target)
+function realpathBestEffort(target: string, rules: HostPathRules): string {
+  const literal = rules.path.resolve(target)
   const resolved = realpathOrNull(literal)
   if (resolved !== null) return resolved
-  const parent = path.dirname(literal)
+  const parent = rules.path.dirname(literal)
   if (parent === literal) return literal
-  return path.join(realpathBestEffort(parent), path.basename(literal))
+  return rules.path.join(realpathBestEffort(parent, rules), rules.path.basename(literal))
 }

@@ -57,6 +57,16 @@ export { DEFAULT_CELL_ID, consoleLogger, formatHostForUrl, startBroker } from '.
 export type { BrokerHandle, BrokerLogger, BrokerOptions } from './server'
 
 export {
+  CELL_HOST_CANDIDATES,
+  HOST_GATEWAY_MAPPING,
+  bindHostCandidates,
+  cellHostFailureDetail,
+  decideCellHost,
+  needsHostGatewayMapping,
+} from './cell-host'
+export type { CellHostAttempt, CellHostDecision, CellHostProbe } from './cell-host'
+
+export {
   CELL_TOKEN_FILE_NAME,
   CELL_TOKEN_PREFIX,
   defaultCellTokenPath,

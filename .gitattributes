@@ -1,0 +1,30 @@
+# 行尾统一成 LF，签出到哪个平台都一样。
+#
+# 这不是风格问题，是 Windows 上**真的会坏**的两件事：
+#
+#   1. **git 在 Windows 上默认 `core.autocrlf=true`**（GitHub 的 `windows-latest`
+#      运行器就是这么配的），于是仓库里存的是 LF、签出到工作区变成 CRLF。
+#      `apps/docs/source/docs.test.ts` 解析 MDX 的 frontmatter 用的是
+#      `/^---\n/`——CRLF 下那一行是 `---\r\n`，匹配不上，整页数据静默变空。
+#   2. **shell 脚本会更直接地坏**：`packages/toolkit/scripts/*.sh` 与 `.githooks/commit-msg`
+#      在 CRLF 下报的是 `$'\r': command not found` 这类跟真正原因毫无关系的错。
+#
+# 所以行尾由仓库定，不由签出那台机器定。
+#
+# 注意：这条规则**不会**自动改写已经签出的文件。在装了 CRLF 的现有工作区里跑一次
+# `git add --renormalize .` 才会重写；CI 是全新签出，不受影响。
+* text=auto eol=lf
+
+# 下面这些是二进制，别让 git 去猜（猜错会改动内容）。
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.zip binary
+*.pdf binary

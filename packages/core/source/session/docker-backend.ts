@@ -14,8 +14,10 @@
  */
 
 import { spawn } from 'node:child_process'
-import { accessSync, constants } from 'node:fs'
 import path from 'node:path'
+import { HOST_GATEWAY_MAPPING } from '../broker/cell-host'
+import { isExecutableOnPath } from '../host-command'
+import type { HostPlatform } from '../host-platform'
 import type { SandboxBackend, SandboxHandle, SandboxIo, SandboxMount, SandboxSpec } from './backend'
 import { assertNoForbiddenEnv } from './backend'
 import { MOUNT_POLICY, assertMountPolicy } from './mount-policy'
@@ -81,6 +83,13 @@ export function buildDockerArgs(spec: SandboxSpec, mounts: readonly SandboxMount
     `/tmp:rw,noexec,nosuid,size=${spec.tmpfsSizeMb}m`,
   ]
 
+  // 舱内按名字找宿主时补的映射。**缺省一个参数都不加**，包括 Docker Desktop 上——
+  // 那里这个名字本来就存在，补了反而改指到 IPv6 ULA（见 backend.ts 该字段的说明）。
+  // 位置必须在镜像名之前，否则 docker 会把它当成要跑的命令。
+  if (spec.addHostGatewayMapping !== null && spec.addHostGatewayMapping !== undefined) {
+    args.push('--add-host', `${spec.addHostGatewayMapping}:${HOST_GATEWAY_MAPPING}`)
+  }
+
   for (const mount of mounts) {
     args.push('--volume', `${mount.source}:${mount.target}:${mount.mode}`)
   }
@@ -98,6 +107,36 @@ export function buildDockerArgs(spec: SandboxSpec, mounts: readonly SandboxMount
 export function containerName(cellId: string): string {
   // docker 的容器名只允许 [a-zA-Z0-9][a-zA-Z0-9_.-]*。
   return `abx-${cellId}`.replaceAll(/[^a-zA-Z0-9_.-]/g, '-')
+}
+
+/**
+ * 可执行文件根本不在。`ENOENT` 就这一种意思。
+ *
+ * Windows 那句话比别处长，因为那里「装了却查不到」是常态而不是意外：命令叫 `docker`，
+ * 磁盘上叫 `docker.exe`，PATH 是**进程启动时**读的——刚装完 Docker Desktop 就开着的
+ * 终端里，PATH 还是旧的。这两种情况的表现一模一样，所以这句话要同时给出两条出路。
+ */
+export function missingDockerMessage(dockerPath: string, platform: HostPlatform): string {
+  if (platform === 'win32') {
+    return (
+      `找不到 ${dockerPath}：按 PATH 找过，也按 PATHEXT 试过 .exe / .cmd，都没有。` +
+      `要么 Docker Desktop 还没装，要么装完之后**没重开终端**（PATH 是启动时读的）——` +
+      `重开一个再试。装好之后 \`${dockerPath} version\` 应当打印客户端与服务端两个版本号。`
+    )
+  }
+  return (
+    `找不到 ${dockerPath} 可执行文件：它不在 PATH 里。装好 docker 之后先确认 ` +
+    `\`${dockerPath} version\` 能跑（它会同时打印客户端与服务端的版本号）。`
+  )
+}
+
+/** 可执行文件在，但它连不上守护进程——这是「装是装了，没跑起来」。 */
+function daemonMessage(dockerPath: string, error: NodeJS.ErrnoException): string {
+  return (
+    `起不了 docker（${dockerPath}）：${error.message}。` +
+    `docker 守护进程没在跑时就是这个错——用 abx doctor 看一眼，` +
+    `或者临时改用 --backend local（注意那不是沙箱）。`
+  )
 }
 
 export function createDockerBackend(options: DockerBackendOptions = {}): SandboxBackend {
@@ -125,6 +164,7 @@ export function createDockerBackend(options: DockerBackendOptions = {}): Sandbox
       const runtimeFiles = spec.runtimeFiles ?? []
       const mounts = MOUNT_POLICY.buildMounts(taskDir, spec.workdir, agentConfigFiles, stateDirs, sharedMounts, runtimeFiles)
       assertMountPolicy({
+        platform: spec.platform,
         mounts,
         taskDir,
         workdir: spec.workdir,
@@ -146,14 +186,11 @@ export function createDockerBackend(options: DockerBackendOptions = {}): Sandbox
       }
 
       const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
-        child.on('error', (error: Error) => {
-          reject(
-            new Error(
-              `起不了 docker（${dockerPath}）：${error.message}。` +
-                `docker 守护进程没在跑时就是这个错——用 abx doctor 看一眼，` +
-                `或者临时改用 --backend local（注意那不是沙箱）。`,
-            ),
-          )
+        child.on('error', (error: NodeJS.ErrnoException) => {
+          // 「没装」和「装了但守护进程没起」是两件事，下一步也完全不同，所以分开说。
+          // 合成一句「起不了 docker」的后果是：没装 docker 的人会去 `abx doctor` 里
+          // 看半天，而那里说的还是同一句话。
+          reject(new Error(error.code === 'ENOENT' ? missingDockerMessage(dockerPath, spec.platform) : daemonMessage(dockerPath, error)))
         })
         child.on('exit', (code, signal) => resolve({ code, signal: signal ?? null }))
       })
@@ -186,9 +223,16 @@ export interface DockerProbeResult {
  * 后者只说明客户端装了。**本机现在就是这个状态**——CLI 在，守护进程没起，
  * `docker --version` 会开开心心地打印版本号，然后 `docker run` 直接失败。
  */
-export async function probeDocker(dockerPath = 'docker'): Promise<DockerProbeResult> {
-  if (!isExecutableOnPath(dockerPath)) {
-    return { available: false, version: null, detail: `找不到 ${dockerPath} 可执行文件` }
+export async function probeDocker(platform: HostPlatform, dockerPath = 'docker'): Promise<DockerProbeResult> {
+  if (!isExecutableOnPath(dockerPath, platform)) {
+    return {
+      available: false,
+      version: null,
+      detail:
+        platform === 'win32'
+          ? `找不到 ${dockerPath} 可执行文件（Windows 上按 PATH + PATHEXT 找的，也试过 .exe）`
+          : `找不到 ${dockerPath} 可执行文件`,
+    }
   }
 
   return await new Promise<DockerProbeResult>((resolve) => {
@@ -212,28 +256,6 @@ export async function probeDocker(dockerPath = 'docker'): Promise<DockerProbeRes
         detail: firstLine(stderr) || `docker version 退出码 ${code}`,
       })
     })
-  })
-}
-
-/** `docker` 在不在 PATH 上。绝对路径就直接查文件。 */
-export function isExecutableOnPath(command: string): boolean {
-  if (command.includes(path.sep)) {
-    try {
-      accessSync(command, constants.X_OK)
-      return true
-    } catch {
-      return false
-    }
-  }
-  const searchPath = process.env['PATH'] ?? ''
-  return searchPath.split(path.delimiter).some((directory) => {
-    if (directory === '') return false
-    try {
-      accessSync(path.join(directory, command), constants.X_OK)
-      return true
-    } catch {
-      return false
-    }
   })
 }
 

@@ -27,6 +27,7 @@
 import { realpathSync, statSync, type Stats } from 'node:fs'
 import path from 'node:path'
 import { MAX_DELIVERABLE_BYTES, formatBytes } from '@abx/contracts'
+import { isUnderCellPath } from '../session/cell-path'
 import { isUnder } from '../session/mount-policy'
 
 /**
@@ -119,7 +120,11 @@ export function resolveCellSource(options: ResolveCellSourceOptions): ResolveCel
   // 真正的闸门在这儿：字面路径在根里面不算数，**解析软链之后**还在根里面才算数。
   // `ln -s /etc/passwd leak` 然后递 `leak`，前面几步全都是通过的。
   const realRoot = realpathOf(root.hostPath)
-  if (!isUnder(hostPath, realRoot)) {
+  // 分隔符是**跑这台机器**的 `path.sep`，不是某个注入的平台：这里比的两个字符串
+  // （`hostPath` 与 `realRoot`）都是这台机器真实的系统调用吐出来的（`realpathSync` /
+  // `path.resolve`），形状由文件系统决定，注入不进来。宿主侧的路径一律走这一套；
+  // 舱内路径那一半永远走 POSIX，见下一处与 `cell-path.ts`。
+  if (!isUnder(hostPath, realRoot, path.sep)) {
     return reject(
       `这个文件解析软链之后落在了会话目录之外：${hostPath} 不在 ${realRoot} 里面。` +
         `符号链接指向外面时一律拒绝——那是把宿主上的任意文件递出去的路子，而它看起来只是一条普通路径。`,
@@ -170,7 +175,9 @@ function longestMatchingRoot(cellPath: string, roots: readonly CellRoot[]): Cell
   let best: CellRoot | null = null
   for (const root of roots) {
     const normalized = path.posix.normalize(root.cellPath)
-    if (!isUnder(cellPath, normalized)) continue
+    // 两边都是**舱内**路径（上面刚用 `path.posix.normalize` 归一过），所以走舱内
+    // 那一套判定：POSIX 语义，跟宿主是 Linux 还是 Windows 无关。
+    if (!isUnderCellPath(cellPath, normalized)) continue
     if (best === null || normalized.length > path.posix.normalize(best.cellPath).length) best = root
   }
   return best

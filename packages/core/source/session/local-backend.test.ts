@@ -13,6 +13,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { RUNNING_PLATFORM } from '../test-support'
 import type { SandboxSpec } from './backend'
 import { LOCAL_BACKEND_WARNING, createLocalBackend, probeUserNamespaces } from './local-backend'
 
@@ -33,6 +34,9 @@ function spec(overrides: Partial<SandboxSpec> = {}): SandboxSpec {
   return {
     cellId: 'test-cell',
     agentId: 'claude',
+    // local 后端不起容器、不挂载，所以平台在这里只影响「命令怎么拼」这一层；
+    // 给跑测试这台机器就是对的那一个。
+    platform: RUNNING_PLATFORM,
     command: [process.execPath, '-e', 'console.log("hello from the cell")'],
     // local 后端不分配 pty（它直接用管道接了进程的 stdio），这个值只是把接口填满。
     allocateTty: false,

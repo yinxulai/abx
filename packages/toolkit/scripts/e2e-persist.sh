@@ -188,11 +188,20 @@ import { writeFileSync } from 'node:fs'
 
 const CORE = process.env.ABX_CORE_SOURCE
 const { resolveContext } = await import(`${CORE}/commands/runtime.ts`)
+const { requireHostPlatform } = await import(`${CORE}/host-platform.ts`)
 const { runOpen } = await import(`${CORE}/commands/open.ts`)
 
 const { ABX_WORK_DIR, ABX_TASK_DIR, ABX_INSTANCE_ID, ABX_CONFIG_PATH, ABX_RUN } = process.env
 const lines = []
-const context = resolveContext({ cwd: ABX_TASK_DIR, env: process.env, configPath: ABX_CONFIG_PATH })
+// 宿主平台由**宿主层**读一次再传下去（见 core 的 `host-platform.ts`）：core 不自己去读
+// `process.platform`，所以这个夹具得像产品入口那样读一次。产品里那一处是
+// `apps/app/source/main.ts`，这里是它的等价物。
+const context = resolveContext({
+  cwd: ABX_TASK_DIR,
+  env: process.env,
+  configPath: ABX_CONFIG_PATH,
+  platform: requireHostPlatform(process.platform),
+})
 
 const code = await runOpen({
   options: {
@@ -230,9 +239,13 @@ const REPO = process.env.ABX_REPO
 const { findAgent, loadConfig } = await import(`${REPO}/packages/contracts/source/index.ts`)
 const { planInstance, ensureInstanceStateDir } = await import(`${REPO}/packages/core/source/session/instance.ts`)
 const { MOUNT_POLICY, assertStateDirPolicy } = await import(`${REPO}/packages/core/source/session/mount-policy.ts`)
+const { requireHostPlatform } = await import(`${REPO}/packages/core/source/host-platform.ts`)
 const { stageAgentConfig, toSandboxConfigFiles } = await import(`${REPO}/packages/core/source/session/agent-config.ts`)
 const { createDockerBackend } = await import(`${REPO}/packages/core/source/session/docker-backend.ts`)
 const { generateCellId } = await import(`${REPO}/packages/core/source/session/env.ts`)
+
+// 宿主平台：core 不自己去读 `process.platform`，见 `packages/core/source/host-platform.ts`。
+const PLATFORM = requireHostPlatform(process.platform)
 
 const { ABX_WORK_DIR, ABX_TASK_DIR, ABX_INSTANCE_ID, ABX_CONFIG_PATH, ABX_INSTANCES_ROOT, ABX_RUN, ABX_CELL_CMD } = process.env
 
@@ -244,7 +257,12 @@ const agent = findAgent('claude')
 const cellHome = config.session.cellHome
 const instance = planInstance({ agent, instanceId: ABX_INSTANCE_ID, cellHome, instancesRoot: ABX_INSTANCES_ROOT })
 const stateDir = { hostPath: ensureInstanceStateDir(instance), cellPath: instance.cellPath, agentId: agent.id }
-assertStateDirPolicy({ stateDirs: [stateDir], instancesRoot: instance.instancesRoot, cellHome })
+assertStateDirPolicy({
+  platform: PLATFORM,
+  stateDirs: [stateDir],
+  instancesRoot: instance.instancesRoot,
+  cellHome,
+})
 
 const staged = stageAgentConfig({
   agentId: agent.id,
@@ -263,6 +281,7 @@ const handle = await createDockerBackend().create(
   {
     cellId,
     agentId: agent.id,
+    platform: PLATFORM,
     command: ['sh', '-c', ABX_CELL_CMD],
     // 脚本/CI 没有终端：照实传 false。产品侧就是靠这个决定加不加 `--tty` 的；
     // 这里若传 true，docker 会拒绝起容器，而本脚本的 nonce 断言会立刻发现。

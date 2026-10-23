@@ -27,16 +27,37 @@ export type SharedEntryKind = (typeof SHARED_ENTRY_KINDS)[number]
  * 绝对路径判定不用 `node:path`。
  *
  * 这个模块会被面板（浏览器产物）打包，而 `node:path` 在那边是个空对象——
- * `path.isAbsolute` 到运行时才变成 undefined。abx 只跑 macOS / Linux，
- * 绝对路径就是 `/` 开头，一条 `startsWith` 足够。
+ * `path.isAbsolute` 到运行时才变成 undefined。所以这里按**形状**判，用的是纯正则。
+ *
+ * 三种形状都认，因为这条路径来自宿主，而宿主可能是 Windows：
+ *   - `/home/dev/notes` —— POSIX；
+ *   - `C:\Users\dev\notes`、`C:/Users/dev/notes` —— Windows 的盘符绝对路径；
+ *   - `\\server\share\notes` —— UNC。
+ *
+ * **原先只认 `startsWith('/')`**，于是 Windows 上拖进来的每一条条目都在这里被拒，
+ * 表现是「拖了没反应」——存进 `shared.json` 又读不出来，中间没有任何一句话。
+ * 判定放在这一层而不是按平台分支：这个 schema 判的是「形状像不像一条宿主绝对路径」，
+ * 而它拿不到平台（浏览器产物里也没有）。真正的分平台闸门在
+ * `@abx/core` 的 `resolveSharedMounts()`，那里有平台。
  */
+const POSIX_ABSOLUTE = /^\//
+const WINDOWS_DRIVE_ABSOLUTE = /^[A-Za-z]:[\\/]/
+const WINDOWS_UNC_ABSOLUTE = /^[\\/]{2}[^\\/]/
+
 function isAbsolutePath(value: string): boolean {
-  return value.startsWith('/')
+  return POSIX_ABSOLUTE.test(value) || WINDOWS_DRIVE_ABSOLUTE.test(value) || WINDOWS_UNC_ABSOLUTE.test(value)
 }
 
-/** 路径里有没有 `..` 这一整段。`..foo` 是合法的文件名，不算。 */
+/**
+ * 路径里有没有 `..` 这一整段。`..foo` 是合法的文件名，不算。
+ *
+ * 两种分隔符都切：Windows 的路径里可能有 `/`（`C:/Users/../Windows`），
+ * POSIX 的文件名里可以有 `\`（`notes\..\x` 是一个普通文件名，不是上跳两级）。
+ * 这里取的是**宽**的那一边——多切一种分隔符只会多拒掉几个可疑写法，
+ * 而漏切一种就是一个能绕过闸门的写法。真正的判定同样在 `resolveSharedMounts()`。
+ */
 function hasParentSegment(value: string): boolean {
-  return value.split('/').includes('..')
+  return value.split(/[/\\]/).includes('..')
 }
 
 export const sharedEntrySchema = z.object({

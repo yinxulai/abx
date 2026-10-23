@@ -140,23 +140,26 @@ fdc4:f303:9324::254 host.docker.internal      ← 变成了一个 IPv6 ULA 地�
 第 3 条是关键：脚本不照抄任何约定值。哪天 Docker Desktop 换了网关地址，
 这张表会自己变，而不是让断言用一个已经不对的常量继续「通过」。
 
-### 3.1 core 版本的落点在哪、由谁做
+### 3.1 core 版本的落点：已落地，但只落了一半
 
-**core 里现在没有纯函数形式的地址探测**（`resolveCellHost` 只是
-「local 后端 → `127.0.0.1`，否则照抄配置」，见 `core/source/commands/runtime.ts:99`）。
-按作业边界，**不许由本作业往 core 里写**。落点与归属：
+**落点是 [`packages/core/source/broker/cell-host.ts`](../../../../packages/core/source/broker/cell-host.ts)**，
+形状就是上面建议的那种——探测本身做 I/O，**判定是纯的**（`decideCellHost(probe)` 一个系统
+调用都不做，`probe` 由调用方注入），所以「哪条候选先被选中、都不通时说什么」在**没有
+docker 的机器上**也验得了。候选表 `CELL_HOST_CANDIDATES` 与本文 §2 实测的三条一一对应。
 
-| 该做什么 | 落点 | 谁做 |
+落下来的部分：
+
+| 该做什么 | 落点 | 状态 |
 |---|---|---|
-| 探测函数本身（纯函数，输入平台 + docker 探测结果，输出 `{ bindHost, cellHost }`） | `core/source/broker/` 下新文件，跟 `server.ts` 放一起 | **作业 B**（`layout.md` §6 里 B 独占 `core/source/broker/{registry,server,token,route}.ts`） |
-| 用探测结果决定舱面绑哪 | `core/source/broker/server.ts` 的 `startBroker`（现在是 `options.cellHost ?? config.broker.cellHost`） | **作业 B** |
-| 用探测结果决定舱内 `BASE_URL` / `ABX_BROKER_ORIGIN` 里的 host | `core/source/session/env.ts` 的 `buildCellEnv`（舱内 host 由调用方传进来） | **作业 C**（独占 `core/source/session/{agent-config,mount-policy,docker-backend,env}.ts`） |
+| 判定函数本身（纯函数，注入 I/O） | `broker/cell-host.ts` 的 `decideCellHost()` | ✅ 已落地，有单测 |
+| 一条都不通时给用户的话 | 同上的 `cellHostFailureDetail()` | ✅ 已落地，按「名字不存在 / 名字对但连不上 / 两者混着」三分支给不同的下一步 |
+| 要不要补 `--add-host` | 同上的 `needsHostGatewayMapping()` + `HOST_GATEWAY_MAPPING` | ✅ 已落地；`docker-backend` 只在 `spec.addHostGatewayMapping` 显式给了才加，**不按配置字符串猜**（§2.1 那个坑） |
+| 舱面**绑**哪张网卡 | 同上的 `bindHostCandidates()`，被 `startBroker` 按序试绑（失败会 log 说改了哪一张） | ✅ 已落地，`doctor` 也按它报「宿主绑 X」 |
+| 用探测结果决定**告诉舱内**哪个 host | 同上 | 🟡 **判定在，接线没做**：`abx open` 仍走「配置里的 `broker.cellHost`，`--cell-host` 可覆盖」。原因是探一次要起一个容器，而那会改到 `e2e-persist.sh` 里「这一次 `docker run` 有几条」那组断言的语义——**放到下一步做，不是漏掉的一行** |
 
-**形状建议**：纯函数 + 注入 I/O，与现有的 `probeUserNamespaces(readFile)`、`probeDocker(path)`
-保持同一种风格——探测本身做 I/O，**判定是纯的**，这样判定能单测，不用起 docker。
-
-`roadmap.md` 里「补齐 §19 的两处修正（舱面地址探测、共享路径检查）」就是这两条；
-`layout.md` §6 的作业表里**没有单独列出「地址探测」这一项**，落地时要么归 B，要么补一行。
+也就是说：**这不是「设计里说了但代码没有」，而是「两件事里的一件已经按探测走，另一件
+还没接上」**。§7.3 那条「默认配置在 Docker Desktop 上起不来」现在只剩后半段：绑那一半
+已经会自己退到 `0.0.0.0`，告诉舱内那一半仍然照配置走。
 
 ---
 
@@ -410,7 +413,12 @@ Error [ERR_MODULE_NOT_FOUND]: Cannot find module
   这句话会把排查方向带偏。
 - **落点**：`DEFAULT_CONFIG` 归 **作业 A**（独占 `contracts/source/load-config.ts`），
   探测函数归 **作业 B**（§3.1）。
-- `roadmap.md` §五 已经把「补齐 §19 的两处修正」列成未完成项，与实测一致。
+- **已修掉一半（见 §3.1）**：绑那一半不再照抄 `cellHost` 了——`bindHostCandidates()`
+  让 `172.17.0.1` 成为**候选之一**而不是唯一值，绑不上就退到 `0.0.0.0`（Docker Desktop
+  上实测能用的那一个），并在日志里说清「实际绑在 X、告诉舱内的是 Y」。
+  上面那段 `EADDRNOTAVAIL` 因此不再出现。
+- **还没修的另一半**：`DEFAULT_CONFIG` 里的默认值仍是 `172.17.0.1`，而
+  「告诉舱内哪个地址」仍然照它走。§3.1 表格最后一行写了为什么接线要单独一步。
 
 ### 7.4 §16.2 的关键设计 D4（令牌带 `abx_cell_` 前缀）：未落地
 
@@ -439,6 +447,7 @@ Error [ERR_MODULE_NOT_FOUND]: Cannot find module
 | 项 | 为什么没验 |
 |---|---|
 | **macOS 真机** | 全部在 Linux 版 Docker Desktop 上跑的。macOS 的共享路径默认值、VM 网关地址、`host.docker.internal` 的解析都**可能不同**，必须在真机重跑这个脚本 |
+| **Windows 真机** | 一次都没跑过：这个脚本是 bash + docker，Windows runner 上没有那套 shell 语义，所以 CI 上也不跑。Windows 上「容器 → 宿主」这条路（WSL2 后端的网关、`host.docker.internal` 的解析、盘符挂载的写法）**一条都没有实测支撑**。跑法与排障见 [`windows-runbook.md`](./windows-runbook.md) |
 | **局域网里另一台机器打舱面** | 只验到「宿主回环也能打」（§4）。局域网可达性没法在本机造出来，而它恰恰是网段校验要防的场景 |
 | **真实 agent 二进制** | 舱内跑的一直是脚本，不是真的 Claude Code / Codex |
 | **真实 agent 的出网域名集合** | 本次只打了 `/healthz` 和一条 `/u/osw/...`，没有让真 agent 跑起来看它还会连哪些域名 |

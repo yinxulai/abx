@@ -20,6 +20,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { SANDBOX_BACKEND_IDS } from '@abx/contracts'
 import { makeConfig } from '@abx/contracts/test-support'
+import { RUNNING_PLATFORM, RUNNING_VOCABULARY } from '../test-support'
 import type { SandboxBackend, SandboxSpec } from './backend'
 import { createBackend } from './index'
 
@@ -48,9 +49,10 @@ function spec(): SandboxSpec {
   return {
     cellId: 'backend-factory-cell',
     agentId: 'claude',
+    platform: RUNNING_PLATFORM,
     command: ['claude'],
     allocateTty: false,
-    taskDir: '/home/dev/projects/thing',
+    taskDir: RUNNING_VOCABULARY.taskDir,
     workdir: '/workspace',
     cellHome: '/home/node',
     env: {},
@@ -146,7 +148,9 @@ describe('createBackend：docker 不可用时不降级', () => {
         onStderr: () => undefined,
       })
       // 失败落在 exit 上，而不是被吞掉、更不是换个后端重来一遍。
-      await expect(handle.exit).rejects.toThrow(/起不了 docker/)
+      // 这里 PATH 是空目录，所以失败的具体形态是 `ENOENT` —— 说的是
+      // 「这台机器上没有 docker 这个可执行文件」，而不是「守护进程没起」。
+      await expect(handle.exit).rejects.toThrow(/找不到 docker/)
     } finally {
       if (savedPath === undefined) delete process.env['PATH']
       else process.env['PATH'] = savedPath

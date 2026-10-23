@@ -17,8 +17,9 @@
 import { accessSync, constants, existsSync } from 'node:fs'
 import path from 'node:path'
 import { listWildcardPatterns, type AbxConfig } from '@abx/contracts'
+import type { HostPlatform } from '../host-platform'
 import { probeDocker, probeUserNamespaces, isExecutableOnPath, MOUNT_POLICY, DANGEROUS_HOST_ENV_NAMES } from '../session/index'
-import { isPortOpen, resolveBackend, resolveCellHost, type CommandContext } from './runtime'
+import { isPortOpen, resolveBackend, resolveCellBindHosts, resolveCellHost, type CommandContext } from './runtime'
 import type { CommandOptions } from './options'
 
 export type CheckStatus = 'ok' | 'warn' | 'fail'
@@ -67,16 +68,17 @@ export async function collectChecks(context: CommandContext, options: CommandOpt
   const { config, env } = context
   const backend = resolveBackend(config, options.backend)
   const cellHost = resolveCellHost(config, backend, options.cellHost)
+  const cellBindHosts = resolveCellBindHosts(config, backend, options.cellHost)
 
   return [
     checkNode(),
     checkBackend(backend),
-    await checkDocker(backend),
+    await checkDocker(backend, context.platform),
     checkUserNamespaces(),
-    checkBubblewrap(),
+    checkBubblewrap(context.platform),
     await checkPort('宿主面端口', config.broker.host, config.broker.hostPort),
-    await checkPort('舱面端口', cellHost, config.broker.cellPort),
-    checkCellHost(cellHost, backend),
+    await checkPort('舱面端口', cellBindHosts[0] ?? cellHost, config.broker.cellPort),
+    checkCellHost(cellHost, backend, cellBindHosts),
     checkCellToken(config, env),
     checkUpstreams(config, env),
     checkEgress(config),
@@ -111,8 +113,8 @@ function checkBackend(backend: string): Check {
   }
 }
 
-async function checkDocker(backend: string): Promise<Check> {
-  const probe = await probeDocker()
+async function checkDocker(backend: string, platform: HostPlatform): Promise<Check> {
+  const probe = await probeDocker(platform)
   if (probe.available) {
     return { name: 'docker', status: 'ok', detail: probe.detail }
   }
@@ -139,8 +141,8 @@ function checkUserNamespaces(): Check {
   }
 }
 
-function checkBubblewrap(): Check {
-  const present = isExecutableOnPath('bwrap')
+function checkBubblewrap(platform: HostPlatform): Check {
+  const present = isExecutableOnPath('bwrap', platform)
   return {
     name: 'bubblewrap',
     status: 'ok',
@@ -160,19 +162,32 @@ async function checkPort(name: string, host: string, port: number): Promise<Chec
   }
 }
 
-function checkCellHost(cellHost: string, backend: string): Check {
+/**
+ * 舱面地址这一项。
+ *
+ * 要分开说两件事：**告诉舱内哪个地址**（`cellHost`）与**宿主机绑哪张网卡**
+ * （`bindHosts`）。以前它们是一个值，所以检查里那两句「绑在哪」读起来没歧义；
+ * 现在默认值是 `host.docker.internal` —— 那是**舱内的**名字，宿主上并不存在，
+ * 所以「绑在 host.docker.internal」这句话本身就不成立。检查项改成报实际会绑的
+ * 那张网卡，并说明两件事不是一回事。
+ */
+function checkCellHost(cellHost: string, backend: string, bindHosts: readonly string[]): Check {
   if (backend === 'local') {
-    return { name: '舱面绑定地址', status: 'ok', detail: `${cellHost}（local 后端固定走回环）` }
+    return { name: '舱面地址', status: 'ok', detail: `${cellHost}（local 后端固定走回环，不探测）` }
   }
+  const bind = bindHosts.join(' → ')
   if (cellHost === '172.17.0.1') {
     return {
-      name: '舱面绑定地址',
+      name: '舱面地址',
       status: 'warn',
-      detail: `${cellHost}（docker 默认网桥网关，网桥不存在时 bind 会失败）`,
-      hint: 'docker 用的是自定义网络时，网关地址不是 172.17.0.1。用 `docker network inspect bridge` 确认。',
+      detail: `告诉舱内 ${cellHost}；宿主绑 ${bind}`,
+      hint:
+        '172.17.0.1 只在原生 linux docker 上存在，Docker Desktop（macOS / Windows）上没有这张网卡，' +
+        'bind 会失败并退到列表里的下一个。要钉死一个地址就写 broker.cellHost；' +
+        '这台机器上真实可用的地址用 `docker network inspect bridge` 看。',
     }
   }
-  return { name: '舱面绑定地址', status: 'ok', detail: cellHost }
+  return { name: '舱面地址', status: 'ok', detail: `告诉舱内 ${cellHost}；宿主绑 ${bind}` }
 }
 
 function checkCellToken(config: AbxConfig, env: Readonly<Record<string, string | undefined>>): Check {
