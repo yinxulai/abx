@@ -77,6 +77,37 @@ export const en = {
     quit: 'Quit',
     caption: 'Panel mock-up · drawn from the product spec; the desktop shell is still in progress',
   },
+  agents: {
+    eyebrow: 'Agents',
+    title: 'Three agents, one manifest each',
+    lead: 'abx does not hard-code its agents: one agent is one manifest entry. The three cards below read that manifest, not a copy of it.',
+    statusStable: 'verified',
+    statusUnconfirmed: 'unverified',
+    fieldCommand: 'Command inside the cell',
+    fieldUpstream: 'Default upstream',
+    fieldEnv: 'Environment inside the cell',
+    fieldPlaceholder: 'Placeholder in the cell',
+    fieldCellToken: 'How the cell token travels',
+    cellTokenHeader: 'request header (never in a URL or a log line)',
+    cellTokenPath: 'URL path prefix (this agent cannot add custom headers)',
+    fieldConfig: 'Files written into the cell',
+    configGenerated: 'written by abx, mounted read-only',
+    configRegistered: 'registered only — not written, not mounted',
+    fieldHistory: 'Where history goes',
+    fieldImage: 'Image',
+    imageMissing: 'not specified per agent yet',
+    none: 'not declared in the manifest',
+    caveatTitle: 'Three "not yet" answers on this page',
+    caveatImage:
+      'Image: the manifest does not name one per agent yet, so this reads "not specified" instead of quietly borrowing a global default. It fills itself in once the manifest declares one.',
+    caveatHistory:
+      'History: these are the directories each agent writes its history and sessions into. Per-cell persistence is still being built — until it lands, these directories do not survive the container.',
+    caveatStatus:
+      'Verification: the entry marked "unverified" has no authoritative source for its command name or config field names yet. Check it yourself before relying on it.',
+    upstreamTitle: 'What the upstream column means',
+    upstreamBody:
+      'It is the default upstream in that manifest entry, not the whole set you can reach. What actually decides where a request goes is the channel configuration in OSW, outside the cell: keys, routing and failover all live there, and the cell neither sees nor needs to know about them.',
+  },
   footer: {
     line: 'An airlock for your AI coding agent. The first version is macOS only.',
   },

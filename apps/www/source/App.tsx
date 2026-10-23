@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { AgentOverview } from './components/agent-overview'
 import { Boundaries } from './components/boundaries'
 import { CredentialModel } from './components/credential-model'
 import { DownloadSection } from './components/download-section'
@@ -54,6 +55,7 @@ export const App = () => {
       <main className="relative" id="main">
         <Hero />
         <CredentialModel />
+        <AgentOverview />
         <HowItWorks />
         <Boundaries />
         <DownloadSection />

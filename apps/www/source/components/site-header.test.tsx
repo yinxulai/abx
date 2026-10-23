@@ -55,7 +55,7 @@ describe('site header', () => {
     const { container } = await renderApp('zh')
 
     const links = within(navOf()).getAllByRole('link')
-    expect(links).toHaveLength(4)
+    expect(links).toHaveLength(5)
 
     for (const link of links) {
       const href = link.getAttribute('href') ?? ''

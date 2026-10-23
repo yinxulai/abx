@@ -25,7 +25,7 @@ describe('landing page', () => {
     const { container } = await renderApp()
 
     const sections = [...container.querySelectorAll('section[aria-labelledby]')]
-    expect(sections).toHaveLength(5)
+    expect(sections).toHaveLength(6)
 
     const levels = sections.map(section => {
       const heading = container.querySelector(`#${section.getAttribute('aria-labelledby') ?? ''}`)
@@ -34,9 +34,9 @@ describe('landing page', () => {
       return heading?.tagName
     })
 
-    // 首屏的标签指向 h1，其余四节各有一个 h2：标题层级只有这两级。
+    // 首屏的标签指向 h1，其余每节各有一个 h2：标题层级只有这两级。
     expect(levels.filter(level => level === 'H1')).toHaveLength(1)
-    expect(levels.filter(level => level === 'H2')).toHaveLength(4)
+    expect(levels.filter(level => level === 'H2')).toHaveLength(5)
   })
 
   it('points every in-page link at a target that is rendered', async () => {

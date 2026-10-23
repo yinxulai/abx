@@ -12,6 +12,7 @@ type SiteHeaderProps = {
 /** 顶栏里的锚点导航。id 对应各区块的 `id` 属性，顺序与页面顺序一致。 */
 const ANCHORS = [
   { id: 'model', key: 'nav.model', fallback: '凭据模型' },
+  { id: 'agents', key: 'nav.agents', fallback: 'Agent 一览' },
   { id: 'how', key: 'nav.start', fallback: '怎么用' },
   { id: 'boundaries', key: 'nav.boundaries', fallback: '边界' },
   { id: 'download', key: 'nav.download', fallback: '下载' },
