@@ -23,13 +23,14 @@
 | 配置层（zod schema 为唯一真相） | ✅ 已落地（类型从 schema 推导；手写 readers 已删除） |
 | 舱面来源网段校验 | ✅ 已落地（来源网段判定在令牌解析**之前**、令牌加可扫描前缀、审计记来源地址；实测结论：回环必须进默认放行名单，同机进程仅靠令牌挡住） |
 | `apps/www`（官网） | ✅ 已上线 <https://abx-www.yinxulai.workers.dev>（凭据叙事、三步用法、安全边界、明确不承诺项）；构建期预渲染首屏，**关掉 JS 也能取到正文**（55 KB / 3.7k 中文字） |
-| 本地（local 后端）端到端脚本 | ✅ 已落地（改走 core 命令层，30 条断言实测通过） |
+| 本地（local 后端）端到端脚本 | ✅ 已落地（改走 core 命令层，30 条断言实测通过）；**`local` 不是沙箱，只为开发自测存在，永不默认、永不回退** |
+| 后端选择策略（docker 优先 + 留扩展口子） | ✅ 已落地（支持的 id 只在契约里声明一次；工厂是一张 `Record<SandboxBackendId, …>` 映射表，加 id 不加实现**编译不过**；未知 id 响亮失败、绝不回退到 local；见 [`overview/architecture.md`](./overview/architecture.md) §7.2）。**没有任何新后端**：podman / bwrap 都只是口子 |
 | macOS 打包与 CI | ✅ 已落地（electron-builder + macOS workflow）；**未在真机打过包** |
 | Linux 开发链路 | ✅ 已落地（按平台分叉 + `verify:linux` 无头验证入口，见 [`overview/platforms.md`](./overview/platforms.md)）；Linux 只服务开发，不是发布平台 |
 | Linux 打包与 CI | 🟡 AppImage 与 deb 都在本机打出来了，deb 解包后的可执行文件也能起；**CI 流水线尚未在 runner 上跑过，deb 也从未装过** |
 | `apps/docs`（文档站） | ✅ 已上线 <https://abx-docs.yinxulai.workers.dev>（33 页，中文为源语言、英文增量补译，机器审计校验与清单一致）；**英文侧 10 页仍回退中文** |
 
-**当前基线：** `pnpm lint` / `pnpm typecheck` / `pnpm test` 三样全绿，**716 个测试**（52 个文件）。
+**当前基线：** `pnpm lint` / `pnpm typecheck` / `pnpm test` 三样全绿，**729 个测试**（53 个文件）。
 
 > 上表里「airlock 阶段」指本项目在 `/home/openclaw/Project/airlock` 下完成的第一次实现。
 > 那个目录是**早期的错误落点**，代码已按
