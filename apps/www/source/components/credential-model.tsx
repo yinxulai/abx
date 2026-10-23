@@ -32,7 +32,7 @@ export const CredentialModel = () => (
           不复制任何供应商配置，也不把密钥带进舱里。
         </p>
         <p>
-          舱内 agent 那一侧看到的全部，就是右边这些：一个自定义供应商、一个
+          舱内 agent 那一侧看到的全部，就是下面这些：一个自定义供应商、一个
           baseUrl、一个无条件会被气闸替换掉的占位符 token。没有供应商列表，
           没有模型清单，没有账户，也没有第二把密钥。
         </p>
@@ -46,14 +46,14 @@ export const CredentialModel = () => (
         </blockquote>
       </div>
 
-      <div className="rounded-xl border border-line bg-surface-0">
+      <div className="h-fit rounded-xl border border-line bg-surface-0 lg:self-start">
         <div className="flex items-center justify-between gap-4 border-b border-line px-4 py-3">
           <p className="text-xs text-ink-3">舱内 agent 看到的全部配置</p>
           <span className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] text-ink-4">
             示意
           </span>
         </div>
-        <pre className="overflow-x-auto px-4 py-5 font-mono text-[13px] leading-7 text-ink-2">
+        <pre className="px-4 py-5 font-mono text-[13px] leading-7 break-words whitespace-pre-wrap text-ink-2">
           <code>
             <span className="text-ink-3">provider</span>
             {': '}
@@ -74,8 +74,8 @@ export const CredentialModel = () => (
     </div>
 
     <h3 className="mt-16 text-sm font-medium text-ink-3">谁拿着什么</h3>
-    <div className="mt-3 overflow-x-auto rounded-lg border border-line">
-      <table className="w-full min-w-[34rem] border-collapse text-left text-sm">
+    <div className="mt-3 overflow-hidden rounded-lg border border-line">
+      <table className="w-full border-collapse text-left text-sm">
         <caption className="sr-only">OSW、气闸与舱内 agent 各自持有的东西</caption>
         <thead>
           <tr className="border-b border-line bg-surface-1 text-xs text-ink-3">

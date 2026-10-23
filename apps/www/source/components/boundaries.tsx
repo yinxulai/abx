@@ -106,7 +106,7 @@ export const Boundaries = () => (
 
     <div className="mt-6 rounded-xl border border-line bg-surface-1/50 p-6">
       <h3 className="text-sm font-medium text-ink-2">明确不承诺什么</h3>
-      <ul className="mt-3 grid gap-2 text-sm leading-relaxed text-ink-3 sm:grid-cols-3">
+      <ul className="mt-3 grid gap-2 text-sm leading-relaxed text-ink-3">
         {NON_PROMISES.map(item => (
           <li className="flex gap-2" key={item}>
             <span aria-hidden="true" className="mt-2 size-1 shrink-0 rounded-full bg-ink-4" />

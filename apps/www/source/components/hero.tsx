@@ -6,7 +6,7 @@ export const Hero = () => (
   <section aria-labelledby="hero-title" className="relative mx-auto max-w-6xl px-6 pt-16 pb-20 lg:pt-24 lg:pb-28">
     <div className="grid items-center gap-14 lg:grid-cols-[1.08fr_0.92fr] lg:gap-16">
       <div className="animate-rise">
-        <p className="inline-flex rounded-full border border-line bg-surface-1/60 px-3 py-1 text-xs tracking-[0.14em] text-ink-3 uppercase">
+        <p className="inline-flex rounded-full border border-line bg-surface-1/60 px-3 py-1 text-xs tracking-[0.14em] text-ink-3">
           AIRLOCK BOX · macOS 托盘应用
         </p>
 
