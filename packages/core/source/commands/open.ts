@@ -17,7 +17,16 @@ import { existsSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { findAgent, agentIds } from '@abx/contracts'
 import { collectSecretEnvNames } from '../broker/index'
-import { buildCellEnv, createBackend, findRiskyFilesInTaskDir, generateCellId } from '../session/index'
+import {
+  buildCellEnv,
+  cellRootFor,
+  createBackend,
+  findRiskyFilesInTaskDir,
+  generateCellId,
+  renderAgentConfig,
+  stageAgentConfig,
+  toSandboxConfigFiles,
+} from '../session/index'
 import type { CommandOptions } from './options'
 import { CommandError, cellOriginFor, ensureBroker, resolveBackend, resolveCellHost, type CommandContext } from './runtime'
 
@@ -66,7 +75,14 @@ export async function runOpen(input: OpenInput): Promise<number> {
   const risky = findRiskyFilesInTaskDir(taskDir)
 
   if (options.dryRun) {
-    log(renderPlan({ agentId: agent.id, taskDir, backendId, cellHost, context, cellId }))
+    // 干跑只生成**内容**、不落盘：这时候还没有舱令牌（broker 还没起），
+    // 而清单里要报的是路径，路径不依赖令牌。
+    const plan = renderAgentConfig({
+      agentId: agent.id,
+      cellOrigin: cellOriginFor(context.config, cellHost),
+      upstreamId: upstream.id,
+    })
+    log(renderPlan({ agentId: agent.id, taskDir, backendId, cellHost, context, cellId, configPaths: plan.files.map((file) => file.cellPath) }))
     return 0
   }
 
@@ -82,10 +98,28 @@ export async function runOpen(input: OpenInput): Promise<number> {
   }
 
   const lease = await ensureBroker({ context, backend: backendId, cellHost, log })
+  const cellOrigin = cellOriginFor(context.config, cellHost)
+
+  // 生成配置 → 落盘 → 只读挂进去。**宿主那份 settings.json 一个字都不进舱**：
+  // 里面可能写着别家的 key 和别的端点，而同目录还躺着凭据文件（见 session/agent-config.ts）。
+  //
+  // 只在 docker 后端生成：local 后端直接在宿主上跑，没有挂载这回事，
+  // 写一份没人读的文件只会让人以为 local 也有那层隔离。
+  const staged =
+    backendId === 'docker'
+      ? stageAgentConfig({
+          agentId: agent.id,
+          cellRoot: cellRootFor(cellId),
+          cellOrigin,
+          upstreamId: upstream.id,
+          cellToken: lease.cellToken,
+          tokenInPath: context.config.broker.allowCellTokenInPath,
+        })
+      : null
 
   const env = buildCellEnv({
     agent,
-    brokerCellOrigin: cellOriginFor(context.config, cellHost),
+    brokerCellOrigin: cellOrigin,
     cellId,
     cellToken: lease.cellToken,
     upstreamId: upstream.id,
@@ -100,6 +134,7 @@ export async function runOpen(input: OpenInput): Promise<number> {
       command: [agent.command, ...agent.args],
       taskDir,
       workdir: context.config.session.workdir,
+      agentConfigFiles: staged === null ? [] : toSandboxConfigFiles(staged),
       env,
       forbiddenEnvNames: collectSecretEnvNames(context.config.upstreams),
       limits: context.config.session.limits,
@@ -114,7 +149,10 @@ export async function runOpen(input: OpenInput): Promise<number> {
   log('')
   log(`[abx] 会话 ${cellId}`)
   log(`[abx] 后端 ${backendId}${lease.spawned ? '（broker 由本次会话启动）' : ''}`)
-  log(`[abx] 任务目录 ${taskDir} → ${context.config.session.workdir}（可写，唯一的挂载点）`)
+  log(`[abx] 任务目录 ${taskDir} → ${context.config.session.workdir}（可写，唯一的可写挂载点）`)
+  for (const file of staged?.files ?? []) {
+    log(`[abx] 配置 ${file.hostPath} → ${file.cellPath}（只读；abx 生成，宿主那份不进舱）`)
+  }
   log(`[abx] 上游 ${upstream.id} ← ${upstream.secretEnv ?? upstream.secretFile ?? '(未配置)'}`)
   log(`[abx] 审计 ${context.config.broker.auditPath}`)
   log('')
@@ -141,6 +179,8 @@ interface RenderPlanInput {
   readonly cellHost: string
   readonly context: CommandContext
   readonly cellId: string
+  /** 本来会生成并挂进去的那几个配置文件（只列舱内路径）。 */
+  readonly configPaths: readonly string[]
 }
 
 function renderPlan(input: RenderPlanInput): string {
@@ -153,8 +193,13 @@ function renderPlan(input: RenderPlanInput): string {
     `  镜像         ${context.config.session.image}`,
     `  运行用户     ${context.config.session.user}`,
     `  资源限额     内存 ${context.config.session.limits.memory} / pids ${context.config.session.limits.pids} / cpus ${context.config.session.limits.cpus}`,
-    `  挂载         ${input.taskDir} → ${context.config.session.workdir}（rw，唯一挂载点）`,
-    `  不挂载       /home、用户主目录、docker socket`,
+    `  挂载         ${input.taskDir} → ${context.config.session.workdir}（rw，唯一可写挂载点）`,
+    ...(input.backendId === 'docker'
+      ? [
+          `  生成的配置   ${input.configPaths.join('、')}（只读；abx 现写，宿主那份不进舱）`,
+          `  不挂载       /home、用户主目录、docker socket；也不挂任何配置**目录**（同目录有凭据）`,
+        ]
+      : []),
     `  宿主面       http://${context.config.broker.host}:${context.config.broker.hostPort}`,
     `  舱面         ${cellOriginFor(context.config, input.cellHost)}`,
     `  上游         ${upstream?.id ?? '(缺失)'} ← ${upstream?.secretEnv ?? upstream?.secretFile ?? '(未配置)'}`,

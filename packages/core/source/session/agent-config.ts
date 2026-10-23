@@ -34,6 +34,7 @@ import {
   type AgentConfigFormat,
   type AgentDefinition,
 } from '@abx/contracts'
+import type { SandboxConfigFile } from './backend'
 import { cellBaseUrlFor } from './env'
 
 export class AgentConfigError extends Error {
@@ -104,6 +105,19 @@ export function renderAgentConfig(options: RenderAgentConfigOptions): RenderedAg
   return { agentId: agent.id, baseUrl, files }
 }
 
+/**
+ * 一次会话的宿主目录：`~/.abx/cells/<cellId>`。
+ *
+ * 选在 `~/.abx/` 下面有两个理由：它跟着 home 走（Docker Desktop 只把 home 下的路径
+ * 共享给 VM，见 architecture §19.2），以及它与任务目录天然分开——abx 生成的东西
+ * 不该混进用户的项目里。
+ */
+export function cellRootFor(cellId: string, homeDir: string = homedir()): string {
+  // cellId 是我们自己生成的（agent-时间戳-随机后缀），但这一层不假设调用方老实：
+  // 带 `../` 的 id 会把生成目录挪到 `~/.abx/` 外面去。取 basename 就够。
+  return path.join(homeDir, '.abx', 'cells', path.basename(cellId))
+}
+
 export interface StagedAgentConfigFile extends RenderedAgentConfigFile {
   /** 宿主上实际写到哪儿：`<cellRoot>/agents/<agentId>/<文件名>`。 */
   readonly hostPath: string
@@ -146,6 +160,16 @@ export function stageAgentConfig(options: StageAgentConfigOptions): StagedAgentC
   return { agentId: rendered.agentId, cellRoot: options.cellRoot, baseUrl: rendered.baseUrl, files }
 }
 
+/**
+ * 落盘结果 → 后端要的那份形状。
+ *
+ * 只带路径，不带内容：后端只管把文件挂进去，它没有理由看到配置里写了什么
+ * （以后端为边界传内容，等于给「顺手把内容打印到日志」留了个门）。
+ */
+export function toSandboxConfigFiles(config: StagedAgentConfig): readonly SandboxConfigFile[] {
+  return config.files.map((file) => ({ hostPath: file.hostPath, cellPath: file.cellPath }))
+}
+
 function renderContent(agent: AgentDefinition, file: AgentConfigFile, baseUrl: string): string {
   switch (agent.id) {
     case 'claude':
@@ -153,7 +177,7 @@ function renderContent(agent: AgentDefinition, file: AgentConfigFile, baseUrl: s
       return renderClaudeSettings(agent, baseUrl)
     case 'codex':
       expectFormat(agent, file, 'toml')
-      return renderCodexConfig(baseUrl)
+      return renderCodexConfig(agent, baseUrl)
     case 'dsh':
       expectFormat(agent, file, 'yaml')
       return renderDshSettings(agent, baseUrl)
@@ -179,14 +203,15 @@ function renderClaudeSettings(agent: AgentDefinition, baseUrl: string): string {
   return `${JSON.stringify(document, null, 2)}\n`
 }
 
-function renderCodexConfig(baseUrl: string): string {
+function renderCodexConfig(agent: AgentDefinition, baseUrl: string): string {
   // 形状照 OSW 注册表的 `apply.providerEntry`：`model_providers.<id>` 表项。
   //
   // 不写 `model`（归 OSW），也不写 `env_key`：`env_key` 一旦写了，Codex 会要求那个
   // 环境变量必须存在；舱内发出去的令牌本来就是个占位符，多一层间接没有收益。
   return [
     `# ${productName} 生成，每次起舱重写；只读挂载，手改活不过一次重启。`,
-    `# 这里只有一处端点与一个占位符 token。换模型在 ${productName} 的另一侧，不在这份文件里。`,
+    `# 端点只有这一处；占位符 token 走舱内环境变量 ${agent.tokenEnv}，不落在这份文件里。`,
+    `# 换模型在 ${productName} 的另一侧，不在这里。`,
     '',
     `model_provider = ${jsonString(PROVIDER_ID)}`,
     '',

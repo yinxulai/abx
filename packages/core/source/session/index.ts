@@ -28,7 +28,7 @@ export {
 } from './env'
 export type { BuildCellEnvOptions, CellBaseUrlOptions, ScrubEnvResult } from './env'
 
-export { AgentConfigError, renderAgentConfig, stageAgentConfig } from './agent-config'
+export { AgentConfigError, cellRootFor, renderAgentConfig, stageAgentConfig, toSandboxConfigFiles } from './agent-config'
 export type {
   RenderAgentConfigOptions,
   RenderedAgentConfig,

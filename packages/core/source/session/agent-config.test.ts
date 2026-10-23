@@ -12,8 +12,9 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { findAgent, generatedConfigFiles, AGENT_DEFINITIONS } from '@abx/contracts'
-import { AgentConfigError, renderAgentConfig, stageAgentConfig } from './agent-config'
+import { AgentConfigError, cellRootFor, renderAgentConfig, stageAgentConfig, toSandboxConfigFiles } from './agent-config'
 import { buildCellEnv } from './env'
+import { MOUNT_POLICY, assertMountPolicy } from './mount-policy'
 
 const CELL_ORIGIN = 'http://host.docker.internal:8789'
 const HOME = '/home/dev'
@@ -177,6 +178,32 @@ describe('stageAgentConfig', () => {
   it('舱内路径与宿主上的原路径一致（D2）', () => {
     const staged = stageAgentConfig({ agentId: 'codex', cellOrigin: CELL_ORIGIN, homeDir: HOME, cellRoot: cellRoot() })
     expect(staged.files[0]?.cellPath).toBe('/home/dev/.codex/config.toml')
+  })
+
+  it('cellRootFor 把生成目录钉在 ~/.abx/cells/<cellId> 下', () => {
+    expect(cellRootFor('claude-1', HOME)).toBe('/home/dev/.abx/cells/claude-1')
+  })
+
+  it('cellId 里的目录成分被丢掉，免得生成目录跑到 ~/.abx 外面', () => {
+    expect(cellRootFor('../../etc', HOME)).toBe('/home/dev/.abx/cells/etc')
+  })
+
+  it('toSandboxConfigFiles 只带路径，不带内容', () => {
+    const staged = stageAgentConfig({ agentId: 'claude', cellOrigin: CELL_ORIGIN, homeDir: HOME, cellRoot: cellRoot() })
+    expect(toSandboxConfigFiles(staged)).toEqual([
+      { hostPath: staged.files[0]?.hostPath, cellPath: '/home/dev/.claude/settings.json' },
+    ])
+  })
+
+  it('生成出来的东西能直接过挂载策略：只读单文件', () => {
+    // 两个模块之间最容易漂的一处：生成器把文件写到 A，策略以为允许的是 B。
+    const root = cellRoot()
+    const staged = stageAgentConfig({ agentId: 'claude', cellOrigin: CELL_ORIGIN, homeDir: HOME, cellRoot: root })
+    const configFiles = toSandboxConfigFiles(staged)
+    const mounts = MOUNT_POLICY.buildMounts('/home/dev/projects/thing', '/workspace', configFiles)
+    expect(() =>
+      assertMountPolicy({ mounts, taskDir: '/home/dev/projects/thing', workdir: '/workspace', agentConfigFiles: configFiles }),
+    ).not.toThrow()
   })
 
   it('重跑同一个 cellId 不会因为文件只读而写不进去', () => {
