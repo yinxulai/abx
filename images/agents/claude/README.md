@@ -96,9 +96,9 @@ docker run --rm abx-agent-claude:local claude --version
 - 反过来，镜像**不**为这个约束做任何预置（不预建可写目录、不设 `HOME`），
   理由同上：镜像是「一个能跑的 agent 命令」，不是对沙箱参数的补偿。
 
-## 在 abx 的 flag 下跑它，会先撞上两件跟镜像无关的事（实测）
+## 在 abx 的 flag 下跑它，会先撞上三件跟镜像无关的事（实测）
 
-两条都不是这个镜像的问题，但都会让人以为「镜像不对」，所以写在这儿：
+三条都不是这个镜像的问题，但都会让人以为「镜像不对」，所以写在这儿：
 
 - **`--interactive --tty` 要求 docker 客户端自己的 stdin 是终端。**
   `buildDockerArgs` 里这两个 flag 是写死的（终端里的 `abx open` 需要它们），
@@ -115,3 +115,13 @@ docker run --rm abx-agent-claude:local claude --version
   （这台机器上实测只有 `$HOME` 下的路径；把 `/tmp` 下的目录挂进去会被拒：
   `mounts denied: The path /tmp/... is not shared from the host`）。
   任务目录和 abx 生成的那份配置都在挂载清单里，所以跑 e2e 时的临时目录要落在能共享的地方。
+- **带 `-t` 的容器，输出流里会混进两个字符 `^@`**（`0x5E 0x40`，两个可打印字符，
+  **不是** NUL 字节；`script` 不会这么转义，是 docker 客户端自己写的）。
+  实测同一个镜像 + 同一套 flag：`sh -c 'echo A'` 的输出是 `^@A`，
+  而另一次容器的输出里一个都没有 —— 位置不固定，所以读容器输出时不能假设第一行干净。
+  这件事在 abx 这边有真实后果：舱内探测「哪条地址能到舱面」读的就是容器输出的第一行，
+  那次 `^@` 正好粘在它前面，通告地址被读成 `^@host.docker.internal`，
+  注入舱内的 `ANTHROPIC_BASE_URL` 成了 `http://^@host.docker.internal:28889/u/anthropic`。
+  能打通纯属侥幸：URL 语法把开头的 `^` 当成了 userinfo（用户名），host 碰巧还是对的。
+  `e2e-agent-claude.sh` 现在把这两个字符洗掉，并且用严格的主机名字符集去认那条探测结果
+  —— 宁可当场失败，也不把一个带杂质的字符串当成主机名注入舱内。
