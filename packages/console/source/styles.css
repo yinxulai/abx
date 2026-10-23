@@ -287,6 +287,16 @@ body {
   white-space: nowrap;
 }
 
+/* 预览行（宿主还没答话）与失效行：一个还没生效、一个已经没用了，都压暗。 */
+.abx-list-row[data-state='pending'] .abx-list-name,
+.abx-list-row[data-state='missing'] .abx-list-name {
+  color: hsl(var(--foreground) / 0.45);
+}
+
+.abx-list-row[data-state='missing'] .abx-list-name {
+  text-decoration: line-through;
+}
+
 .abx-badge {
   flex: none;
   padding: 1px 6px;
@@ -296,6 +306,53 @@ body {
   font-size: 11px;
   font-weight: 500;
   line-height: 16px;
+}
+
+/* 被拒的条目：不进上面的列表，在共享区下方逐条给出原因。
+   理由是句子，允许折行——它得能读完；截断了就等于没说。 */
+.abx-rejected {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-lg);
+  background: hsl(var(--destructive) / 0.08);
+}
+
+.abx-rejected-head {
+  margin: 0 0 2px;
+  color: hsl(var(--destructive));
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+.abx-rejected-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.abx-rejected-row {
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.abx-rejected-name {
+  overflow: hidden;
+  flex: none;
+  max-width: 40%;
+  color: hsl(var(--foreground) / 0.8);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.abx-rejected-reason {
+  min-width: 0;
+  flex: 1;
+  color: hsl(var(--foreground) / 0.55);
+  overflow-wrap: anywhere;
 }
 
 .abx-dropzone {
