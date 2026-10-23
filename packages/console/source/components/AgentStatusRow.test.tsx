@@ -65,7 +65,7 @@ describe('AgentStatusRow', () => {
     for (const button of screen.getAllByRole('button')) {
       // 看得见的那句话与读得出来的那句话是同一个字符串，不会各说各的。
       expect(button.getAttribute('aria-label')).toBe(button.querySelector('.abx-agent-tip')?.textContent)
-      // 状态用动作词（`design-system.md` §8）：未运行写「启动」、运行中写「聚焦」。
+      // 状态用动作词（`design-system.md` §12）：未运行写「启动」、运行中写「聚焦」。
       expect(button.getAttribute('aria-label')).toMatch(/ · (未运行，点击启动|运行中，点击聚焦)$/)
     }
   })

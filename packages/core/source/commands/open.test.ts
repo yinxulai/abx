@@ -13,8 +13,9 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { MCP_SHIM_CELL_PATH, type SessionConfig } from '@abx/contracts'
+import { MCP_SHIM_CELL_PATH, MCP_SHIM_FILE_NAME, type SessionConfig } from '@abx/contracts'
 import { makeConfig, makeUpstream } from '@abx/contracts/test-support'
+import { RUNNING_PLATFORM } from '../test-support'
 import type { CommandOptions } from './options'
 import { runOpen } from './open'
 import { CommandError, type CommandContext } from './runtime'
@@ -44,7 +45,13 @@ function context(env: Readonly<Record<string, string | undefined>> = {}, session
     }),
     configPath: '/tmp/abx.config.json',
     env,
-    cwd: '/tmp',
+    // 任务目录默认就是 cwd，而 `runOpen` 真的会 `existsSync` 它——所以这里必须是
+    // 一个真存在、且每个平台都有的目录。写死 `/tmp` 的话 Windows 上会解析成
+    // `D:\tmp`，于是每条用例先撞上「任务目录不存在」。
+    cwd: tmpdir(),
+    // 平台由宿主层给（`apps/app` 里读一次 `process.platform`）；测试里给的就是
+    // 跑测试这台机器。
+    platform: RUNNING_PLATFORM,
   }
 }
 
@@ -182,7 +189,7 @@ describe('runOpen --dry-run', () => {
     const cellId = output.match(/会话 id\s+([^\s（]+)/)?.[1]
 
     expect(cellId).toBeTruthy()
-    expect(output).toContain(`${path.join(root, cellId ?? '')}/abx-mcp-shim.mjs → ${MCP_SHIM_CELL_PATH}`)
+    expect(output).toContain(`${path.join(root, cellId ?? '', MCP_SHIM_FILE_NAME)} → ${MCP_SHIM_CELL_PATH}`)
     expect(output).toContain('只读')
   })
 
@@ -229,7 +236,8 @@ describe('runOpen：镜像还没构建', () => {
       }),
       configPath: '/tmp/abx.config.json',
       env,
-      cwd: '/tmp',
+      cwd: tmpdir(),
+      platform: RUNNING_PLATFORM,
     }
   }
 
@@ -296,5 +304,50 @@ describe('runOpen：镜像还没构建', () => {
     expect(code).toBe(0)
     expect(output).toContain('abx-agent-dsh:unbuilt')
     expect(output).toContain('local')
+  })
+})
+
+/**
+ * 配置里没有 agent 要的那个上游。
+ *
+ * 这条报错是「起舱时配置缺东西怎么查」在**运行时**的那一份：文档里那一节已经
+ * 删了（那句「未配置上游」的话术不再属于产品），所以修法只能长在这里——
+ * 说清改哪份文件、改哪个字段、还得放行哪个域名。这条用例就是给它上锁：
+ * 三样里少一样，用户拿到的是一个「哪儿都不对」的错误。
+ */
+describe('runOpen：配置里没有 agent 要的上游', () => {
+  it('报错里带上修法：哪份配置、哪个字段、还要放行哪个域名', async () => {
+    // 路径刻意**不是**那个默认值：写死一句同样的话也会让断言变绿，
+    // 换个值才看得出它真是从 `context.configPath` 里取的。
+    const configPath = '/tmp/another-abx.config.json'
+
+    const thrown = await runOpen({
+      options: options({ positionals: ['claude'], dryRun: true }),
+      context: {
+        ...context(),
+        configPath,
+        // 上游表里有别的 id，就是没有 `claude` 要的 `anthropic`。
+        config: makeConfig({
+          upstreams: [makeUpstream({ id: 'openai', baseUrl: 'https://api.example.invalid' })],
+          session: { cellHome: CELL_HOME },
+        }),
+      },
+      log: () => {},
+    }).catch((error: unknown) => error)
+
+    expect(thrown).toBeInstanceOf(CommandError)
+    const failure = thrown as CommandError
+    const text = [failure.message, failure.hint].filter((part) => part !== null).join('\n')
+
+    // 三个要素齐了才叫「给出了修法」。
+    expect(text).toContain(configPath)
+    expect(text).toContain('upstreams')
+    expect(text).toContain('egress.allow')
+    // 缺的是哪个上游也得写出来，不然不知道该往表里加哪一条。
+    expect(text).toContain('anthropic')
+
+    // 「未配置上游」是随那一节文档一起删掉的话术，不许回流；报错也不该是空的。
+    expect(text).not.toContain('未配置上游')
+    expect(text).not.toBe('')
   })
 })

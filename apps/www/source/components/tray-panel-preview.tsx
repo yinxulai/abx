@@ -6,7 +6,7 @@ import { AirlockMark } from './airlock-mark'
 /**
  * 没在跑的那一档：虚线、中性色，**但描边必须看得见**。
  * 用的不是装饰性的 `line-strong`（在白底上只有 1.6:1，读起来像禁用），
- * 而是最弱的一档**文字**色 `ink-4`——`design-system.md` §5 对「可启动」的要求是
+ * 而是最弱的一档**文字**色 `ink-4`——`design-system.md` §9 对「可启动」的要求是
  * 「明显更高的对比，不能看起来像禁用」。虚线是形状，深灰是让它像能点的。
  */
 const IDLE_TILE = 'relative grid size-11 place-items-center rounded-md border border-dashed border-ink-4 bg-surface-1'

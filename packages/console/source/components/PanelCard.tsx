@@ -3,7 +3,7 @@ import type { DragEventHandler, ReactNode, RefObject } from 'react'
 export interface PanelCardProps {
   /**
    * 有没有在跑。它只影响副标题那一句，**不影响这里有没有一个胶囊**——
-   * 「N 舱」那个胶囊已经按 `design-system.md` §8 去掉了：副标题说的是在不在跑，
+   * 「N 舱」那个胶囊已经按 `design-system.md` §12 去掉了：副标题说的是在不在跑，
    * 数量是管理面板的职责（`tray-ui.md` §3 里那张图也不再画它）。
    */
   readonly running: boolean
@@ -46,7 +46,7 @@ export function PanelCard(props: PanelCardProps) {
           {/* 副标题是面板上唯一一句状态，两档都**只说后果，不说术语**
               （`functional-design.md` §0.2 ②：不是「已开启隔离」，是「它看不到你电脑上的东西」）。
               所以这里不出现「气闸」「凭据」「舱」，也不出现数量 ——
-              数量归管理面板（`design-system.md` §8）。 */}
+              数量归管理面板（`design-system.md` §12）。 */}
           <span className="abx-title-sub">
             {props.running ? '运行中 · 它拿不到你的密钥' : '把文件拖进来，它就开始干活'}
           </span>

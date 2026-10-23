@@ -9,6 +9,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { RUNNING_VOCABULARY } from '../test-support'
 import {
   TRANSOM_LEDGER_ENV,
   createFileTransomLedger,
@@ -17,6 +18,9 @@ import {
   toTransomLine,
   type TransomRecord,
 } from './ledger'
+
+/** 账本的落点是**宿主路径**，形状跟着跑测试这台机器走（见 `test-support.ts`）。 */
+const HOST = RUNNING_VOCABULARY
 
 const directories: string[] = []
 
@@ -54,16 +58,18 @@ function record(overrides: Partial<TransomRecord> = {}): TransomRecord {
 
 describe('账本的落点', () => {
   it('默认在 ~/.abx/transom.jsonl，**不在**交付格里面', () => {
-    const file = defaultTransomLedgerPath({}, '/home/dev')
-    expect(file).toBe('/home/dev/.abx/transom.jsonl')
+    const file = defaultTransomLedgerPath({}, HOST.home)
+    expect(file).toBe(HOST.underHome('.abx', 'transom.jsonl'))
     // 交付格里 `ls` 出来的每一项都该是用户能打开的文件。
-    expect(file.startsWith('/home/dev/.abx/outbox/')).toBe(false)
+    expect(file.startsWith(HOST.underHome('.abx', 'outbox') + HOST.rules.path.sep)).toBe(false)
   })
 
   it('环境变量能覆盖，而且跟着交付根走', () => {
-    expect(defaultTransomLedgerPath({ [TRANSOM_LEDGER_ENV]: '/tmp/x.jsonl' }, '/home/dev')).toBe('/tmp/x.jsonl')
-    expect(defaultTransomLedgerPath({ ABX_OUTBOX_ROOT: '/tmp/elsewhere/outbox' }, '/home/dev')).toBe(
-      '/tmp/elsewhere/transom.jsonl',
+    const elsewhere = HOST.underHome('elsewhere')
+    const custom = HOST.join(elsewhere, 'x.jsonl')
+    expect(defaultTransomLedgerPath({ [TRANSOM_LEDGER_ENV]: custom }, HOST.home)).toBe(custom)
+    expect(defaultTransomLedgerPath({ ABX_OUTBOX_ROOT: HOST.join(elsewhere, 'outbox') }, HOST.home)).toBe(
+      HOST.join(elsewhere, 'transom.jsonl'),
     )
   })
 })

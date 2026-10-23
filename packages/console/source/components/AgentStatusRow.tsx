@@ -33,7 +33,7 @@ export interface AgentStatusRowProps {
 type AgentTileState = 'running' | 'idle'
 
 /**
- * 状态怎么**说**：用动作词，不用形容词（`design-system.md` §8：「未运行」写「启动」）。
+ * 状态怎么**说**：用动作词，不用形容词（`design-system.md` §12：「未运行」写「启动」）。
  *
  * 这句话有两个出口——tile 的 `aria-label`，以及悬停/键盘聚焦时出现的 tooltip——
  * 所以只写一份。两处读同一个字符串，改文案不会只改到一半。

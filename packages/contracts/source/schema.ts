@@ -204,8 +204,19 @@ const brokerSchema = withFieldDefaults(
         host: z.unknown().optional().transform((): string => HOST_FACE_ADDRESS),
         /** 宿主面端口：给宿主桌面客户端（第二阶段）用。 */
         hostPort: orDefault(intField({ min: 1, max: 65535 }), 8788),
-        /** 舱面绑定地址。默认是 docker 网桥网关，local 后端下会被改成回环。 */
-        cellHost: orDefault(stringField().min(1, '不能为空'), '172.17.0.1'),
+        /**
+         * 舱面地址，两件事共用：**先试 bind 这个地址**，它也是告诉舱内的地址。
+         *
+         * 默认是 `host.docker.internal` 而不是 docker 网桥网关 `172.17.0.1`，
+         * 理由只有一条：**Docker Desktop（macOS 与 Windows）上压根没有 172.17.0.1
+         * 这个网卡**，bind 会直接 EADDRNOTAVAIL，而报错说的是「舱面起不来」，
+         * 读起来像端口被占了。`host.docker.internal` 在 Docker Desktop 上由 docker
+         * 自己注入；原生 linux docker 上没有这个名字，但那时会退回网桥网关
+         * （见 `core/source/broker/cell-host.ts` 的 bind 候选链），所以两边都能起来。
+         *
+         * local 后端不看这个值：它固定走回环。
+         */
+        cellHost: orDefault(stringField().min(1, '不能为空'), 'host.docker.internal'),
         /** 舱面端口。 */
         cellPort: orDefault(intField({ min: 1, max: 65535 }), 8789),
         /** 舱令牌从哪个环境变量读。 */

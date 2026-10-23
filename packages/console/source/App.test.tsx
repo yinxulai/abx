@@ -75,7 +75,7 @@ describe('App', () => {
 
     // 文案只说面板：拖到**托盘图标**是 macOS only，面板内的正文不提它（`tray-ui.md` §7 第 3 条）。
     expect(screen.getByText('拖到这里 → 全部 agent 立刻可见')).toBeTruthy()
-    // 「N 舱」胶囊按 `design-system.md` §8 去掉了：副标题说的是在不在跑，
+    // 「N 舱」胶囊按 `design-system.md` §12 去掉了：副标题说的是在不在跑，
     // 数量是管理面板的职责。这里把「它不在了」写下来，免得哪天又被顺手加回来。
     expect(screen.queryByText(/\d+ 舱/)).toBeNull()
     expect(screen.queryByRole('status')).toBeNull()
@@ -135,7 +135,7 @@ describe('App', () => {
     expect(running.getAttribute('aria-pressed')).toBe('true')
     expect(running.getAttribute('data-state')).toBe('running')
     // 在跑这一档说的是「它拿不到你的密钥」——这句话是产品承诺，也是这一档唯一的
-    // 状态出口：没有数字，没有「气闸」「凭据」这些词（`design-system.md` §8 把数量
+    // 状态出口：没有数字，没有「气闸」「凭据」这些词（`design-system.md` §12 把数量
     // 判给了管理面板，`functional-design.md` §0.2 ② 要求把术语换算成后果）。
     expect(screen.getByText('运行中 · 它拿不到你的密钥')).toBeTruthy()
   })

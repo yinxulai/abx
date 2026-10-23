@@ -15,12 +15,14 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, sy
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { RUNNING_PLATFORM } from '../test-support'
 import type { Opener } from './opener'
 import { createMemoryTransomLedger, type MemoryTransomLedger } from './ledger'
 import { createTransomService, type TransomSession } from './service'
 
 const CELL_ID = 'claude-20261023-abc123'
 const FIXED_TIME = new Date('2026-10-23T12:00:00.000Z')
+const isWindows = RUNNING_PLATFORM === 'win32'
 
 const directories: string[] = []
 
@@ -157,7 +159,7 @@ describe('publish：递出来', () => {
     expect(result.ok).toBe(true)
     // 它确实被递出来了（东西是用户的），但没有任何东西执行它。
     expect(existsSync(path.join(outboxDir(f), 'tool'))).toBe(true)
-    expect(f.opener.calls).toEqual([`reveal:${outboxDir(f)}/tool`])
+    expect(f.opener.calls).toEqual([`reveal:${path.join(outboxDir(f), 'tool')}`])
     expect(f.ledger.records[0]).toMatchObject({ outcome: 'revealed', opened: false, extension: '' })
     expect(result.message).toContain('没有自动打开')
     expect(result.message).toContain('没有后缀')
@@ -169,7 +171,7 @@ describe('publish：递出来', () => {
 
     const result = await f.service.publish(f.session, cellPath)
 
-    expect(f.opener.calls).toEqual([`reveal:${outboxDir(f)}/setup.sh`])
+    expect(f.opener.calls).toEqual([`reveal:${path.join(outboxDir(f), 'setup.sh')}`])
     expect(f.ledger.records[0]).toMatchObject({ outcome: 'revealed', opened: false, disposition: 'reveal' })
     expect(result.message).toContain('在**宿主上执行舱内的代码**')
   })
@@ -338,7 +340,11 @@ describe('open：打开已经交付过的那一份', () => {
 })
 
 describe('交付格本身不会被舱内改写', () => {
-  it('交付格只读之后，交付失败得有理由，而不是静默成功', async () => {
+  // Windows 没有 POSIX 权限位：`chmod 0o500` 不会让目录变得写不进去，这条用例的**前提**
+  // 在那边根本造不出来。跑下去只会得到一条毫无意义的绿，所以是在造不出这种对象的平台上
+  // 跳过、并且写明理由——跳过了在报告里看得见。产品侧的判据（写不进去就报错、不静默成功）
+  // 与平台无关，`e2e-transom.sh` 在真容器里也走一遍。
+  it.skipIf(isWindows)('交付格只读之后，交付失败得有理由，而不是静默成功', async () => {
     const f = fixture()
     const cellPath = inCell(f, 'a.png', 'x')
     mkdirSync(outboxDir(f), { recursive: true })

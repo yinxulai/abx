@@ -135,6 +135,8 @@ describe('字号：五档封顶，字重只用 400 / 500 / 600', () => {
   )
 
   it('五档，不多不少', () => {
+    // 第六档 `--text-xl` 随「主面板改成单页、不再有页面标题」一起删掉了
+    // （文档 §3 的那条注）。当时只删了文档、没删样式表，于是这条测试红过一阵。
     expect(rows.map((row) => row.name)).toEqual([
       '--text-2xs',
       '--text-xs',
@@ -151,8 +153,8 @@ describe('字号：五档封顶，字重只用 400 / 500 / 600', () => {
     }
   })
 
-  it('样式表里没有第七档字号', () => {
-    // `--text-*` 里既有字号也有颜色（`--text` / `--text-muted`），还有成对的行高
+  it('样式表里没有第六档字号', () => {
+    // `--text-*` 里既有字号也有颜色（`--text-primary` / `--text-tertiary`），还有成对的行高
     // （`--text-sm-leading`）：按值是不是像素、名字带不带 `-leading` 区分。
     const sizes = [...lightTokens.entries()].flatMap(([name, value]) =>
       /^--text-/.test(name) && /px$/.test(value) && !name.endsWith('-leading') ? [name] : [],
@@ -244,7 +246,7 @@ describe('状态：样式表里的分段与组件能发出的状态一致', () =
     // 它是这一面上**唯一**的文字，仍然只有一个颜色来源，且与 `data-state` 无关。
     const coloured = rules.filter((rule) => rule.selector.includes('.abx-agent-tip') && valueOf(rule.body, 'color') !== undefined)
     expect(coloured.map((rule) => rule.selector)).toEqual(['.abx-agent-tip'])
-    expect(valueOf(coloured[0]?.body ?? '', 'color')).toBe('var(--text)')
+    expect(valueOf(coloured[0]?.body ?? '', 'color')).toBe('var(--text-primary)')
   })
 })
 
@@ -285,9 +287,9 @@ describe('托盘：agent 那一排只有图标（tray-ui.md §3、§3.1）', () 
   it('状态先由形状承载：实心点与空心圈各一段', () => {
     // 文字没了之后，形状要是也一样，状态就只剩颜色一个通道——那是设计体系禁止的。
     expect(valueOf(rule('.abx-agent-dot'), 'background')).toBe('transparent')
-    // 空心圈用 `--text`：`--border-strong` 在 tile 那种「掺了品牌色的中性底」上只有
+    // 空心圈用 `--text-primary`：`--border-strong` 在 tile 那种「掺了品牌色的中性底」上只有
     // 2.84:1，低于状态标记要求的 3:1（实测，见 styles.css 里的那段注释）。
-    expect(valueOf(rule('.abx-agent-dot'), 'border')).toContain('var(--text)')
+    expect(valueOf(rule('.abx-agent-dot'), 'border')).toContain('var(--text-primary)')
     expect(valueOf(rule(".abx-agent[data-state='running'] .abx-agent-dot"), 'background')).toBe('var(--accent)')
     expect(valueOf(rule(".abx-agent[data-state='running'] .abx-agent-dot"), 'border')).toBe('0')
   })

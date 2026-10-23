@@ -15,7 +15,19 @@ export type {
   SandboxStateDir,
 } from './backend'
 
-export { createDockerBackend, buildDockerArgs, containerName, isExecutableOnPath, probeDocker } from './docker-backend'
+export {
+  CELL_PATH,
+  cellBasename,
+  cellDirname,
+  cellHomePath,
+  cellJoin,
+  isCellAbsolute,
+  isCellAncestor,
+  isUnderCellPath,
+} from './cell-path'
+
+export { createDockerBackend, buildDockerArgs, containerName, probeDocker } from './docker-backend'
+export { DEFAULT_WINDOWS_PATH_EXTENSIONS, findCommandOnPath, isExecutableOnPath } from '../host-command'
 export type { DockerBackendOptions, DockerProbeResult } from './docker-backend'
 
 export { LOCAL_BACKEND_WARNING, createLocalBackend, probeUserNamespaces } from './local-backend'

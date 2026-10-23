@@ -8,6 +8,7 @@
  */
 
 import type { ResourceLimits, SandboxBackendId } from '@abx/contracts'
+import type { HostPlatform } from '../host-platform'
 
 export interface SandboxMount {
   /** 宿主上的绝对路径。 */
@@ -85,6 +86,14 @@ export interface SandboxSpec {
   /** 这次会话的 id。会出现在容器名、审计和容器标签里。 */
   readonly cellId: string
   readonly agentId: string
+  /**
+   * 宿主是什么系统。
+   *
+   * 后端起容器前要自己再过一遍 `assertMountPolicy`，而那份闸门判的路径规则
+   * 每个平台都不一样，所以它必须知道这件事。**必填**：由宿主层读一次
+   * `process.platform` 传下来，后端不自己去读——理由见 `../host-platform.ts`。
+   */
+  readonly platform: HostPlatform
   /** 舱内要跑的命令，argv 形式。 */
   readonly command: readonly string[]
   /**
@@ -125,6 +134,19 @@ export interface SandboxSpec {
    * 全是只读，所以它不进「可写挂载」的账。
    */
   readonly sharedMounts?: readonly SandboxMount[]
+  /**
+   * 舱内要按这个名字找宿主上的舱面，而这个名字**在舱内解析不出来**——需要补一条
+   * `--add-host=<这个名字>:host-gateway`。缺省 `null`：一个参数都不加。
+   *
+   * 为什么是「调用方告诉后端」而不是后端自己按 `cellHost` 推：这个判断的正确输入
+   * 是**探测结果**，不是配置里的字符串。Docker Desktop 自己就注入了
+   * `host.docker.internal`，无条件再补一条会把它改指到一个 IPv6 ULA（实测
+   * `fdc4:f303:9324::254`），而舱面绑的是纯 IPv4——实测那次没坏，但那属于
+   * 「这次没踩到」（见 `apps/docs/specs/operations/docker-verification.md` §2.1）。
+   * 谁能拿到「舱内 `getent hosts <名字>` 的结果」，谁才配设这个字段；
+   * 判定本身在 `../broker/cell-host.ts` 的 `needsHostGatewayMapping()` 里。
+   */
+  readonly addHostGatewayMapping?: string | null
   /**
    * 这次会话要挂进舱的**运行时文件**（abx 自己写的脚本），由 `stageTransomShim()`
    * 落盘。缺省为空数组。

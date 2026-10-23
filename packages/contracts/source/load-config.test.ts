@@ -54,7 +54,9 @@ describe('仓库里那份 abx.config.json', () => {
   it('能加载（不设任何环境变量，全靠 :- 默认值）', () => {
     const config = configOf(JSON.parse(text), {})
     expect(config.upstreams.map((upstream) => upstream.id)).toEqual(['anthropic', 'openai', 'dsh'])
-    expect(config.broker.cellHost).toBe('172.17.0.1')
+    // 默认值是 Docker Desktop 上唯一存在的那个名字。`172.17.0.1` 在 macOS 与
+    // Windows 上没有对应网卡，拿它当默认值等于让舱面在那两个平台起不来。
+    expect(config.broker.cellHost).toBe('host.docker.internal')
     expect(config.broker.auditPath).toBe('./abx-audit.jsonl')
     expect(config.egress.length).toBeGreaterThan(0)
   })
