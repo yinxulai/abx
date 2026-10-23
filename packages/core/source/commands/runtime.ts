@@ -11,6 +11,7 @@
 
 import { connect } from 'node:net'
 import { readFileSync } from 'node:fs'
+import type { TransomSession } from '../transom/service'
 import {
   ConfigError,
   findConfigFile,
@@ -156,8 +157,14 @@ export interface BrokerLease {
   readonly cellToken: string
   /** 是我们起的，还是接上了一个已经在跑的。 */
   readonly spawned: boolean
-  /** 起舱：登记一个舱并拿到它专属的令牌。 */
-  registerCell(cellId: string): CellBinding
+  /**
+   * 起舱：登记一个舱并拿到它专属的令牌，顺带登记它的传递窗会话。
+   *
+   * `session` 里是这次会话的 agentId 与几个可写根（工作目录、状态目录）——
+   * 也就是「舱内哪个文件可以被递出来」那个判据。**接上一个已经在跑的 broker 时
+   * 登记不了**（注册表在另一个进程里，没有跨进程接口），那种会话的 `/mcp` 会回 409。
+   */
+  registerCell(cellId: string, session?: TransomSession | null): CellBinding
   /** 舱销毁：注销；返回是否真的删掉了一条。 */
   unregisterCell(cellId: string): boolean
   stop(): Promise<void>
@@ -196,6 +203,9 @@ export async function ensureBroker(input: EnsureBrokerInput): Promise<BrokerLeas
           `[abx] 注意：接上的是已经在跑的 broker，无法为 ${cellId} 单独注册令牌；` +
             `本次会话使用默认舱 ${DEFAULT_CELL_ID} 的宿主固定令牌。`,
         )
+        // 传递窗跟着一起没有：那个进程既不知道这次会话的交付格，也不知道它的可写根，
+        // 而这两样正是「哪个文件能递出去」的判据。不猜，直接说清。
+        input.log(`[abx] 注意：这次会话的传递窗（publish / open）不可用——broker 不是本次会话起的。`)
         return { cellId: DEFAULT_CELL_ID, token, dedicated: false }
       },
       unregisterCell: () => false,
@@ -225,7 +235,7 @@ export async function ensureBroker(input: EnsureBrokerInput): Promise<BrokerLeas
     cellOrigin: handle.cellOrigin,
     cellToken: handle.cellToken,
     spawned: true,
-    registerCell: (cellId) => ({ cellId, token: handle.registerCell(cellId), dedicated: true }),
+    registerCell: (cellId, session) => ({ cellId, token: handle.registerCell(cellId, session), dedicated: true }),
     unregisterCell: (cellId) => handle.unregisterCell(cellId),
     stop: () => handle.close(),
   }

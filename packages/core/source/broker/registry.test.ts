@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { TransomSession } from '../transom/service'
 import { CellRegistryError, CellTokenRegistry, DEFAULT_CELL_REGISTRY_LIMIT } from './registry'
 
 describe('CellTokenRegistry', () => {
@@ -109,3 +110,71 @@ describe('CellTokenRegistry', () => {
     expect(() => registry.register('cell-a')).toThrow(/当前 1 个舱/)
   })
 })
+
+describe('传递窗会话跟着令牌走', () => {
+  it('登记令牌时带上会话，反查得到同一份', () => {
+    const registry = new CellTokenRegistry()
+    const session = makeSession('cell-a')
+    registry.register('cell-a', session)
+
+    expect(registry.session('cell-a')).toBe(session)
+    // 舱 id 两侧空白不影响（与令牌反查同一套归一化）。
+    expect(registry.session('  cell-a  ')).toBe(session)
+  })
+
+  it('没有会话时是 null，不造一个默认的', () => {
+    // 会话里那几个根就是「舱内哪个文件能递出去」的全部依据。造一个默认的，等于
+    // 把闸门交给默认值。
+    const registry = new CellTokenRegistry()
+    registry.register('cell-a')
+
+    expect(registry.session('cell-a')).toBeNull()
+    expect(registry.session('never-registered')).toBeNull()
+  })
+
+  it('注销舱之后会话也一起没了', () => {
+    // 否则会留下「令牌已失效、但某个 id 仍然拿着可写根」的余温。
+    const registry = new CellTokenRegistry()
+    registry.register('cell-a', makeSession('cell-a'))
+
+    expect(registry.unregister('cell-a')).toBe(true)
+    expect(registry.session('cell-a')).toBeNull()
+  })
+
+  it('同一个舱重新注册会换掉旧会话', () => {
+    const registry = new CellTokenRegistry()
+    registry.register('cell-a', makeSession('cell-a'))
+
+    const second = makeSession('cell-a')
+    registry.register('cell-a', second)
+
+    expect(registry.session('cell-a')).toBe(second)
+  })
+
+  it('重新注册时不带会话，旧会话一样会清掉', () => {
+    const registry = new CellTokenRegistry()
+    registry.register('cell-a', makeSession('cell-a'))
+    registry.register('cell-a')
+
+    expect(registry.session('cell-a')).toBeNull()
+  })
+
+  it('固定令牌没有会话', () => {
+    const registry = new CellTokenRegistry()
+    registry.registerFixed('default', 'host-token')
+
+    expect(registry.session('default')).toBeNull()
+  })
+
+  it('会话不占额外的名额', () => {
+    const registry = new CellTokenRegistry({ limit: 1 })
+    registry.register('cell-a', makeSession('cell-a'))
+
+    expect(registry.size).toBe(1)
+    expect(() => registry.register('cell-b')).toThrow(CellRegistryError)
+  })
+})
+
+function makeSession(cellId: string): TransomSession {
+  return { cellId, agentId: 'claude', roots: [{ cellPath: '/workspace', hostPath: '/tmp/abx-task', kind: 'workdir' }] }
+}

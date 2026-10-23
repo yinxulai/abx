@@ -13,6 +13,11 @@
  * 真实的 agent 命令行未必支持自定义请求头。取舍写在 `BrokerConfig.allowCellTokenInPath`。
  */
 
+import { TRANSOM_ENDPOINT_PATH } from '@abx/contracts'
+
+/** 传递窗的 MCP 端点路径。定义在 contracts，舱内那侧（shim）用的是同一个值。 */
+export { TRANSOM_ENDPOINT_PATH }
+
 /** 直通模式下目标地址从哪个头来。值形如 `https://api.openai.com`。 */
 export const TARGET_HEADER = 'x-abx-target'
 /** 舱令牌的请求头。 */
@@ -28,6 +33,18 @@ const UPSTREAM_BARE_PREFIX = '/u'
 
 export type BrokerRoute =
   | { readonly kind: 'health' }
+  /**
+   * 传递窗的 MCP 端点（`/mcp`）。
+   *
+   * 它是**服务**，不是转发：请求体是一条 JSON-RPC 消息，处理器在宿主这一侧跑
+   * （见 `transom/mcp.ts`）。所以它必须在路由这一层单独判出来——落进直通那条路的话，
+   * 一个没有目标头的 `/mcp` 会得到「不知道该转发到哪儿」。
+   *
+   * 判定放在直通**前面**，且只在没有目标头时才认：显式说了要去哪儿就以那个为准
+   * （`/mcp` 也可能正是某个上游的端点）。绕过传递窗不需要防——它是「递东西给人看」
+   * 的通道，不是一个必须经过的闸门。
+   */
+  | { readonly kind: 'mcp' }
   | {
       readonly kind: 'upstream'
       readonly upstreamId: string
@@ -55,6 +72,14 @@ export function resolveRoute(input: RouteInput): BrokerRoute {
 
   if (input.pathname === UPSTREAM_BARE_PREFIX || input.pathname.startsWith(UPSTREAM_PATH_PREFIX)) {
     return resolveUpstreamRoute(input.pathname)
+  }
+
+  // 目标头是空串时按「没写」算，与直通那侧的判法一致（`resolvePassthroughRoute` 也把
+  // 空串当成没写）。不然一个 `X-Abx-Target: ` 空头就会让 /mcp 掉进直通，回一句
+  // 「没有带 x-abx-target 头」——而它明明带了。
+  const target = firstHeaderValue(input.headers[TARGET_HEADER])
+  if (input.pathname === TRANSOM_ENDPOINT_PATH && (target === undefined || target === '')) {
+    return { kind: 'mcp' }
   }
 
   return resolvePassthroughRoute(input)
