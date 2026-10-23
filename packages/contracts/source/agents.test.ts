@@ -22,6 +22,7 @@ import {
   renderAgentConfigTemplate,
   type AgentDefinition,
 } from './agents'
+import { MCP_SHIM_CELL_PATH } from './transom'
 
 const CREDENTIAL_NAMES = ['.credentials.json', 'auth.json', 'id_rsa', 'credentials']
 
@@ -70,6 +71,7 @@ describe('AGENT_DEFINITIONS 的配置面', () => {
   it('三个 agent 的配置文件与 OSW 注册表一致', () => {
     expect(findAgent('claude')?.configFiles.map((file) => [file.path, file.format])).toEqual([
       ['~/.claude/settings.json', 'json'],
+      ['~/.claude.json', 'json'],
     ])
     expect(findAgent('codex')?.configFiles.map((file) => [file.path, file.format])).toEqual([
       ['~/.codex/config.toml', 'toml'],
@@ -83,7 +85,13 @@ describe('AGENT_DEFINITIONS 的配置面', () => {
   })
 
   it('agentConfigFileNames 给出的是不含目录的文件名', () => {
-    expect([...agentConfigFileNames()].sort()).toEqual(['config.toml', 'config.yaml', 'settings.json', 'settings.yaml'])
+    expect([...agentConfigFileNames()].sort()).toEqual([
+      '.claude.json',
+      'config.toml',
+      'config.yaml',
+      'settings.json',
+      'settings.yaml',
+    ])
   })
 
   it('claude / codex 有权威来源，dsh 还没有', () => {
@@ -171,11 +179,41 @@ describe('清单的四组数据：展示 / 持久化目录 / 镜像 / 配置内�
     expect(dsh.configFiles.find((file) => !file.generated)?.path).toBe('~/.dsh/config.yaml')
   })
 
-  it('每条生成的配置都落在自己的持久化目录里', () => {
+  it('每条生成的配置要么落在持久化目录里，要么是一条写明了的例外', () => {
     for (const agent of AGENT_DEFINITIONS) {
       for (const file of generatedConfigFiles(agent)) {
         const directory = file.path.split('/').slice(0, -1).join('/')
-        expect(agent.statePaths.map((statePath) => statePath.path)).toContain(directory)
+        const inside = agent.statePaths.some((statePath) => statePath.path === directory)
+        // 例外只有一种形状：舱内 home 根上的那一个文件，而且必须自己标出来。
+        expect(inside || (file.outsideStatePaths === true && directory === '~')).toBe(true)
+      }
+    }
+  })
+
+  it('目前唯一一条例外是 claude 的 ~/.claude.json（MCP 只能注册在用户级那份里）', () => {
+    const outside = AGENT_DEFINITIONS.flatMap((agent) =>
+      generatedConfigFiles(agent)
+        .filter((file) => file.outsideStatePaths === true)
+        .map((file) => `${agent.id}:${file.path}`),
+    )
+    expect(outside).toEqual(['claude:~/.claude.json'])
+  })
+
+  it('stable 的 agent 都把传递窗注册上了，而且路径来自变量', () => {
+    for (const agent of AGENT_DEFINITIONS.filter((candidate) => candidate.status === 'stable')) {
+      const templates = generatedConfigFiles(agent).map((file) => file.template ?? '')
+      expect(templates.some((template) => template.includes('${mcpShimPath}')), `${agent.id} 没登记传递窗`).toBe(true)
+      // 路径只能从变量来：抄一份字面量进模板，挂载策略那边改了就没人跟着改。
+      expect(templates.join('\n')).not.toContain(MCP_SHIM_CELL_PATH)
+    }
+  })
+
+  it('传递窗的注册里没有任何凭据——回连地址与令牌都从舱内环境变量读', () => {
+    // 「配置里只有占位符」这条承诺，对新加的这份配置同样成立。
+    for (const agent of AGENT_DEFINITIONS) {
+      for (const file of agent.configFiles) {
+        if (!(file.template ?? '').includes('${mcpShimPath}')) continue
+        expect(file.template).not.toMatch(/abx_cell_|Bearer |api[_-]?key|token"\s*:/i)
       }
     }
   })
@@ -228,6 +266,46 @@ describe('清单自检拦得下写错的清单', () => {
     const claude = findAgent('claude')!
     const file = claude.configFiles[0]!
     expect(problems({ configFiles: [{ ...file, path: '~/.elsewhere/settings.json' }] }).join()).toContain('不在任何 statePaths')
+  })
+
+  it('stable 的 agent 漏掉传递窗 → 报错', () => {
+    // 漏掉它不会让任何东西起不来，只会让舱内的 agent 永远递不出东西——
+    // 那是最难发现的一类问题，所以要在清单自检这一层拦住。
+    const claude = findAgent('claude')!
+    const withoutMcp = claude.configFiles
+      .filter((file) => !(file.template ?? '').includes('${mcpShimPath}'))
+      .map((file) => ({ ...file, outsideStatePaths: undefined }))
+    expect(problems({ configFiles: withoutMcp }).join()).toContain('没有登记传递窗')
+  })
+
+  it('给 dsh 那种还没核实的 agent 不要求传递窗——编一个字段名比不写更坏', () => {
+    const dsh = findAgent('dsh')!
+    const problemsForDsh = agentManifestProblems([dsh])
+    expect(problemsForDsh.join()).not.toContain('没有登记传递窗')
+  })
+
+  it('outsideStatePaths 只能用在那一种形状上：舱内 home 根、而且是生成的', () => {
+    const claude = findAgent('claude')!
+    const file = claude.configFiles[1]!
+
+    // 标了，却不在 home 根上 → 它就是在绕开「配置必须落在持久化目录里」这条规则。
+    expect(problems({ configFiles: [{ ...file, path: '~/.elsewhere/config.json' }] }).join()).toContain(
+      '不在舱内 home 的根上',
+    )
+    // 标了，却不生成 → 既不落盘也不挂载，这个标记没有意义。
+    expect(problems({ configFiles: [{ ...file, generated: false, template: undefined }] }).join()).toContain(
+      '却不是 generated',
+    )
+    // 本来就在持久化目录里，还标它 → 标错了。
+    expect(problems({ configFiles: [{ ...file, path: '~/.claude/x.json' }] }).join()).toContain('标错了')
+  })
+
+  it('没写 outsideStatePaths 的配置落在持久化目录之外，照样报错', () => {
+    const claude = findAgent('claude')!
+    const file = claude.configFiles[1]!
+    expect(problems({ configFiles: [{ ...file, outsideStatePaths: undefined }] }).join()).toContain(
+      '不在任何 statePaths',
+    )
   })
 
   it('id 重复、id 写成大写 → 报错', () => {

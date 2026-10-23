@@ -31,6 +31,8 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import {
   DEFAULT_CELL_HOME,
+  MCP_SHIM_CELL_PATH,
+  TRANSOM_SERVER_NAME,
   findAgent,
   generatedConfigFiles,
   productName,
@@ -130,6 +132,8 @@ export function renderAgentConfig(options: RenderAgentConfigOptions): RenderedAg
     cellOrigin: options.cellOrigin,
     cellToken,
     upstreamId,
+    mcpServerName: TRANSOM_SERVER_NAME,
+    mcpShimPath: MCP_SHIM_CELL_PATH,
   }
 
   const cellHome = options.cellHome ?? DEFAULT_CELL_HOME

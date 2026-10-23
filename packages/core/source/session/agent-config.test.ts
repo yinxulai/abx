@@ -11,7 +11,14 @@ import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { DEFAULT_CELL_HOME, findAgent, generatedConfigFiles, AGENT_DEFINITIONS } from '@abx/contracts'
+import {
+  AGENT_DEFINITIONS,
+  DEFAULT_CELL_HOME,
+  MCP_SHIM_CELL_PATH,
+  TRANSOM_SERVER_NAME,
+  findAgent,
+  generatedConfigFiles,
+} from '@abx/contracts'
 import { AgentConfigError, renderAgentConfig, stageAgentConfig, toSandboxConfigFiles } from './agent-config'
 import { buildCellEnv } from './env'
 import { MOUNT_POLICY, assertMountPolicy } from './mount-policy'
@@ -67,6 +74,40 @@ describe('renderAgentConfig / claude（JSON）', () => {
   it('claude 有请求头可以带令牌，所以令牌不进 URL', () => {
     const content = contentOf('claude', { cellToken: 'abx_cell_token', tokenInPath: true })
     expect(content).not.toContain('abx_cell_token')
+  })
+})
+
+describe('renderAgentConfig / 传递窗的注册', () => {
+  it('claude 的 ~/.claude.json 把 abx 注册成用户级的 MCP 服务器', () => {
+    // 「用户级」不是随便挑的：实测把 mcpServers 写进同目录的 settings.json，
+    // `claude mcp list` 会说一个服务器都没有。注册的位置本身就是一条实测结论。
+    const file = render('claude').files.find((candidate) => candidate.fileName === '.claude.json')
+    expect(file?.cellPath).toBe(`${HOME}/.claude.json`)
+
+    const parsed = JSON.parse(file?.content ?? '{}') as {
+      mcpServers?: Record<string, { command?: string; args?: string[] }>
+    }
+    expect(Object.keys(parsed.mcpServers ?? {})).toEqual([TRANSOM_SERVER_NAME])
+    expect(parsed.mcpServers?.[TRANSOM_SERVER_NAME]).toEqual({ command: 'node', args: [MCP_SHIM_CELL_PATH] })
+  })
+
+  it('注册里既没有端点也没有令牌——shim 从舱内环境变量读它们', () => {
+    // 令牌在配置里写死的话，它就会跟着实例状态目录一起被持久化下来，
+    // 而那个令牌是「一次一换」的。端点同理：换端口不该要重写配置。
+    const content = render('claude').files.find((candidate) => candidate.fileName === '.claude.json')?.content ?? ''
+    expect(content).not.toContain(CELL_ORIGIN)
+    expect(content).not.toContain(findAgent('claude')?.placeholderToken ?? 'never-matches')
+    expect(content).not.toContain('abx_cell_')
+  })
+
+  it('codex 的 config.toml 多出一段 mcp_servers，与 provider 段并存', () => {
+    const content = contentOf('codex')
+    expect(content).toContain(`[mcp_servers.${TRANSOM_SERVER_NAME}]`)
+    expect(content).toContain(`command = "node"`)
+    expect(content).toContain(`args = ["${MCP_SHIM_CELL_PATH}"]`)
+    // provider 那一段不能被挤掉：舱内 agent 还是要靠它找到气闸。
+    expect(content).toContain('[model_providers.abx]')
+    expect(content).toContain(`base_url = "${CELL_ORIGIN}/u/openai"`)
   })
 })
 
@@ -194,8 +235,13 @@ describe('stageAgentConfig', () => {
     const staged = stageAgentConfig({ agentId: 'claude', cellOrigin: CELL_ORIGIN, cellHome: HOME, directory })
 
     expect(staged.directory).toBe(directory)
-    expect(staged.files.map((file) => file.hostPath)).toEqual([path.join(directory, 'settings.json')])
-    expect(readFileSync(staged.files[0]!.hostPath, 'utf8')).toBe(staged.files[0]!.content)
+    expect(staged.files.map((file) => path.basename(file.hostPath))).toEqual(['settings.json', '.claude.json'])
+    // 每一个文件都落在**同一个**实例状态目录里（不是只验第一个）：
+    // 「配置在可写挂载内部再套一层只读」这条规则要求它们都在那一格里。
+    for (const file of staged.files) {
+      expect(path.dirname(file.hostPath)).toBe(directory)
+      expect(readFileSync(file.hostPath, 'utf8')).toBe(file.content)
+    }
   })
 
   it('每个 agent 落在自己那一个实例目录里', () => {
@@ -215,6 +261,8 @@ describe('stageAgentConfig', () => {
     const staged = stageAgentConfig({ agentId: 'claude', cellOrigin: CELL_ORIGIN, cellHome: HOME, directory: stateDir() })
     expect(toSandboxConfigFiles(staged)).toEqual([
       { hostPath: staged.files[0]?.hostPath, cellPath: '/home/dev/.claude/settings.json' },
+      // 传递窗那份注册落在 home 根上，而不是 `.claude/` 里面——它是**用户级**配置。
+      { hostPath: staged.files[1]?.hostPath, cellPath: '/home/dev/.claude.json' },
     ])
   })
 
