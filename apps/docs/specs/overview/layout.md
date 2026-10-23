@@ -149,6 +149,23 @@ schema.ts (zod)  ──z.infer──→  config.ts (类型，自动生成)
 **冲突点**：`contracts/source/agents.ts` 被 C 独占，但 A 也可能想动它 ——
 **A 不动它**，A 只动 schema 与加载。`broker/server.ts` 被 B 独占，C 不动 broker。
 
+### 6.1 当前并行作业（2026-10-23）
+
+每个作业一个 git worktree，互不共享工作区，各自 `pnpm install`：
+
+| 作业 | worktree | 分支 | 独占面 |
+|---|---|---|---|
+| A 配置层 | `/home/openclaw/Project/abx-wt/a-config` | `lane/a-config` | contracts 的 schema/config/load-config/readers |
+| B 气闸归属 | `/home/openclaw/Project/abx-wt/b-broker` | `lane/b-broker` | core/broker 的 registry/server/token/route |
+| C 舱与挂载 | `/home/openclaw/Project/abx-wt/c-session` | `lane/c-session` | core/session + contracts/agents.ts |
+| D 面板 | `/home/openclaw/Project/abx-wt/d-panel` | `lane/d-panel` | packages/console + apps/app 的 main/preload |
+
+**合并顺序**：A → B → C → D。先合 A 是因为它改的是被所有人依赖的配置模型；
+后三个与它的接触面分别是「读类型」「不接触」「不接触」。
+
+**基线**：四个分支都从 `9067355` 出发，那个提交上 `lint` / `typecheck` / `test` 三样全绿
+（293 个测试）。每个作业**自己那一步全绿才准提交**，合并时我在主分支上复跑整个门序列。
+
 `abx.config.json`、`packages/*/package.json`、`pnpm-lock.yaml` 是**共享文件**：
 谁先动谁提交，后来的人 rebase。为减少冲突，**依赖变更集中在 A**（它要加 zod 的用法），
 其余作业**不新增依赖**。
