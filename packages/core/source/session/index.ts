@@ -33,12 +33,14 @@ export type {
 export {
   DANGEROUS_TASK_DIRS,
   DOCKER_SOCKET_PATH,
+  FORBIDDEN_CREDENTIAL_FILE_PATTERNS,
   FORBIDDEN_MOUNT_PREFIXES,
   MOUNT_POLICY,
   MountPolicyViolation,
   assertMountPolicy,
   findRiskyFilesInTaskDir,
   isForbiddenMountSource,
+  matchCredentialFileRule,
 } from './mount-policy'
 export type { AssertMountPolicyInput, MountPolicy, MountPolicyRule } from './mount-policy'
 

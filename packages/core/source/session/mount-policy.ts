@@ -14,6 +14,11 @@
  *     它不能是某个危险目录本身（不能直接拿 `/home` 或 `/` 当任务目录）。
  *   - **额外挂载**一律不许。所以除任务目录外的任何宿主路径，只要落在禁挂前缀里，
  *     或者压根不是任务目录，都会被拒。
+ *
+ * 第三类规则拦的是**单个文件**：凭据文件名黑名单（`FORBIDDEN_CREDENTIAL_FILE_PATTERNS`）。
+ * 前缀名单拦不了它——`~/.claude/.credentials.json` 与 `~/.claude/settings.json`
+ * 在同一个目录里，而后者正是我们要挂进去的配置。所以「不许挂目录」不是洁癖，
+ * 是这两个东西必须分开对待的唯一办法。
  */
 
 import path from 'node:path'
@@ -47,6 +52,46 @@ export const FORBIDDEN_MOUNT_PREFIXES: readonly string[] = [
 
 /** 单独点名：它比整个 `/var/run` 更值得在报错里被写出来。 */
 export const DOCKER_SOCKET_PATH = '/var/run/docker.sock'
+
+/**
+ * 凭据文件名规则：挂载源**命中即拒绝**，不看它在哪个目录下。
+ *
+ * 为什么需要这一条，而不是靠上面的前缀名单：**凭据文件就躺在配置文件的隔壁**。
+ *
+ *   ~/.claude/settings.json          配置
+ *   ~/.claude/.credentials.json      ⚠️ 账户 OAuth 凭据
+ *
+ * 前缀名单拦的是「整个目录」，而这里要拦的是「目录里的那一个文件」——
+ * `.credentials.json` 与 `settings.json` 共享同一个前缀，前缀规则区分不了它们。
+ *
+ * 所以这一条必须比前缀规则**先**判、而且报错要说清是「凭据」：
+ * 只说「禁止路径」的话，用户看到的是一句他没法照做的提示（那个路径看上去人畜无害），
+ * 然后大概率会去别的地方找一个更宽的挂载方式。
+ *
+ * 匹配只看文件名（basename），大小写不敏感：macOS 的默认文件系统大小写不敏感，
+ * `.Credentials.json` 与 `.credentials.json` 在那里是同一个文件。
+ * `*` 只支持「开头」或「结尾」两种，够用即可——这不是通用 glob。
+ */
+export const FORBIDDEN_CREDENTIAL_FILE_PATTERNS: readonly string[] = [
+  '.credentials.json',
+  'auth.json',
+  '*.env',
+  '*.pem',
+  'id_rsa*',
+]
+
+/** 这个挂载源命中哪条凭据规则；没命中就是 `null`。 */
+export function matchCredentialFileRule(source: string): string | null {
+  const name = path.basename(source).toLowerCase()
+  return FORBIDDEN_CREDENTIAL_FILE_PATTERNS.find((rule) => matchesCredentialRule(name, rule)) ?? null
+}
+
+function matchesCredentialRule(name: string, rule: string): boolean {
+  const pattern = rule.toLowerCase()
+  if (pattern.startsWith('*')) return name.endsWith(pattern.slice(1))
+  if (pattern.endsWith('*')) return name.startsWith(pattern.slice(0, -1))
+  return name === pattern
+}
 
 /**
  * 不能**作为任务目录本身**的路径。
@@ -111,6 +156,12 @@ export const MOUNT_POLICY: MountPolicy = {
       requirement: '除任务目录外不接受任何宿主路径',
       rationale: '需要读别的东西时，正确做法是复制进任务目录，而不是再开一个挂载点。',
     },
+    {
+      requirement: '凭据文件名一律不挂（.credentials.json / auth.json / *.env / *.pem / id_rsa*）',
+      rationale:
+        '这些文件与配置文件是同目录邻居：挂 ~/.claude/settings.json 时顺手把 ~/.claude 整个挂上，' +
+        '等于把账户 OAuth 凭据送进舱。舱内 agent 只需要 abx 生成的那份配置。',
+    },
   ],
   buildMounts(taskDir: string, workdir: string): readonly SandboxMount[] {
     return [{ source: path.resolve(taskDir), target: workdir, mode: 'rw' }]
@@ -126,6 +177,7 @@ export class MountPolicyViolation extends Error {
 
 /** 这个宿主路径能不能作为挂载源。 */
 export function isForbiddenMountSource(source: string): boolean {
+  if (matchCredentialFileRule(source) !== null) return true
   if (source === DOCKER_SOCKET_PATH) return true
   return FORBIDDEN_MOUNT_PREFIXES.some(
     (prefix) => source === prefix || source.startsWith(`${prefix}${path.sep}`),
@@ -159,6 +211,21 @@ export function assertMountPolicy(input: AssertMountPolicyInput): void {
     // `..` 能把一个看起来人畜无害的路径变成 `/home`。
     if (mount.source.split(path.sep).includes('..')) {
       throw new MountPolicyViolation(`挂载路径里不允许出现 ..：${mount.source}`)
+    }
+
+    // 凭据文件排在最前面判，而且**不分场合**：前缀规则区分不了
+    // `~/.claude/settings.json` 与它隔壁的 `~/.claude/.credentials.json`，
+    // 而这条规则可以。任务目录是唯一豁免——它是用户自己选的**目录**
+    // （CLI 起容器前已经确认过是个目录），文件名的黑名单管不到目录上去。
+    if (mount.source !== taskDir) {
+      const credentialRule = matchCredentialFileRule(mount.source)
+      if (credentialRule !== null) {
+        throw new MountPolicyViolation(
+          `拒绝挂载 ${mount.source}：这是凭据文件（命中规则 ${credentialRule}），不能挂进舱。` +
+            `挂配置文件时请只挂 abx 生成的那一个文件，不要挂它所在的目录；` +
+            `真凭据由气闸在宿主这一侧注入，舱内永远拿不到。`,
+        )
+      }
     }
 
     // 任务目录由用户显式指定，豁免前缀规则；其余的挂载源一个都不放过。
