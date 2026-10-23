@@ -239,6 +239,24 @@ export const en = {
         'You want a long-lived environment that keeps all its state across sessions — cells are disposable.',
     },
   },
+  download: {
+    eyebrow: 'Download',
+    title: 'macOS, in progress',
+    lead: 'The tray, the airlock and the sandbox are still being built, so there is no installer to download. When there is one, the entry in the changelog is what says so.',
+    badge: 'The first version is macOS only',
+    headline: 'Once it ships, the download will be right here.',
+    body: 'Until then this page carries no placeholder link, and no date is promised ahead of time. How far the other platforms are is written up under Boundaries.',
+    fact: {
+      platform: 'Platform',
+      status: 'Status',
+      installer: 'Installer',
+    },
+    value: {
+      platform: 'macOS',
+      status: 'In development',
+      installer: 'Not available yet',
+    },
+  },
   changelog: {
     eyebrow: 'Changelog',
     title: 'Only what has been released',

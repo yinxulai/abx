@@ -128,6 +128,12 @@ const DYNAMIC_TRANSLATION_KEYS = [
   'changelog.release.first.item.agents',
   'changelog.release.first.item.cells',
   'changelog.release.first.caveat',
+  'download.fact.platform',
+  'download.fact.status',
+  'download.fact.installer',
+  'download.value.platform',
+  'download.value.status',
+  'download.value.installer',
 ] as const
 
 describe('官网 i18n', () => {
