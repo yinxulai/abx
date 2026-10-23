@@ -3,9 +3,9 @@
 给 AI coding agent 用的隔离舱，macOS 托盘应用。舱内能像在本机一样干活，
 但**拿不到任何真实凭据**、碰不到任务目录以外的文件、删不掉机器。
 
-> **文档状态：能力层与规格已就位，桌面壳未落地。** 核心模块（broker / policy / session /
-> mounts）已完成并通过测试；`apps/app`（Electron 托盘）尚未开始。真实状态以
-> [`../roadmap.md`](../roadmap.md) 为准。
+> **文档状态：能力层与规格已就位，桌面壳已有骨架。** 核心模块（broker / policy / session /
+> mounts / 共享挂载）已完成并通过测试；`apps/app`（Electron 托盘）能加载面板、收发共享列表与
+> 落盘，但**没在真机上跑过**。真实状态以 [`../roadmap.md`](../roadmap.md) 为准。
 
 ## 名称与理念
 
@@ -102,6 +102,7 @@
 | 功能设计 | [functional-design.md](./product/functional-design.md) | 四个概念的产品语言、六条用户旅程、面板布局与信息优先级、功能清单（V1 / V1.1 / 不做）、状态与文案表、产品级安全承诺与明确不承诺项、非功能目标 |
 | 托盘面板规格 | [tray-ui.md](./product/tray-ui.md) | 为什么是自绘窗口而不是原生菜单、窗口参数（422px / gutter 28）、设计令牌（逐字取自 osw）、布局尺寸、状态、交互 |
 | 第一个体验版验收 | [first-experience.md](./product/first-experience.md) | 体验版是什么、哪些能在无 GUI 的开发机上验、哪些必须在 macOS 上验、必须在 Mac 上走的逐条验收、已知会踩的坑、明确不做的事 |
+| 共享给全部 agent（文件 / 目录） | [shared-mounts.md](./product/shared-mounts.md) | 条目的形状与 kind 的权威来源、舱内 `/shared/<名字>` 的取名与去重、目录为什么整挂、四道闸与目录凭据扫描、被拒条目在界面上怎么显示、列表持久化与 `missing`、明确不做的事 |
 
 ### 运维与验证（[`operations/`](./operations/)）
 

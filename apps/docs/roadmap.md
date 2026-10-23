@@ -15,9 +15,10 @@
 | `packages/contracts` | ✅ 已落地（13 文件 / 2 测试文件） |
 | `packages/core`（broker / policy / session / commands） | ✅ 已落地（38 文件 / 14 测试文件） |
 | 气闸的舱身份（单实例多舱） | ✅ 已落地（令牌注册表，cellId 由令牌反查、不可伪造） |
-| `packages/console`（React 面板） | 🟡 基础面板已落地：状态块 / 高度回报 / 拖放区，jsdom 测试通过；**真机未看** |
-| `apps/app`（Electron 托盘） | 🟡 骨架 + 面板加载 + 拖放 IPC；**Electron 未在真机验证**（开发机无 GUI） |
+| `packages/console`（React 面板） | 🟡 基础面板已落地：状态块 / 高度回报 / 拖放区 / 共享列表（渲染宿主快照、目录与文件两种符号、被拒条目的原因行），jsdom 测试通过；**真机未看** |
+| `apps/app`（Electron 托盘） | 🟡 骨架 + 面板加载 + 拖放 IPC + 共享列表 IPC（`shared:list` / `shared:add`）；**Electron 未在真机验证**（开发机无 GUI） |
 | `packages/core/session` 的挂载与 agent 配置生成 | ✅ 已落地（生成最小配置、单文件只读挂载、凭据文件黑名单） |
+| 共享给全部 agent（文件 / 目录，只读） | ✅ 已落地（契约 / 解析四道闸 / `~/.abx/shared.json` 持久化 / 面板列表 / 宿主 IPC；真 docker 验证见 `../packages/toolkit/scripts/e2e-shared.sh`）；**会话接线未做** |
 | 配置层（zod schema 为唯一真相） | ✅ 已落地（类型从 schema 推导；手写 readers 已删除） |
 | 舱面来源网段校验 | 🚧 进行中（并行作业 I）—— 当前**没有**这道闸，绑 `0.0.0.0` 的补偿尚未装上 |
 | `apps/www`（官网） | ✅ 已落地（凭据叙事、三步用法、安全边界、明确不承诺项） |
@@ -25,7 +26,7 @@
 | macOS 打包与 CI | ✅ 已落地（electron-builder + macOS workflow）；**未在真机打过包** |
 | `apps/docs`（文档站） | ⬜ 未建站，仅有 Markdown |
 
-**当前基线：** `pnpm lint` / `pnpm typecheck` / `pnpm test` 三样全绿，**400 个测试**（24 个文件）。
+**当前基线：** `pnpm lint` / `pnpm typecheck` / `pnpm test` 三样全绿，**587 个测试**（33 个文件）。
 
 > 上表里「airlock 阶段」指本项目在 `/home/openclaw/Project/airlock` 下完成的第一次实现。
 > 那个目录是**早期的错误落点**，代码已按
@@ -48,6 +49,14 @@
 
 白名单命中放行 / 未命中 403 并留痕 · 占位符被真实密钥替换 · 审计不写入密钥值
 
+**共享挂载（六条，`e2e-shared.sh`，真容器真 argv）**
+
+整挂的目录舱内读得到且**逐字节一致**（两侧 sha256 相同）· 共享区只读而任务目录仍可写 ·
+装着 `.env` 的目录被拒（理由点名 `.env`）且**一次 `docker run` 都没有** ·
+软链按解析后的目标判定（指向 `$HOME` 与指向共享目录之外的 `.env` 都被拒）·
+重名排到 `/shared/notes-2`，两个都在且内容各是各的 ·
+**挂载清单算好之后**新增的文件立刻可见（整目录绑定，不是快照）
+
 ---
 
 ## 三、⚠️ 实测推翻的两个假设（已写进设计）
@@ -56,6 +65,11 @@
    abx 只做 macOS，而 macOS 只有 Docker Desktop，所以原默认值 100% 起不来。
    改为绑 `0.0.0.0` + 舱内用 `host.docker.internal` + 来源网段校验补偿。
 2. **挂载源必须在 Docker Desktop 共享路径内** —— 否则 `mounts denied`，容器起不来。
+3. **禁挂前缀名单挡不住软链** —— 名单写的是 `/var/run`，而在相当多的系统上它就是
+   `/run` 的软链：判 realpath 之后一个前缀都对不上，「docker socket 的父目录不许挂」
+   这条闸门形同不存在。macOS 上还有同一类的第二个：那边 `/etc` `/var` 都指向
+   `/private/...`。修法是**字面路径与解析后的路径两道都判**，并给共享源补上
+   `/run` 与 `/private/...` 这几条（见 `packages/core/source/session/shared.ts`）。
 
 ---
 
@@ -70,6 +84,7 @@
 | **`codex` / `dsh` 的定义** | `codex` 的登录态走另一套机制；`dsh` 命令名与变量名**三样都无权威来源**，标为 `unconfirmed` |
 | **对抗性测试** | 没有任何一步尝试绕过白名单、伪造舱令牌、从舱内往外打。现有证据都是「正常用的时候它是对的」 |
 | **Electron / 托盘拖拽** | 开发机 `DISPLAY` 为空，Electron 跑不起来；`drop-files` 是 macOS only |
+| **共享链路在 macOS 上** | `e2e-shared.sh` 是在 Linux 上跑的：macOS 的共享路径默认值、uid 映射与 `/private/...` 软链都不同，**必须重跑**；面板那一半（拖放、即时预览）根本没在真机上点过 |
 
 ---
 
@@ -82,6 +97,8 @@
 - [ ] 补齐 §19 的两处修正（舱面地址探测、共享路径检查）
 - [ ] `core/session` 的挂载与 agent 配置生成（并行作业 C）
 - [x] 桌面壳骨架：原生 Tray 图标 + 自绘面板窗口 + IPC 上报高度
+- [x] 共享给全部 agent：条目 → 只读挂载 → 面板列表 → 宿主持久化（规格 [`product/shared-mounts.md`](./product/shared-mounts.md)）
+- [ ] 共享列表接进 `session.create`：起容器那一刻重算一遍（加进来时干净，不代表起容器时还干净）
 - [ ] `console` 面板：按 [`product/tray-ui.md`](./product/tray-ui.md) 实现（并行作业 D）
 
 **阶段 0 的验收标准**：主分支上 `pnpm lint` / `pnpm typecheck` / `pnpm test` 三样全绿，
