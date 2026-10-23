@@ -21,6 +21,7 @@ import { readFileSync } from 'node:fs'
 import type { AddressInfo } from 'node:net'
 import type { AbxConfig } from '@abx/contracts'
 import { buildUpstreamIndex } from '../policy/index'
+import { normalizeRemoteAddress } from './cell-source'
 import { createFileAuditSink, type AuditDecision, type AuditSink, type BrokerFace } from './audit'
 import type { SecretDependencies } from './credentials'
 import { forwardRequest, writeJson } from './forward'
@@ -219,6 +220,8 @@ function createHandler(context: HandlerContext) {
       audit.write({
         ts: new Date().toISOString(),
         cellId,
+        // 来源是对端地址，不是请求头——请求头是请求方自己能写的。
+        sourceAddress: normalizeRemoteAddress(request.socket.remoteAddress),
         method,
         path: auditPath,
         upstreamId: extra.upstreamId ?? null,
