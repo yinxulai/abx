@@ -85,6 +85,17 @@ describe('App', () => {
     expect(buttons[0]?.getAttribute('aria-pressed')).toBe('false')
   })
 
+  it('takes tile icons from the registry, not from a UI-side list', () => {
+    render(<App />)
+
+    // claude 在注册表里有 icon，dsh 没有——面板不该自己决定谁有图标。
+    const square = (name: string): Element | null =>
+      screen.getByRole('button', { name }).querySelector('.abx-agent-square')
+
+    expect(square('Claude Code：未运行，点击启动')?.getAttribute('data-icon')).toBe('claude')
+    expect(square('dsh：未运行，点击启动')?.hasAttribute('data-icon')).toBe(false)
+  })
+
   it('flips an agent to running when its tile is clicked', () => {
     render(<App />)
 

@@ -224,6 +224,14 @@ body {
   font-weight: 600;
 }
 
+/* 有图标的 agent：方块底色掺一点品牌色，标识（`data-icon`）留给图形资产做锚点。
+   字母仍是弱化文字色，所以对比度和没有图标时一样；只给了 slug、没给颜色时
+   `--abx-agent-color` 缺席，底色与上面那条几乎一致（透明只削掉一点不透明度）。
+   **这条必须排在「运行中」那条之前**：实心方块是更强的状态信号，不能被品牌色盖掉。 */
+.abx-agent-square[data-icon] {
+  background: color-mix(in srgb, var(--abx-agent-color, transparent) 16%, hsl(var(--foreground) / 0.1));
+}
+
 .abx-agent[data-running='true'] .abx-agent-square {
   background: hsl(var(--foreground));
   color: hsl(var(--card));
