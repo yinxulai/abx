@@ -204,63 +204,35 @@ body {
   white-space: nowrap;
 }
 
-.abx-status {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: var(--space-6);
-  padding: var(--space-2) var(--space-8);
-  border-radius: var(--radius-pill);
-  background: var(--raised);
-  /* 计数/状态 = quaternary；它在 `--raised` 上实测 4.58:1（文档 §2 浅色表）。 */
-  color: var(--text-quaternary);
-  font-size: var(--text-2xs);
-  font-weight: 500;
-  line-height: var(--text-2xs-leading);
-}
-
-/* 状态点靠**形状**分：空心圈 = 没跑，实心点 = 在跑（文档 §5）。
-   实心那档用点缀色（浅色 4.13:1 / 深色 8.83:1 @ surface，够非文字标记要求的 3:1）；
-   空心那档用 `--border-strong`（3.74:1 / 4.02:1）。两档都不靠色相差别单独承载信息。 */
-.abx-status-dot {
-  box-sizing: border-box;
-  width: 6px;
-  height: 6px;
-  border: 1.5px solid var(--border-strong);
-  border-radius: var(--radius-pill);
-  background: transparent;
-}
-
-.abx-status[data-running='true'] .abx-status-dot {
-  border: 0;
-  background: var(--accent);
-}
-
-/* agent 一排：三列方块，既是状态也是启动按钮。
-   三种状态的差别落在**线的样式、填充、标记形状、文字**四件事上，不靠色相：
-     可启动  虚线描边（`--border-strong`）+ 空心圈 + 「启动」
-     运行中  2px 实线（`--accent`）+ 浅底 + 实心方块 + 实心点 + 「运行中 · 聚焦」
-     不可用  中性填充块（`--raised`）+ ⚠ + 原因 + 下一步（唯一被压暗的那一档） */
+/* agent 一排：44×44 的方块，**只有图标，没有名字**（`tray-ui.md` §3、§3.1，2026-10-23 定）。
+   左对齐 + 折行：一行最多 7 个，放不下就往下走，**不横滚**——面板固定 422 宽，
+   横滚会把这一排变成一条要摸黑滑动的带子（所以这里没有任何 `overflow-x`）。
+   为什么是 44：指针/触控目标的下限就是 44×44，而审计查的就是这一条（§3.1 ①）。 */
 .abx-agents {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
   gap: var(--space-8);
   padding: var(--space-12) var(--space-16);
 }
 
-/* 底座只管排布与盒模型：边框与底色由**每个状态各写一段**（见下面三条）。
-   这样「一个状态一段」是能数出来的，`styles.test.ts` 会拿组件里的状态联合类型对账。 */
+/* 方块**就是 tile 本身**：44×44，既是状态指示也是启动按钮。
+   底色是中性底掺一点品牌色——标识本身（图形）豁免对比度要求，**容器**不豁免，
+   所以底永远由 `--raised` 打底（`design-system.md` §12）。
+   边框与标记由**每个状态各写一段**（见下面两条）：这样「一个状态一段」是能数出来的，
+   `styles.test.ts` 会拿组件里的状态联合类型对账。 */
 .abx-agent {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-6);
-  padding: var(--space-8) var(--space-6);
+  position: relative;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
-  background: transparent;
-  color: inherit;
+  background: color-mix(in srgb, var(--abx-agent-color, transparent) 16%, var(--raised));
+  color: var(--text-primary);
   font: inherit;
   cursor: pointer;
 }
@@ -271,20 +243,21 @@ body {
   outline-offset: 2px;
 }
 
-/* 可启动：描边块。**不能看起来像禁用**——边必须看得见，所以用 `--border-strong`
-   （3.74:1）而不是装饰性的 `--border`（1.29:1）。形状是虚线：与「实心块」和
-   「中性块」都不同，色觉差异下也分得开。 */
+/* 未运行：中性描边 + 空心圈（`tray-ui.md` §4）。
+   描边用 `--border-strong`（浅色 3.74:1 / 深色 4.02:1）而不是装饰性的 `--border`
+   （1.29:1）：它现在是**控件的边界**，低于 3:1 就等于没画（`design-system.md` §1 第 4 条）。
+   形状取虚线——文档 §9 把它留给「可以动手」这一档，而两档不能都画虚线。 */
 .abx-agent[data-state='idle'] {
   border: 1px dashed var(--border-strong);
-  background: transparent;
 }
 
 .abx-agent[data-state='idle']:hover {
+  /* 只加深颜色，不改成实线：实线是「运行中」那一档的专属形状。 */
   border-color: var(--text-primary);
-  background: var(--raised);
 }
 
-/* 运行中：靠**加强**表达，而不是把「未运行」削弱（文档 §12 定的那一条）。
+/* 运行中：靠**加强**表达，而不是把「未运行」削弱（`design-system.md` §12 定的那一条）。
+   2px 实线 + 点缀色，是这一排里唯一的强调表达；实心点见下面 `.abx-agent-dot`。
    底用 `--accent-soft`（不透明）：它比 `color-mix` 更可查、也能被对比度实测量到，
    而且与状态胶囊（§9）用的是同一档底——同一件事在界面里只有一种样子。 */
 .abx-agent[data-state='running'] {
@@ -293,88 +266,34 @@ body {
 }
 
 .abx-agent[data-state='running']:hover {
-  background: color-mix(in srgb, var(--accent) 14%, var(--accent-soft));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
-/* 不可用（镜像还没构建）：唯一被压暗的一档。中性块、没有描边语言、光标说不能点。
-   它不是「失败」也不是「未运行」——是可预期的、有下一步的状态（文档 §5）。 */
-.abx-agent[data-state='unavailable'] {
-  border: 1px solid transparent;
-  background: var(--raised);
-  cursor: not-allowed;
-}
-
-.abx-agent-square {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  border-radius: var(--radius-md);
-  /* 方块底是中性底，只掺一点品牌色：标识本身（图形的对比度责任豁免）不适用 WCAG，
-     但**容器**适用，所以底色永远由中性档打底。 */
-  background: color-mix(in srgb, var(--abx-agent-color, transparent) 16%, var(--raised));
+/* 图标本体。tile 上现在只有它一个东西，所以它也是唯一还带着品牌色的地方。
+   字母是注册表里没写 `icon` 时的回退。 */
+.abx-agent-mark {
   color: var(--text-primary);
   font-size: var(--text-sm);
   font-weight: 600;
   line-height: 1;
 }
 
-/* 运行中的实心方块：文档 §2 里那两组**合法**的实心搭配。
-   浅色 `--accent-deep` 底 + 白字（5.80:1，白字就是浅色的 `--surface`）；
-   深色 `--accent` 底 + `--surface` 字（8.83:1，`--accent` 在深色表里那一行写的就是这个数）。
-   两处都只用令牌、不写死颜色，且**不写 `var(…, fallback)`**——之前那个回退写法看着更稳，
-   实际上正是它让深色静默拿到了浅色那一档（见上面 `--accent-deep` 那一行）。 */
-.abx-agent[data-state='running'] .abx-agent-square {
-  background: var(--accent-deep);
-  color: var(--surface);
-}
-
-/* 「运行中 · 聚焦」这行字坐在 `--accent-soft` 上——那是文档 §2 两张表之外的一种底，
-   而它比 `--surface` 亮（浅色）/ 暗（深色），三级文字压在上头不是同一批实测值。
-   这一行本来就是状态的说明，不是次要信息：文档说「运行中」靠**加强**表达，
-   所以它用 `--text-primary`，把余量一次留够。
-   未运行那格仍然是 `--text-tertiary`——它坐在纯 `--surface` 上，本来就稳。 */
-.abx-agent[data-state='running'] .abx-agent-state {
-  color: var(--text-primary);
-}
-
-.abx-agent[data-state='unavailable'] .abx-agent-square {
-  color: var(--text-tertiary);
-}
-
-/* agent 名字**永不随状态变淡**：它是这一排里最该被读到的字。
-   状态由下面那行「启动 / 运行中 · 聚焦 / 镜像未构建」说，不靠把这行字调浅。
-   这里没有 `[data-state]` 选择器，是故意的——`styles.test.ts` 会盯着这一点。 */
-.abx-agent-name {
-  max-width: 100%;
-  color: var(--text-primary);
-  font-size: var(--text-sm);
-  font-weight: 500;
-  line-height: var(--text-sm-leading);
-  text-align: center;
-  /* 名字写全，不截断：方块只有 ~105px，13px 下「OpenAI Codex CLI」一行放不下，
-     而读不出是哪个 agent 等于这一排白排。让它折行，三个方块由网格拉平高度。 */
-  overflow-wrap: anywhere;
-}
-
-.abx-agent-state {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-4);
-  color: var(--text-tertiary);
-  font-size: var(--text-2xs);
-  font-weight: 400;
-  line-height: var(--text-2xs-leading);
-  white-space: nowrap;
-}
-
-/* 未运行的空心圈。形状与实心点相对，两档都在 3:1 之上。 */
+/* 状态点：**右下角**，形状先说话（`tray-ui.md` §4）。
+   实心 = 在跑，空心圈 = 没跑。文字没了之后，形状要是也一样，状态就只剩颜色一个通道——
+   那正是设计体系禁止的；所以两档的差别落在**填充**上，色相只是补充。
+   空心圈用 `--text-primary` 而不是 `--border-strong`，是**量出来的**：这个点是画在 tile 上，
+   而 tile 的底是「中性底掺 16% 品牌色」，不是 `--surface`——`--border-strong` 在
+   `--surface` 上是 3.74:1，落到这个底上只剩 **2.84:1（浅色）/ 2.88:1（深色）**，
+   低于设计体系对状态标记要求的 3:1。`--text-primary` 在两套主题的任何一种底上都够
+   （浅色 13.09:1 / 深色 10.03:1，同样是实测）。 */
 .abx-agent-dot {
+  position: absolute;
+  right: var(--space-4);
+  bottom: var(--space-4);
   box-sizing: border-box;
-  flex: none;
-  width: 7px;
-  height: 7px;
-  border: 1.5px solid var(--border-strong);
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--text-primary);
   border-radius: var(--radius-pill);
   background: transparent;
 }
@@ -384,21 +303,35 @@ body {
   background: var(--accent);
 }
 
-/* 不可用的标记是三角警示，不是点：它要说的是「没装」，不是「没跑」。 */
-.abx-agent-warn {
-  flex: none;
-  color: var(--text-tertiary);
+/* 名字：**悬停与键盘聚焦时出现**（`tray-ui.md` §3.1 ②）。
+   **自定义 tooltip，不用原生 `title`**：原生延迟约 1 秒，样式在深浅色下也不受控，
+   而名字是这个面板上**唯一的文字**，不该有延迟。
+   `:hover` 与 `:focus-visible` 必须成对——只做 hover 等于把名字只给了鼠标用户，
+   键盘与触屏用户永远看不到它。
+   它在 `aria-hidden` 里：读屏通过 tile 的 `aria-label` 拿到同一句话，不该被念两遍。 */
+.abx-agent-tip {
+  position: absolute;
+  top: calc(100% + var(--space-4));
+  left: 0;
+  z-index: 1;
+  display: none;
+  padding: var(--space-4) var(--space-8);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.06);
+  color: var(--text-primary);
   font-size: var(--text-2xs);
-  line-height: var(--text-2xs-leading);
-}
-
-/* 不可用的下一步。是**说明**不是按钮：它没有描边、没有下划线，不会看起来能点。 */
-.abx-agent-next {
-  color: var(--text-tertiary);
-  font-size: var(--text-2xs);
-  font-weight: 400;
+  font-weight: 500;
   line-height: var(--text-2xs-leading);
   white-space: nowrap;
+  /* tooltip 不是落点：它压在下面的共享列表上，别把指针事件吃掉。 */
+  pointer-events: none;
+}
+
+.abx-agent:hover .abx-agent-tip,
+.abx-agent:focus-visible .abx-agent-tip {
+  display: block;
 }
 
 .abx-section {
@@ -413,7 +346,7 @@ body {
   margin-bottom: var(--space-6);
 }
 
-/* 区块标题是**标题**：它下面那行说明才是 tertiary（文档 §8）。
+/* 区块标题是**标题**：它下面那行说明才是 tertiary（文档 §2）。
    原来这里是弱化文字，于是「共享给全部 agent」看起来像一个标签而不是一段的开始。 */
 .abx-section-title {
   margin: 0;
@@ -494,7 +427,7 @@ body {
 }
 
 /* 被拒的条目：不进上面的列表，在共享区下方逐条给出原因。
-   文档 §5 的「失败 / 被拒」那一行：危险色 + 图标 + **具体原因**，原因不能省。
+   文档 §9 的「失败 / 被拒」那一行：危险色 + 图标 + **具体原因**，原因不能省。
    理由是句子，允许折行——它得能读完；截断了就等于没说。 */
 .abx-rejected {
   margin: 0 0 var(--space-8);
@@ -550,7 +483,7 @@ body {
   overflow-wrap: anywhere;
 }
 
-/* 拖放区的虚线是**控件的边界**（文档 §1 第 3 条）：它必须 ≥ 3:1，否则等于没画。
+/* 拖放区的虚线是**控件的边界**（文档 §1 第 4 条）：它必须 ≥ 3:1，否则等于没画。
    原来那条 `foreground/.22` 在白卡上只有 1.6:1——这是这份样式里最实的一处修复。 */
 .abx-dropzone {
   padding: var(--space-8) var(--space-12);

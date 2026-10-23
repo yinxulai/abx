@@ -12,7 +12,11 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { MAX_DELIVERABLE_BYTES } from '@abx/contracts'
-import { OUTBOX_ROOT_ENV, defaultOutboxRoot, deliverToOutbox, outboxDirFor, sanitizeSegment } from './outbox'
+import { RUNNING_VOCABULARY } from '../test-support'
+import { OUTBOX_DIR_NAME, OUTBOX_ROOT_ENV, defaultOutboxRoot, deliverToOutbox, outboxDirFor, sanitizeSegment } from './outbox'
+
+/** 交付根是**宿主路径**，所以形状跟着跑测试这台机器走（见 `test-support.ts`）。 */
+const HOST = RUNNING_VOCABULARY
 
 const directories: string[] = []
 
@@ -43,25 +47,25 @@ function reasonOf(result: Awaited<ReturnType<typeof deliverToOutbox>>): string {
 
 describe('交付根与交付格的位置', () => {
   it('默认是 ~/.abx/outbox', () => {
-    expect(defaultOutboxRoot({}, '/home/dev')).toBe('/home/dev/.abx/outbox')
+    expect(defaultOutboxRoot({}, HOST.home)).toBe(HOST.underHome('.abx', OUTBOX_DIR_NAME))
   })
 
   it('环境变量能覆盖它——用例不能往开发者真实的 ~/.abx 里写', () => {
-    expect(defaultOutboxRoot({ [OUTBOX_ROOT_ENV]: '/tmp/x' }, '/home/dev')).toBe('/tmp/x')
-    expect(defaultOutboxRoot({ [OUTBOX_ROOT_ENV]: '  ' }, '/home/dev')).toBe('/home/dev/.abx/outbox')
+    const custom = HOST.underHome('custom-outbox')
+    expect(defaultOutboxRoot({ [OUTBOX_ROOT_ENV]: custom }, HOST.home)).toBe(custom)
+    expect(defaultOutboxRoot({ [OUTBOX_ROOT_ENV]: '  ' }, HOST.home)).toBe(HOST.underHome('.abx', OUTBOX_DIR_NAME))
   })
 
   it('一格一个会话：路径里带上 cellId', () => {
-    expect(outboxDirFor('/home/dev/.abx/outbox', 'claude-20261023-abc123')).toBe(
-      '/home/dev/.abx/outbox/claude-20261023-abc123',
-    )
+    const root = HOST.underHome('.abx', OUTBOX_DIR_NAME)
+    expect(outboxDirFor(root, 'claude-20261023-abc123')).toBe(HOST.join(root, 'claude-20261023-abc123'))
   })
 
   it('会话 id 里带 / 或 .. 也逃不出交付根', () => {
     // cellId 是 broker 按令牌解出来的，正常情况干净得很；但这一段是**路径拼接**，
     // 拼接处永远要假设输入是脏的。
     expect(sanitizeSegment('../../etc', 'cell')).toBe('.._.._etc')
-    expect(outboxDirFor('/root', '../../etc')).toBe('/root/.._.._etc')
+    expect(outboxDirFor(HOST.home, '../../etc')).toBe(HOST.join(HOST.home, '.._.._etc'))
     expect(sanitizeSegment('', 'cell')).toBe('cell')
     expect(sanitizeSegment('..', 'cell')).toBe('cell')
   })

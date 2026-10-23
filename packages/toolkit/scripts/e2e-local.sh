@@ -119,7 +119,11 @@ if (coreDir === undefined || coreDir === '') {
 }
 
 const entry = (name) => pathToFileURL(path.join(coreDir, `${name}.ts`)).href
+// `ABX_CORE_DIR` 指向的是 `source/commands`，而宿主平台那一层在它**外面**一层
+// （`source/host-platform.ts`）——它是命令层与 session 层共用的东西。
+const coreEntry = (name) => pathToFileURL(path.join(coreDir, '..', `${name}.ts`)).href
 const { resolveContext, CommandError } = await import(entry('runtime'))
+const { requireHostPlatform } = await import(coreEntry('host-platform'))
 const { runDoctor } = await import(entry('doctor'))
 const { runBroker } = await import(entry('broker'))
 const { runOpen } = await import(entry('open'))
@@ -166,7 +170,15 @@ while (argv.length > 0) {
 const log = (message) => process.stdout.write(`${message}\n`)
 
 try {
-  const context = resolveContext({ cwd: process.cwd(), env: process.env, configPath: options.configPath })
+  // 宿主平台由**宿主层**读一次再传下去（见 core 的 `host-platform.ts`）：
+  // 命令层不自己去读 `process.platform`，所以这个夹具得像产品入口那样读一次。
+  // 产品里那一处是 `apps/app/source/main.ts`，这里是它的等价物。
+  const context = resolveContext({
+    cwd: process.cwd(),
+    env: process.env,
+    configPath: options.configPath,
+    platform: requireHostPlatform(process.platform),
+  })
   process.exitCode = await execute({ options, context, log })
 } catch (error) {
   if (error instanceof CommandError) {

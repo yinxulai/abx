@@ -19,12 +19,19 @@ import {
   findAgent,
   generatedConfigFiles,
 } from '@abx/contracts'
+import { RUNNING_PLATFORM, RUNNING_VOCABULARY } from '../test-support'
 import { AgentConfigError, renderAgentConfig, stageAgentConfig, toSandboxConfigFiles } from './agent-config'
 import { buildCellEnv } from './env'
 import { MOUNT_POLICY, assertMountPolicy } from './mount-policy'
 
 const CELL_ORIGIN = 'http://host.docker.internal:8789'
+/**
+ * **舱内** home。刻意不是默认值（`/home/node`），这样「有没有把配置传进去」才看得出来。
+ * 它永远是容器里的路径，所以写死 POSIX 形状是对的——跟跑测试这台机器是什么系统无关。
+ */
 const HOME = '/home/dev'
+/** 宿主那边的路径按跑测试这台机器造：任务目录、宿主 home 都是宿主路径。 */
+const HOST = RUNNING_VOCABULARY
 
 function render(agentId: string, overrides: Record<string, unknown> = {}) {
   return renderAgentConfig({ agentId, cellOrigin: CELL_ORIGIN, cellHome: HOME, ...overrides })
@@ -168,8 +175,15 @@ describe('renderAgentConfig / 注册表对账', () => {
         expect(file.format).toBe(registered.format)
         // 舱内路径 = 注册表里的 `~/...` 展开之后的样子，而且是绝对路径：
         // 挂载参数只认绝对路径，agent 也只去那个固定的位置找配置（D2）。
-        expect(file.cellPath).toBe(path.join(HOME, registered.path.slice(2)))
-        expect(path.isAbsolute(file.cellPath)).toBe(true)
+        //
+        // **拼它的是 `path.posix`，不是宿主那个 `path`。** 舱内永远是 Linux，
+        // 所以这个路径在 Windows 上也必须是 `/home/dev/.claude/settings.json`；
+        // 用 `path.join` 会拼出 `\home\dev\.claude\settings.json`，而那是个
+        // **相对路径**（Windows 上 `\` 开头指当前盘），下面那句 isAbsolute 会红。
+        expect(file.cellPath).toBe(path.posix.join(HOME, registered.path.slice(2)))
+        expect(path.posix.isAbsolute(file.cellPath)).toBe(true)
+        // 它还是个**舱内**路径：反斜杠一个都不该有。
+        expect(file.cellPath).not.toContain('\\')
       }
       expect(rendered.files.length).toBeGreaterThan(0)
     }
@@ -273,16 +287,19 @@ describe('stageAgentConfig', () => {
     const staged = stageAgentConfig({ agentId: 'claude', cellOrigin: CELL_ORIGIN, cellHome: HOME, directory })
     const configFiles = toSandboxConfigFiles(staged)
     const stateDirs = [{ hostPath: directory, cellPath: '/home/dev/.claude', agentId: 'claude' }]
-    const mounts = MOUNT_POLICY.buildMounts('/home/dev/projects/thing', '/workspace', configFiles, stateDirs)
+    const mounts = MOUNT_POLICY.buildMounts(HOST.taskDir, '/workspace', configFiles, stateDirs)
     expect(() =>
       assertMountPolicy({
+        platform: RUNNING_PLATFORM,
         mounts,
-        taskDir: '/home/dev/projects/thing',
+        taskDir: HOST.taskDir,
         workdir: '/workspace',
         agentConfigFiles: configFiles,
         stateDirs,
+        // 实例根是**真实**的临时目录（`<tmp>/instances`），不是词汇表里那个假路径：
+        // 这条用例要把生成器和闸门接起来，闸门里有一道 realpath。
         instancesRoot: path.dirname(path.dirname(directory)),
-        homeDir: '/home/dev',
+        homeDir: HOST.home,
         cellHome: HOME,
       }),
     ).not.toThrow()

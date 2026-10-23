@@ -13,20 +13,23 @@
  * 这四条合起来才是那句话的判据：少任何一条，「加一条数据」就还是句空话。
  */
 
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { agentManifestProblems, type AgentDefinition } from '@abx/contracts'
+import { RUNNING_PLATFORM, RUNNING_VOCABULARY } from '../test-support'
 import type { SandboxSpec, SandboxStateDir } from './backend'
 import { buildDockerArgs } from './docker-backend'
 import { ensureInstanceStateDir, planInstance } from './instance'
 import { MOUNT_POLICY, assertMountPolicy, assertStateDirPolicy } from './mount-policy'
 import { renderAgentConfig, stageAgentConfig, toSandboxConfigFiles } from './agent-config'
 
+/** 舱内路径：永远是容器里的形状，跟宿主无关。 */
 const CELL_HOME = '/home/node'
-const TASK_DIR = '/home/dev/projects/thing'
 const WORKDIR = '/workspace'
+/** 宿主那边只有任务目录一个。按跑测试这台机器造。 */
+const TASK_DIR = RUNNING_VOCABULARY.taskDir
 const CELL_ORIGIN = 'http://host.docker.internal:8789'
 
 /**
@@ -84,7 +87,9 @@ afterEach(() => {
 function plan(
   cellToken = 'abx-cell-token-fakey',
 ): { readonly stateDir: SandboxStateDir; readonly instancesRoot: string; readonly spec: SandboxSpec } {
-  const instancesRoot = mkdtempSync(path.join(tmpdir(), 'abx-agent-manifest-'))
+  // realpath：后面 `stateDir.hostPath` 是 `ensureInstanceStateDir` 解析过软链的结果，
+  // 两边不先归一就比不到一起（Windows 的 `%TEMP%` 可能是 8.3 短名）。
+  const instancesRoot = realpathSync(mkdtempSync(path.join(tmpdir(), 'abx-agent-manifest-')))
   roots.push(instancesRoot)
 
   const instance = planInstance({ agent: FAKE_AGENT, instanceId: FAKE_AGENT.id, cellHome: CELL_HOME, instancesRoot })
@@ -93,7 +98,7 @@ function plan(
     cellPath: instance.cellPath,
     agentId: FAKE_AGENT.id,
   }
-  assertStateDirPolicy({ stateDirs: [stateDir], instancesRoot, cellHome: CELL_HOME })
+  assertStateDirPolicy({ platform: RUNNING_PLATFORM, stateDirs: [stateDir], instancesRoot, cellHome: CELL_HOME })
 
   const staged = stageAgentConfig({
     agentId: FAKE_AGENT.id,
@@ -110,6 +115,7 @@ function plan(
     instancesRoot,
     spec: {
       cellId: 'fakey-20261023-ab12cd',
+      platform: RUNNING_PLATFORM,
       agentId: FAKE_AGENT.id,
       command: [FAKE_AGENT.command, ...FAKE_AGENT.args],
       allocateTty: false,
@@ -170,6 +176,7 @@ describe('假 agent：只加一条清单就能跑通整条路', () => {
 
     expect(() =>
       assertMountPolicy({
+        platform: RUNNING_PLATFORM,
         mounts,
         taskDir: spec.taskDir,
         workdir: spec.workdir,

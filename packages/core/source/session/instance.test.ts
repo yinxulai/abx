@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { findAgent, AGENT_DEFINITIONS } from '@abx/contracts'
+import { RUNNING_PLATFORM, RUNNING_VOCABULARY } from '../test-support'
 import { agentHomePath } from './agent-config'
 import {
   INSTANCES_ROOT_ENV,
@@ -21,8 +22,14 @@ import {
   planInstance,
 } from './instance'
 
+/**
+ * **舱内** home。它永远是容器里的路径，所以写死 POSIX 形状是对的——
+ * 跟跑测试这台机器是什么系统无关（见 `cell-path.ts`）。
+ */
 const HOME = '/home/dev'
-const INSTANCES_ROOT = '/home/dev/.abx/instances'
+/** 宿主那边的路径按跑测试这台机器造：实例根是宿主路径。 */
+const HOST = RUNNING_VOCABULARY
+const INSTANCES_ROOT = HOST.underHome('.abx', 'instances')
 
 interface PlanOverrides {
   readonly cellHome?: string
@@ -47,7 +54,8 @@ describe('defaultInstancesRoot', () => {
   })
 
   it('环境变量能覆盖它，并解析成绝对路径', () => {
-    expect(defaultInstancesRoot({ [INSTANCES_ROOT_ENV]: '/srv/instances' }, HOME)).toBe('/srv/instances')
+    const override = HOST.join(HOST.outsideDir, 'instances')
+    expect(defaultInstancesRoot({ [INSTANCES_ROOT_ENV]: override }, HOME)).toBe(override)
     expect(defaultInstancesRoot({ [INSTANCES_ROOT_ENV]: 'relative/dir' }, HOME)).toBe(path.resolve('relative/dir'))
   })
 
@@ -78,13 +86,13 @@ describe('planInstance', () => {
     const first = plan('claude', 'claude')
     const second = plan('claude', 'claude')
     expect(first.stateDir).toBe(second.stateDir)
-    expect(first.stateDir).toBe(`${INSTANCES_ROOT}/claude/claude`)
+    expect(first.stateDir).toBe(HOST.join(INSTANCES_ROOT, 'claude', 'claude'))
   })
 
   it('实例根下每个实例一个目录，每个 agent 在实例里一个子目录', () => {
-    expect(plan('claude', 'work').stateDir).toBe(`${INSTANCES_ROOT}/work/claude`)
-    expect(plan('codex', 'work').stateDir).toBe(`${INSTANCES_ROOT}/work/codex`)
-    expect(plan('claude', 'home').stateDir).toBe(`${INSTANCES_ROOT}/home/claude`)
+    expect(plan('claude', 'work').stateDir).toBe(HOST.join(INSTANCES_ROOT, 'work', 'claude'))
+    expect(plan('codex', 'work').stateDir).toBe(HOST.join(INSTANCES_ROOT, 'work', 'codex'))
+    expect(plan('claude', 'home').stateDir).toBe(HOST.join(INSTANCES_ROOT, 'home', 'claude'))
   })
 
   it('舱内挂载点就是 agent 的舱内主目录', () => {
@@ -97,8 +105,8 @@ describe('planInstance', () => {
     // 挂进舱的是 `<root>/<agentId>`；`sessions.jsonl` 在它外面一层，
     // 所以舱内看不到它——这是「只在宿主写」的实现方式。
     const current = plan('claude', 'claude')
-    expect(current.sessionLogPath).toBe(`${INSTANCES_ROOT}/claude/sessions.jsonl`)
-    expect(current.sessionLogPath.startsWith(`${current.stateDir}/`)).toBe(false)
+    expect(current.sessionLogPath).toBe(HOST.join(INSTANCES_ROOT, 'claude', 'sessions.jsonl'))
+    expect(current.sessionLogPath.startsWith(`${current.stateDir}${HOST.rules.path.sep}`)).toBe(false)
   })
 
   it('cellHome 换了，挂载点跟着换', () => {
@@ -127,7 +135,10 @@ describe('ensureInstanceStateDir', () => {
   })
 
   function tempRoot(): string {
-    const directory = mkdtempSync(path.join(tmpdir(), 'abx-instances-'))
+    // realpath：`ensureInstanceStateDir` 返回的是解析过软链的路径，而 Windows 上的
+    // `%TEMP%` 可能是 8.3 短名（`C:\Users\RUNNER~1\...`）。不先归一，
+    // 「字面路径 === realpath」这条断言在 Windows 上会因为一个与本题无关的原因红。
+    const directory = realpathSync(mkdtempSync(path.join(tmpdir(), 'abx-instances-')))
     directories.push(directory)
     return directory
   }
@@ -139,7 +150,14 @@ describe('ensureInstanceStateDir', () => {
 
     expect(resolved).toBe(current.stateDir)
     expect(statSync(current.stateDir).isDirectory()).toBe(true)
-    expect(statSync(current.stateDir).mode & 0o777).toBe(0o700)
+    if (RUNNING_PLATFORM === 'win32') {
+      // Windows 上没有 POSIX 权限位，`mode` 里只剩「只读」那一位（`statSync` 给的
+      // 是合成值，写死数字等于在断言 Node 的内部实现）。能验的是同一件事的另一半：
+      // 这个目录**不是只读的**——历史要写得进去。0o700 那种位在那边根本不存在。
+      expect(statSync(current.stateDir).mode & 0o200).not.toBe(0)
+    } else {
+      expect(statSync(current.stateDir).mode & 0o777).toBe(0o700)
+    }
   })
 
   it('重复调用不抛——同一个实例本来就会被反复打开', () => {

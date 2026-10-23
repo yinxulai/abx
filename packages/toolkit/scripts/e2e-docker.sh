@@ -285,7 +285,14 @@ try {
 }
 '
 
+# 镜像名**必须在最后**：docker 把第一个非选项参数当镜像名，之后的全是「容器里要跑的
+# 命令」。所以下面要补参数时不能 `+=` 追加——那会把参数塞到镜像名后面。
 DOCKER_RUN=(docker run --rm -e ABX_PROBE_METHOD -e ABX_PROBE_BODY "$IMAGE")
+
+# 在镜像名**之前**插一个参数。用它是为了不用手写 `+=` 之后再去调顺序。
+docker_run_insert() {
+  DOCKER_RUN=("${DOCKER_RUN[@]:0:${#DOCKER_RUN[@]}-1}" "$1" "${DOCKER_RUN[@]: -1}")
+}
 
 # cell_fetch <url> [header...] —— 打印真正发出的命令，再打印真正拿到的结果。
 cell_fetch() {
@@ -346,7 +353,13 @@ RAW_RESOLVE="$("${DOCKER_RUN[@]}" sh -c 'getent hosts host.docker.internal || ec
 raw "结果：$RAW_RESOLVE"
 HOST_DOCKER_IP="$(printf '%s' "$RAW_RESOLVE" | awk '/^[0-9]/{print $1; exit}')"
 if [ -z "$HOST_DOCKER_IP" ]; then
-  DOCKER_RUN+=(--add-host=host.docker.internal:host-gateway)
+  # 插在镜像名之前。曾经这里是 `DOCKER_RUN+=(…)`（追加在末尾），后果是这一条
+  # **只在解析不出来的机器上**才发作：参数被当成容器里要跑的命令，
+  # 实测报的是 `node: bad option: --add-host=host.docker.internal:host-gateway`——
+  # 一句指向 node 的错，跟挂载、网络、地址都看不出关系。
+  # Docker Desktop 会注入这个名字，所以本机永远走不到这一步；GitHub 的
+  # ubuntu runner 上原生 docker 不注入，于是那条重试路径在 CI 上必然踩到。
+  docker_run_insert '--add-host=host.docker.internal:host-gateway'
   raw "解析不出来，已加 --add-host=host.docker.internal:host-gateway 重试"
   RAW_RESOLVE="$("${DOCKER_RUN[@]}" sh -c 'getent hosts host.docker.internal || echo "(还是解析不出来)"')"
   raw "结果：$RAW_RESOLVE"

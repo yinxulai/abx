@@ -8,8 +8,8 @@ import {
 } from '@abx/contracts/agents'
 
 /**
- * 官网「Agent 一览」的数据。**唯一来源是清单本身**
- * （`packages/contracts/source/agents.ts`），这里只做三件事：
+ * 页面上出现的 agent 数据：「Agent 一览」那一节，以及首屏托盘面板示意图里的一排。
+ * **唯一来源是清单本身**（`packages/contracts/source/agents.ts`），这里只做三件事：
  *
  * 1. 直接读清单里已有的字段（名字、命令、上游、舱内变量、配置文件、核实状态、
  *    镜像、历史目录）。
@@ -71,6 +71,22 @@ export function buildAgentRows(definitions: readonly AgentDefinition[]): readonl
 
 /** 官网页面上那一份。组件只读它，不自己去翻清单。 */
 export const AGENT_ROWS: readonly AgentRow[] = buildAgentRows(AGENT_DEFINITIONS)
+
+/**
+ * 托盘面板那一排的 agent：**只放已安装的**（`product/tray-ui.md` §3.1 ④）。
+ *
+ * 镜像还没构建的 agent 不进托盘。那一排只有图标，而一个图标代表不了一个还没装的 agent：
+ * 它既没有可辨认的身份，也没有可执行的动作——那是管理面板要回答的问题，不是托盘的。
+ *
+ * 判据是清单里的镜像状态，**不是这里手写的一份名单**：镜像建出来那天，它自己会进这一排，
+ * 页面上没有一行要改。与 `packages/console` 的托盘是同一个过滤条件。
+ */
+export function trayAgentRows(definitions: readonly AgentDefinition[]): readonly AgentRow[] {
+  return buildAgentRows(definitions).filter(row => row.image.state === 'built')
+}
+
+/** 首屏那张面板示意图用的一排。 */
+export const TRAY_AGENT_ROWS: readonly AgentRow[] = trayAgentRows(AGENT_DEFINITIONS)
 
 /** 历史目录：清单里直接给的就是舱内路径，页面照原样列出来。 */
 function statePathsOf(statePaths: readonly AgentStatePath[]): readonly string[] {

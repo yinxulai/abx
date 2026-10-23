@@ -23,7 +23,7 @@ const STEPS = [
     key: 'firstRun',
     icon: <MousePointerClick aria-hidden="true" className="size-5" />,
     title: '第一次打开',
-    body: '菜单栏出现一个 abx 图标，Dock 里没有图标。点开面板，第一行就写着现在有几个舱在跑、凭据在哪。不弹配置向导，不要求填密钥 —— 密钥在舱外的 OSW 里，这里没有可填的地方。',
+    body: '菜单栏出现一个 abx 图标，Dock 里没有图标。点开面板，顶上写着它有没有在跑，以及它拿不到你的密钥。不弹配置向导，不要求填密钥 —— 密钥留在 OSW 里，这里没有可填的地方。',
   },
   {
     key: 'drop',
@@ -73,7 +73,7 @@ export const GettingStarted = () => {
       <p className="mt-8 max-w-3xl text-sm leading-relaxed text-ink-3">
         {t(
           'start.note',
-          '拖拽用的是 macOS 菜单栏的原生能力，所以第一版只做 macOS。需要停的时候，「停止全部」停的是舱：共享条目和取回区里的文件都留在原处，移除一条共享只解除挂载，不删你的原文件。',
+          '拖拽用的是 macOS 菜单栏的原生能力，所以第一版只做 macOS。需要停的时候，去管理面板，顶上的「停止全部」一次就停掉全部 —— 共享条目和取回区里的文件都留在原处，移除一条共享只解除挂载，不删你的原文件。',
         )}
       </p>
     </section>

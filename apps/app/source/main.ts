@@ -1,10 +1,13 @@
 // Electron 主进程 = Composition Root（ARCHITECTURE.md §8 / R6）。
 // 这里只做「接线」：造托盘、造面板窗口、把 IPC 接到 core 的命令上。
 // 编排逻辑一律住在 `@abx/core`，所以它能在没有 GUI 的机器上被测试。
-import { app, BrowserWindow, Tray, ipcMain, nativeImage, screen } from 'electron'
+import { app, BrowserWindow, Tray, dialog, ipcMain, nativeImage, screen } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseSharedEntry, type SharedEntry, type SharedEntryRejection, type SharedListSnapshot } from '@abx/contracts'
+import { requireHostPlatform } from '@abx/core/host-platform'
+import type { HostPlatform } from '@abx/core/host-platform'
+import { panelPosition } from './panel-position'
 import {
   addSharedEntries,
   defaultSharedListPath,
@@ -25,6 +28,37 @@ const TRAY_ICON_SIZE = 22
 const here = path.dirname(fileURLToPath(import.meta.url))
 /** 面板产物：`@abx/console` 构建到 `output/panel`，与主进程产物同级。 */
 const PANEL_ENTRY = path.join(here, '../panel/index.html')
+
+/**
+ * 宿主平台。**整个进程只在这里读一次** `process.platform`。
+ *
+ * 隔离规则一个平台一套（见 `@abx/core/host-platform`），所以「这台机器是什么系统」
+ * 必须在做任何事之前定下来，然后**当成参数**往 core 里传。各处自己读 `process.platform`
+ * 的后果是：那条分支只在真机上才走得到，开发机上（Linux）永远验不了 Windows 那套。
+ *
+ * 认不出的系统（`freebsd` 这类）这里**直接退出**，不硬跑。理由不是保守：
+ * 没有规则的平台上那些闸门不会报错，只会**静默失效**——用户会得到一个「看起来起了、
+ * 其实没有隔离」的会话，那比起不来坏得多。所以这句话在 `app.whenReady()` 之前说，
+ * 而且要说人话：弹窗里就是 `UnsupportedHostPlatformError` 那段。
+ */
+const hostPlatform: HostPlatform = readHostPlatform()
+
+function readHostPlatform(): HostPlatform {
+  try {
+    return requireHostPlatform(process.platform)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    // 弹窗在 `app.whenReady()` 之前就能用（Electron 特意允许 showErrorBox 这么做），
+    // 托盘应用又没有终端可看，所以两处都写：弹窗给人，stderr 给日志。
+    try {
+      dialog.showErrorBox('abx 起不来', message)
+    } catch {
+      // 没有图形环境（无头 CI、Xvfb 没起来）时弹不出来，下面那句 stderr 还在。
+    }
+    console.error(`[abx] ${message}`)
+    process.exit(1)
+  }
+}
 let tray: Tray | null = null
 let panel: BrowserWindow | null = null
 let panelHeight = 320
@@ -94,17 +128,24 @@ function createPanel(): BrowserWindow {
   return window
 }
 
-/** 把面板贴到托盘图标下方，并夹在屏幕可视区内。 */
+/**
+ * 把面板贴到托盘图标旁边，并夹在屏幕可视区内。
+ *
+ * 贴哪一边由 `panelPosition()` 按坐标算，不按平台：Windows 的任务栏默认在**底部**，
+ * 「永远贴图标下面」在那台机器上等于把面板放到屏幕外面（窗口真的存在、真的拿到了
+ * 焦点，就是看不见）。任务栏在 Windows 上还能被拖到顶部，所以判据必须是坐标。
+ */
 function placePanel(window: BrowserWindow): void {
   if (tray === null) return
   const trayBounds = tray.getBounds()
   const display = screen.getDisplayNearestPoint({ x: trayBounds.x, y: trayBounds.y })
-  const workArea = display.workArea
   const bounds = window.getBounds()
 
-  const centered = Math.round(trayBounds.x + trayBounds.width / 2 - bounds.width / 2)
-  const x = Math.min(Math.max(centered, workArea.x), workArea.x + workArea.width - bounds.width)
-  const y = Math.round(trayBounds.y + trayBounds.height)
+  const { x, y } = panelPosition({
+    trayBounds,
+    workArea: display.workArea,
+    panelSize: { width: bounds.width, height: bounds.height },
+  })
   window.setPosition(x, y, false)
 }
 
@@ -119,14 +160,29 @@ function togglePanel(): void {
 }
 
 /**
- * 托盘图标。两个平台各取一份，因为「模板图」是 **macOS 独有**的语义：
+ * 托盘图标。三个平台各取一份，因为「模板图」是 **macOS 独有**的语义：
  * 带 `Template` 后缀的图由系统按菜单栏明暗自动反色，所以那里只放一张纯黑字形；
- * 别的平台不做反色，同一张黑字形放到深色托盘上就是隐形的。Linux 用彩色应用图标——
- * 它是深底白字，深浅两种托盘上都看得见。
+ * 别的平台不做反色，同一张黑字形放到深色托盘上就是隐形的。
+ *
+ * Windows 与 Linux 都用彩色应用图标（深底白字，深浅两种托盘上都看得见），
+ * 但**形式不一样**：
+ *   - Windows 走 ICO。通知区按 DPI 挑尺寸（100% 是 16px，150% 是 24px，200% 是 32px），
+ *     一张固定像素的 PNG 交上去只会被 shell 硬缩放，在高 DPI 上发虚；
+ *   - Linux 走 PNG，按托盘槽位那个 22px 先降好再交（托盘实现自己不做高质量缩放）。
+ *
+ * **外观没有在真机上验过**（见 `apps/docs/roadmap.md` 的未验证清单）：这台开发机是
+ * Linux，没有 Windows 也没有 macOS。能确证的只有「文件在、尺寸对、`Tray` 收得下」
+ * 这几件——`build/icon-win.ico` 是从 `icon.png`（1024px 方图）降采样出来的多尺寸 ICO
+ * （16/20/24/32/48/64/256），深色底 + 白色字形，在浅色和深色通知区里都应当可见。
  */
 function trayIcon(): Electron.NativeImage {
   if (process.platform === 'darwin') {
     return nativeImage.createFromPath(path.join(here, '../../build/trayTemplate.png'))
+  }
+  if (process.platform === 'win32') {
+    // ICO 自己带整套尺寸，**不要**再 resize：那样等于先把多尺寸压成一个尺寸，
+    // 正好把 ICO 唯一的好处丢掉。
+    return nativeImage.createFromPath(path.join(here, '../../build/icon-win.ico'))
   }
   // 应用图标是 1024px 的方图，托盘槽位只有 20 出头，先降下来再交给 Tray。
   return nativeImage
@@ -181,7 +237,7 @@ ipcMain.handle('shared:add', (_event, raw: unknown) => {
   const incoming = parseIncoming(raw)
   if (incoming.length === 0) return sharedSnapshot()
 
-  const { mounts, rejected } = resolveSharedMounts(incoming)
+  const { mounts, rejected } = resolveSharedMounts(incoming, { platform: hostPlatform })
   // 被拒的按**原始路径**排除，不按解析后的路径：软链条目的挂载源是它的目标，
   // 两个集合的写法不一样，用路径对路径才准确。
   const rejectedPaths = new Set(rejected.map((item) => item.path))

@@ -4,7 +4,7 @@ import {
   type AgentDefinition,
 } from '@abx/contracts/agents'
 import { describe, expect, it } from 'vitest'
-import { AGENT_ROWS, buildAgentRows } from './agents'
+import { AGENT_ROWS, buildAgentRows, TRAY_AGENT_ROWS, trayAgentRows } from './agents'
 
 /**
  * 这一节的风险只有一个：**官网自己抄了一份 agent 数据，然后跟清单漂移**。
@@ -127,5 +127,37 @@ describe('agent rows', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0]?.configFiles).toEqual([])
     expect(rows[0]?.statePaths).toEqual(base.statePaths.map(statePath => statePath.path))
+  })
+})
+
+/**
+ * 首屏那张托盘面板示意图里的一排。它比「Agent 一览」少一层：
+ * 托盘**只放已安装的 agent**（`tray-ui.md` §3.1 ④），镜像还没构建的进去就是画了个
+ * 认不出来的身份。所以这里锁两件事：dsh 今天不在里面，以及「不在里面」是**算出来的**
+ * ——判据是清单的镜像状态，不是这份文件里手写的名单。
+ */
+describe('tray agent row', () => {
+  it('leaves the agents whose image is not built out of the tray', () => {
+    expect(TRAY_AGENT_ROWS.map(row => row.id)).toEqual(['claude', 'codex'])
+    expect(TRAY_AGENT_ROWS.map(row => row.id)).not.toContain('dsh')
+  })
+
+  it('filters on the manifest image state, not on a hand-written name list', () => {
+    const rows = trayAgentRows([
+      definitionOf({
+        id: 'unbuilt',
+        image: { repository: 'abx-agent-unbuilt', version: AGENT_IMAGE_UNBUILT },
+      }),
+      definitionOf({ id: 'built', image: { repository: 'abx-agent-built', version: '1.0.0' } }),
+    ])
+
+    expect(rows.map(row => row.id)).toEqual(['built'])
+  })
+
+  it('is the full row list minus the unbuilt ones, in manifest order', () => {
+    const unbuilt = AGENT_ROWS.filter(row => row.image.state === 'unbuilt').map(row => row.id)
+
+    expect(unbuilt).toEqual(['dsh'])
+    expect(TRAY_AGENT_ROWS).toEqual(AGENT_ROWS.filter(row => row.image.state === 'built'))
   })
 })

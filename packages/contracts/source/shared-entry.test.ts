@@ -30,6 +30,30 @@ describe('sharedEntrySchema', () => {
     expect(sharedEntrySchema.safeParse({ path: '/home/dev/..notes', kind: 'file' }).success).toBe(true)
   })
 
+  it('Windows 的绝对路径也认：盘符与 UNC 两种形状', () => {
+    // 这一条是回归测试。原先只认 `startsWith('/')`，于是 Windows 上用户拖进来的
+    // **每一条**都在这里被拒，而表现是「拖了没反应」——存进 `shared.json` 又读不出来，
+    // 中间一句话都没有。形状判定在这一层（浏览器产物里拿不到平台），
+    // 分平台的闸门在 `resolveSharedMounts()`。
+    for (const path of ['C:\\Users\\dev\\notes', 'D:\\projects\\thing', 'C:/Users/dev/notes', '\\\\server\\share\\notes']) {
+      expect(sharedEntrySchema.safeParse({ path, kind: 'directory' }).success, path).toBe(true)
+    }
+  })
+
+  it('Windows 形状的相对路径照样拒绝', () => {
+    expect(sharedEntrySchema.safeParse({ path: 'notes\\design.md', kind: 'file' }).success).toBe(false)
+    // `C:` 单独一段不是绝对路径——那是「C 盘当前目录」，一个会随进程状态变的位置。
+    expect(sharedEntrySchema.safeParse({ path: 'C:', kind: 'directory' }).success).toBe(false)
+    // 单个反斜杠开头也不是 UNC。
+    expect(sharedEntrySchema.safeParse({ path: '\\notes', kind: 'directory' }).success).toBe(false)
+  })
+
+  it('Windows 形状的 .. 同样拒绝，两种分隔符都算', () => {
+    expect(sharedEntrySchema.safeParse({ path: 'C:\\Users\\..\\Windows', kind: 'directory' }).success).toBe(false)
+    expect(sharedEntrySchema.safeParse({ path: 'C:/Users/../Windows', kind: 'directory' }).success).toBe(false)
+    expect(sharedEntrySchema.safeParse({ path: '\\\\server\\share\\..\\x', kind: 'directory' }).success).toBe(false)
+  })
+
   it('kind 只有两类，别的值拒绝', () => {
     expect(sharedEntrySchema.safeParse({ path: '/home/dev/notes', kind: 'symlink' }).success).toBe(false)
     expect(sharedEntrySchema.safeParse({ path: '/home/dev/notes' }).success).toBe(false)

@@ -93,6 +93,18 @@ export interface BrokerOptions {
   readonly cellToken?: string | null
   /** 覆盖 `broker.cellHost`。local 后端会把它改成回环地址。 */
   readonly cellHost?: string | null
+  /**
+   * 舱面按这个顺序试 bind，第一个成功的算数。
+   *
+   * 为什么不是一个地址：**「绑哪」和「告诉舱内哪个地址」是两件事**（见
+   * `cell-host.ts`）。原生 linux docker 上配置里那个 `172.17.0.1` 是真实网卡，
+   * 绑它最窄；Docker Desktop 上没有这个网卡，得退到 `0.0.0.0`。给调用方算这个
+   * 顺序（`bindHostCandidates()`），这里只负责依次试——判定留在纯函数那一侧，
+   * 才验得了。
+   *
+   * 不传就是老样子：只试 `cellHost` 一个，失败即失败。
+   */
+  readonly bindHosts?: readonly string[]
   /** 覆盖端口，测试里用 0 让系统分配。 */
   readonly hostPort?: number | null
   readonly cellPort?: number | null
@@ -176,24 +188,54 @@ export async function startBroker(options: BrokerOptions): Promise<BrokerHandle>
     throw new Error(`宿主面起不来（broker.host=${config.broker.host} broker.hostPort=${config.broker.hostPort}）：${message(error)}`)
   }
 
-  let cellAddress: AddressInfo
-  try {
-    cellAddress = await listen(cellServer, cellHost, options.cellPort ?? config.broker.cellPort, '舱面')
-  } catch (error) {
+  const bindHosts = options.bindHosts ?? [cellHost]
+  let cellAddress: AddressInfo | null = null
+  let lastBoundHost = bindHosts[0] ?? cellHost
+  const bindFailures: string[] = []
+  for (const candidate of bindHosts) {
+    try {
+      cellAddress = await listen(cellServer, candidate, options.cellPort ?? config.broker.cellPort, '舱面')
+      lastBoundHost = candidate
+      if (candidate !== bindHosts[0]) {
+        // 退让过就要说出来：绑在 `0.0.0.0` 上意味着这一台机器的**所有**网卡都能
+        // 打到舱面，而这跟配置里写的那个地址不是一回事。
+        log.warn(`[abx] 舱面绑不上 ${bindHosts[0]}，已改绑 ${candidate}（这一台机器的所有网卡都能打到舱面）`)
+      }
+      break
+    } catch (error) {
+      bindFailures.push(`${candidate}：${message(error)}`)
+    }
+  }
+
+  if (cellAddress === null) {
     hostServer.close()
     hostServer.closeAllConnections()
     throw new Error(
-      `舱面起不来（broker.cellHost=${cellHost} broker.cellPort=${config.broker.cellPort}）：${message(error)}\n` +
-        `  docker 没起来时 ${config.broker.cellHost} 这个网桥地址并不存在。` +
-        `用 local 后端跑的时候请把 cellHost 指到 127.0.0.1，或者设 session.backend=docker。`,
+      `舱面起不来（broker.cellPort=${config.broker.cellPort}）。试过这些地址：\n` +
+        bindFailures.map((failure) => `  - ${failure}`).join('\n') +
+        `\n  docker 没起来时网桥地址并不存在。用 local 后端跑的时候请把 cellHost 指到 127.0.0.1，或者设 session.backend=docker。`,
     )
   }
 
   const hostOrigin = `http://${config.broker.host}:${hostAddress.port}`
+  // 舱内被告知的是**配置里那个**地址，不是 bind 成功的那一个：退到 `0.0.0.0`
+  // 只是「这台机器愿意在这个网卡上收」，而 `0.0.0.0` 对容器来说不是一个能连的地址。
+  // 容器真正该打哪儿由 `decideCellHost()` 探测决定（见 `cell-host.ts`）。
   const cellOrigin = `http://${formatHostForUrl(cellHost)}:${cellAddress.port}`
 
   log.info(`[abx] 宿主面 ${hostOrigin}（不校验令牌，绑在回环上）`)
   log.info(`[abx] 舱面   ${cellOrigin}（校验 ${CELL_TOKEN_HEADER}）`)
+  // 绑的地址与告诉舱内的地址是两件事，两个不一致时要说出来：读日志的人看到
+  // 「舱面 http://host.docker.internal:8789」会以为宿主上也这么绑着。
+  if (lastBoundHost !== cellHost) {
+    log.info(`[abx] 舱面实际绑在 ${lastBoundHost}:${cellAddress.port}（告诉舱内的是 ${cellHost}，两者不是一回事）`)
+  }
+  if (lastBoundHost === '0.0.0.0') {
+    // 这一条要在启动时说，不能只在被拒的审计记录里体现：绑 0.0.0.0 意味着
+    // 宿主机所在的**整个局域网**都能打到舱面。鉴权还有（舱令牌 + 来源网段），
+    // 但「哪些机器能打到」这件事变了，用户有权知道。
+    log.warn('[abx] 舱面绑在 0.0.0.0：这台机器的所有网卡都能打到它（仍然要舱令牌，来源也仍然按网段过滤）')
+  }
   log.info(`[abx] 舱面来源 ${allowedCellSubnets.length === 0 ? '（空：全部拒绝）' : allowedCellSubnets.join(', ')}`)
   // 网段写错的唯一表现是「所有来源都 403」——包括舱里正常的 agent，且没有任何
   // 别的线索。所以启动时就要把它喊出来，而不是等人对着审计猜。

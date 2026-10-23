@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import type { SharedEntry, SharedListSnapshot } from '@abx/contracts'
+import { AGENT_DEFINITIONS, AGENT_IMAGE_UNBUILT } from '@abx/contracts/agents'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { App } from './App'
@@ -8,7 +9,7 @@ import type { AbxBridge } from './bridge'
 
 /*
  * 面板在 jsdom 里渲染，断言的是**用户能看到与读屏能读到的东西**：
- * 空态文案、三个 agent 方块的可访问名与 `aria-pressed`、
+ * 空态文案、agent 方块的可访问名与 `aria-pressed`、只显示已安装的 agent、
  * 共享列表里的文件名 / 目录图标 / 徽标、以及被拒条目那行原因。
  * 样式不断言 —— 颜色改一版不该让测试红。
  */
@@ -69,61 +70,74 @@ afterEach(() => {
 })
 
 describe('App', () => {
-  it('renders the empty shared state and the idle status', () => {
-    render(<App />)
+  it('renders the empty drop hint, and no cell-count pill in the header', () => {
+    const { container } = render(<App />)
 
-    expect(screen.getByText('把文件拖到托盘图标，或拖到这里')).toBeTruthy()
-    expect(screen.getByRole('status').textContent).toContain('待启动')
+    // 文案只说面板：拖到**托盘图标**是 macOS only，面板内的正文不提它（`tray-ui.md` §7 第 3 条）。
+    expect(screen.getByText('拖到这里 → 全部 agent 立刻可见')).toBeTruthy()
+    // 「N 舱」胶囊按 `design-system.md` §12 去掉了：副标题说的是在不在跑，
+    // 数量是管理面板的职责。这里把「它不在了」写下来，免得哪天又被顺手加回来。
+    expect(screen.queryByText(/\d+ 舱/)).toBeNull()
+    expect(screen.queryByRole('status')).toBeNull()
+
+    // 副标题是面板上唯一一句状态。它说**后果**，不说术语也不说数量
+    // （`functional-design.md` §0.2 ②）——曾经逐字是「气闸待启动 · 凭据全部在舱外」，
+    // 这一条守着那次改动：三个词一个都不许回来，数字同样。
+    const subtitle = container.querySelector('.abx-title-sub')?.textContent ?? ''
+    expect(subtitle).toBe('把文件拖进来，它就开始干活')
+    expect(subtitle).not.toMatch(/气闸|凭据|舱|\d/)
   })
 
-  it('renders one start button per agent, with an accessible name and pressed state', () => {
+  it('renders one start button per installed agent, with an accessible name and pressed state', () => {
     render(<App />)
 
     const buttons = screen.getAllByRole('button')
-    expect(buttons).toHaveLength(3)
-    expect(buttons[0]?.getAttribute('aria-label')).toBe('Claude Code：未运行，点击启动')
+    expect(buttons).toHaveLength(2)
+    expect(buttons[0]?.getAttribute('aria-label')).toBe('Claude Code · 未运行，点击启动')
     expect(buttons[0]?.getAttribute('aria-pressed')).toBe('false')
   })
 
   it('takes tile icons from the registry, not from a UI-side list', () => {
     render(<App />)
 
-    // claude 在注册表里有 icon，dsh 没有——面板不该自己决定谁有图标。
-    const square = (name: string): Element | null =>
-      screen.getByRole('button', { name }).querySelector('.abx-agent-square')
+    // 图标来自注册表：面板不该自己决定谁长什么样，也不该在这里另抄一份清单。
+    // 镜像还没构建的 agent 进不了这一排，所以拿注册表现算一遍期望值。
+    const installed = AGENT_DEFINITIONS.filter((agent) => agent.image.version !== AGENT_IMAGE_UNBUILT)
+    const marks = screen
+      .getAllByRole('button')
+      .map((button) => button.querySelector('.abx-agent-mark')?.getAttribute('data-icon') ?? null)
 
-    expect(square('Claude Code：未运行，点击启动')?.getAttribute('data-icon')).toBe('claude')
-    expect(square('dsh：不可用，先构建镜像')?.hasAttribute('data-icon')).toBe(false)
+    expect(marks).toEqual(installed.map((agent) => agent.icon?.slug ?? null))
   })
 
-  it('takes the image from the registry, and calls an unbuilt one unavailable', () => {
+  it('leaves out the agents whose image is not built yet', () => {
     render(<App />)
 
-    // dsh 的镜像是 `unbuilt`（注册表里写的），所以它是「不可用」而不是「未运行」：
-    // 面板要说清是哪个镜像、下一步做什么，而不是把它混进可点的那一排。
-    const dsh = screen.getByRole('button', { name: 'dsh：不可用，先构建镜像' })
-    expect(dsh.getAttribute('data-state')).toBe('unavailable')
-    expect((dsh as HTMLButtonElement).disabled).toBe(true)
-    expect(dsh.textContent).toContain('镜像未构建')
-    expect(dsh.textContent).toContain('先构建镜像')
-    expect(dsh.getAttribute('title')).toBe('abx-agent-dsh:unbuilt 还没构建 · 先构建镜像')
+    // dsh 的镜像是 `unbuilt`（注册表里写的），它**整个不进托盘**：这一排只有图标，
+    // 而一个图标代表不了一个还没装的 agent——既没有可辨认的身份，也没有可执行的动作
+    // （`tray-ui.md` §3.1 ④）。
+    const unbuilt = AGENT_DEFINITIONS.filter((agent) => agent.image.version === AGENT_IMAGE_UNBUILT)
+    // 这条用例不能空转：注册表里真有没构建的 agent，下面那句才验证得到东西。
+    expect(unbuilt.length).toBeGreaterThan(0)
 
-    // 另外两个构建好了：它们只是「未运行」，等着被点。
-    expect(screen.getByRole('button', { name: 'Claude Code：未运行，点击启动' }).getAttribute('data-state')).toBe('idle')
-    expect(screen.getByRole('button', { name: 'OpenAI Codex CLI：未运行，点击启动' }).getAttribute('data-state')).toBe(
-      'idle',
-    )
+    for (const agent of unbuilt) {
+      expect(screen.queryByRole('button', { name: new RegExp(agent.label) })).toBeNull()
+    }
+    expect(screen.getAllByRole('button')).toHaveLength(AGENT_DEFINITIONS.length - unbuilt.length)
   })
 
   it('flips an agent to running when its tile is clicked', () => {
     render(<App />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Claude Code：未运行，点击启动' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Claude Code · 未运行，点击启动' }))
 
-    const running = screen.getByRole('button', { name: 'Claude Code：运行中，点击聚焦' })
+    const running = screen.getByRole('button', { name: 'Claude Code · 运行中，点击聚焦' })
     expect(running.getAttribute('aria-pressed')).toBe('true')
     expect(running.getAttribute('data-state')).toBe('running')
-    expect(screen.getByRole('status').textContent).toContain('1 舱')
+    // 在跑这一档说的是「它拿不到你的密钥」——这句话是产品承诺，也是这一档唯一的
+    // 状态出口：没有数字，没有「气闸」「凭据」这些词（`design-system.md` §12 把数量
+    // 判给了管理面板，`functional-design.md` §0.2 ② 要求把术语换算成后果）。
+    expect(screen.getByText('运行中 · 它拿不到你的密钥')).toBeTruthy()
   })
 
   it('asks the host for the list on mount', () => {
@@ -206,6 +220,6 @@ describe('App', () => {
     expect(screen.getByText('1 项未加入共享区')).toBeTruthy()
     expect(screen.getByText('目录里有凭据文件：.env 命中 *.env（共 1 个）。')).toBeTruthy()
     // 共享区空了，拖放区回到空态文案。
-    expect(screen.getByText('把文件拖到托盘图标，或拖到这里')).toBeTruthy()
+    expect(screen.getByText('拖到这里 → 全部 agent 立刻可见')).toBeTruthy()
   })
 })

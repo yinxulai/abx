@@ -313,6 +313,62 @@ describe('不该出现在使用者文档里的东西', () => {
   })
 })
 
+describe('界面描述与真面板一致', () => {
+  // 这几句描述的是 `packages/console` 里那个真面板，所以真面板改了、这里没跟上，
+  // 测试必须喊。**只删旧句不算修好**——旧形态会换一种写法长回来，所以每一条都同时
+  // 断言「新句在」与「旧词不在」。
+  const firstRun = readMdx('zh', 'getting-started/first-run')
+  const installation = readMdx('zh', 'getting-started/installation')
+
+  it('起舱说的是方块的形状，不是头部计数', () => {
+    // 头部没有计数（`design-system.md` §12：数量归管理面板）。
+    expect(firstRun).toContain('右下角的点变成实心')
+    expect(firstRun).not.toContain('头部计数加一')
+  })
+
+  it('取回写的是落地即打开，不是「面板里的列表 + 确认」', () => {
+    // `functional-design.md` §13：面板只列共享项，`publish` 落地即打开。
+    expect(firstRun).toContain('落地即')
+    expect(firstRun).not.toContain('出现在面板的「取回」里')
+    expect(firstRun).not.toContain('要你点一下确认')
+  })
+
+  it('「停止全部」挂在管理面板上，不挂在托盘上', () => {
+    expect(firstRun).toContain('管理面板')
+    expect(firstRun).not.toContain('托盘与气闸继续运行')
+  })
+
+  it('安装页不承诺面板上没有的读数与方块数', () => {
+    // 图上画的是两个方块（dsh 镜像未构建，不进托盘），面板里也没有「几个在跑」这个读数。
+    expect(installation).toContain('两个 agent 方块')
+    expect(installation).not.toContain('三个 agent 方块')
+    expect(installation).not.toContain('几个 agent 在跑')
+    expect(installation).not.toContain('未配置上游')
+  })
+
+  it('示意图源码画的是现形态，不是上一版', () => {
+    // 图本身是二进制，断言不了；但它**是**从这份源码导出的，所以守源码就是守图。
+    // 注释里会提到被删掉的东西（「停止全部在管理面板顶部」），所以先把注释和标签去掉，
+    // 只对**画出来的字**下判断。
+    const mock = readFileSync(join(docsDir, 'assets', 'tray-mock.html'), 'utf8')
+    const drawn = mock
+      .replace(/<!--[\s\S]*?-->/g, ' ')
+      .replace(/<style>[\s\S]*?<\/style>/g, ' ')
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/\s+/g, ' ')
+
+    expect(drawn).toContain('运行中 · 它拿不到你的密钥')
+    expect(drawn).toContain('拖到这里 → 全部 agent 立刻可见')
+    // 一次落后四处形态的旧图：胶囊、方块上的名字、dsh、footer。一处都不许回来。
+    for (const gone of ['2 舱', 'dsh', '停止全部', '审计流水', '气闸', '凭据', 'Claude Code', 'Codex']) {
+      expect(drawn, `示意图上还有旧形态：${gone}`).not.toContain(gone)
+    }
+    // 两个方块 × 两套主题：在跑的那个是实线描边 + 实心点，没跑的是虚线 + 空心圈。
+    expect(mock.match(/class="agent claude running"/g)).toHaveLength(2)
+    expect(mock.match(/class="agent idle"/g)).toHaveLength(2)
+  })
+})
+
 describe('译制进度表', () => {
   const readme = readFileSync(join(sourceDir, 'README.md'), 'utf8')
   const rows = [...readme.matchAll(/^\|\s*`([\w/-]+)`\s*\|\s*(✅|⏳)\s*\|\s*(✅|⏳)\s*\|$/gm)].map(

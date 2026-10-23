@@ -15,16 +15,26 @@ import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { MCP_SHIM_CELL_PATH, MCP_SHIM_FILE_NAME, agentConfigFileNames } from '@abx/contracts'
+import { RUNNING_PLATFORM, RUNNING_VOCABULARY } from '../test-support'
 import type { SandboxSpec } from './backend'
-import { buildDockerArgs, containerName, isExecutableOnPath } from './docker-backend'
+import { buildDockerArgs, containerName, missingDockerMessage } from './docker-backend'
 import { MOUNT_POLICY } from './mount-policy'
 
-const TASK_DIR = '/home/dev/projects/thing'
+/**
+ * 宿主路径按跑测试这台机器造。写死 `/home/dev/projects/thing` 的话，
+ * `MOUNT_POLICY.buildMounts` 会把它 `path.resolve` 成当前盘上的 `D:\home\...`，
+ * 于是断言比的是一个从来没被算过的字符串。
+ *
+ * `isExecutableOnPath` 的用例不在这里——它跟 docker 无关，搬到 `host-command.test.ts` 了。
+ */
+const HOST = RUNNING_VOCABULARY
+const TASK_DIR = HOST.taskDir
 
 function spec(overrides: Partial<SandboxSpec> = {}): SandboxSpec {
   return {
     cellId: 'claude-20261023-ab12cd',
     agentId: 'claude',
+    platform: RUNNING_PLATFORM,
     command: ['claude'],
     allocateTty: true,
     taskDir: TASK_DIR,
@@ -67,16 +77,33 @@ describe('buildDockerArgs', () => {
     expect(argsFor()).toContain('--rm')
   })
 
+  it('缺省**不**加 --add-host：Docker Desktop 自己会注入那个名字，补了反而改指到 IPv6', () => {
+    // 这条断言是防回归的：曾经的想法是「配置里写的是名字就无条件补一条
+    // host-gateway 映射」，而 docker-verification §2.1 实测那个参数在 Docker
+    // Desktop 上会把 host.docker.internal 改指到 fdc4:f303:9324::254。默认不加。
+    expect(argsFor()).not.toContain('--add-host')
+  })
+
+  it('显式给了要补的名字时才加，且加在镜像名之前', () => {
+    const args = argsFor({ addHostGatewayMapping: 'host.docker.internal' })
+    expect(flagValue(args, '--add-host')).toBe('host.docker.internal:host-gateway')
+    // docker 把第一个非选项参数当镜像名，之后的全是命令：加错位置的后果是
+    // 「--add-host 变成了容器里要跑的命令」，报错完全指不到这里。
+    expect(args.indexOf('--add-host')).toBeLessThan(args.indexOf('node:22-slim'))
+  })
+
   it('只挂任务目录，且可写', () => {
     const volumes = allFlagValues(argsFor(), '--volume')
     expect(volumes).toEqual([`${TASK_DIR}:/workspace:rw`])
   })
 
-  it('绝不挂载主目录、/home、docker socket', () => {
+  it('绝不挂载主目录、系统目录、docker socket', () => {
     const volumes = allFlagValues(argsFor(), '--volume')
-    expect(volumes.some((volume) => volume.includes('/home/dev:'))).toBe(false)
-    expect(volumes.some((volume) => volume.startsWith('/home:'))).toBe(false)
+    expect(volumes.some((volume) => volume.includes(`${HOST.home}:`))).toBe(false)
+    expect(volumes.some((volume) => volume.startsWith(`${HOST.systemDir}:`))).toBe(false)
+    // 端点形状也分平台：POSIX 是 socket 文件，Windows 是命名管道（`\\.\pipe\docker_engine`）。
     expect(volumes.some((volume) => volume.includes('docker.sock'))).toBe(false)
+    expect(volumes.some((volume) => volume.includes('pipe'))).toBe(false)
     expect(volumes).toHaveLength(1)
   })
 
@@ -173,12 +200,13 @@ describe('buildDockerArgs', () => {
 
 describe('生成的 agent 配置：逐个文件、只读', async () => {
   const { createDockerBackend } = await import('./docker-backend')
+  // 宿主路径按平台造；`cellPath` 是**舱内**路径，永远是 POSIX 形状。
   const SETTINGS = {
-    hostPath: '/home/dev/.abx/cells/claude-1/agents/claude/settings.json',
+    hostPath: HOST.join(HOST.underHome('cells', 'claude-1', 'agents', 'claude'), 'settings.json'),
     cellPath: '/home/dev/.claude/settings.json',
   }
   const CODEX_CONFIG = {
-    hostPath: '/home/dev/.abx/cells/claude-1/agents/codex/config.toml',
+    hostPath: HOST.join(HOST.underHome('cells', 'claude-1', 'agents', 'codex'), 'config.toml'),
     cellPath: '/home/dev/.codex/config.toml',
   }
 
@@ -196,21 +224,34 @@ describe('生成的 agent 配置：逐个文件、只读', async () => {
   })
 
   it('没有一条挂载是目录形态——目录里躺着凭据文件', () => {
-    for (const volume of allFlagValues(configArgs([SETTINGS, CODEX_CONFIG]), '--volume').slice(1)) {
-      const [source, , mode] = volume.split(':')
-      expect(mode).toBe('ro')
+    const files = [SETTINGS, CODEX_CONFIG]
+    const volumes = allFlagValues(configArgs(files), '--volume').slice(1)
+
+    for (const [index, volume] of volumes.entries()) {
+      const file = files[index]!
+      // 解析走**后缀**，不走 `split(':')`：Windows 的挂载源自带一个冒号
+      // （`C:\Users\dev\...`），从左边数的第三段只是路径的一部分，
+      // 权限位那一格于是永远读成路径——断言会红在一个跟权限无关的地方。
+      const suffix = `:${file.cellPath}:ro`
+      expect(volume.endsWith(suffix)).toBe(true)
+      const source = volume.slice(0, volume.length - suffix.length)
+
       // 源的 basename 必须是注册过的配置文件名。目录形态（`…/agents/claude`）
       // 在这里露馅：它没有任何一个配置文件名。
-      expect(agentConfigFileNames()).toContain(path.basename(source!))
-      expect(volume).not.toContain(':/home/dev/.claude:')
-      expect(volume).not.toContain(':/home/dev/.codex:')
+      expect(agentConfigFileNames()).toContain(path.basename(source))
+      // 舱内那一头是**文件**：它前面挨着宿主源的分隔冒号，后面直接跟 `:ro`。
+      expect(volume).not.toContain(':.claude:')
+      expect(volume).not.toContain(':.codex:')
     }
   })
 
   it('每一份配置各自一个挂载点，不会合并成父目录', () => {
     const volumes = allFlagValues(configArgs([SETTINGS, CODEX_CONFIG]), '--volume')
     expect(volumes).toHaveLength(3)
-    expect(volumes.every((volume) => !volume.startsWith('/home/dev/.abx/cells/claude-1/agents:'))).toBe(true)
+    // 目录形态会露馅成 `<父目录>:` ——挂载源就写到父目录为止，后面直接跟分隔宿主与
+    // 舱内的那个冒号。带文件名的话冒号前面还有一段。
+    const parents = HOST.underHome('cells', 'claude-1', 'agents')
+    expect(volumes.every((volume) => !volume.startsWith(`${parents}:`))).toBe(true)
   })
 
   it('没有配置时行为不变，仍然只挂任务目录', () => {
@@ -226,7 +267,7 @@ describe('生成的 agent 配置：逐个文件、只读', async () => {
       }) as never,
     })
     const credential = {
-      hostPath: '/home/dev/.abx/cells/claude-1/agents/claude/.credentials.json',
+      hostPath: HOST.join(HOST.underHome('cells', 'claude-1', 'agents', 'claude'), '.credentials.json'),
       cellPath: '/home/dev/.claude/.credentials.json',
     }
 
@@ -302,8 +343,8 @@ describe('实例状态目录：第二个可写挂载，配置嵌在它里面', a
 describe('共享条目：只读挂进 /shared，且不计入可写', () => {
   it('每一条共享条目就是一条 --volume，权限是 ro', () => {
     const shared = [
-      { source: '/home/dev/projects/notes', target: '/shared/notes', mode: 'ro' as const },
-      { source: '/home/dev/data', target: '/shared/data', mode: 'ro' as const },
+      { source: HOST.underHome('projects', 'notes'), target: '/shared/notes', mode: 'ro' as const },
+      { source: HOST.underHome('data'), target: '/shared/data', mode: 'ro' as const },
     ]
     const current = spec({ sharedMounts: shared })
     const volumes = allFlagValues(
@@ -313,8 +354,8 @@ describe('共享条目：只读挂进 /shared，且不计入可写', () => {
 
     expect(volumes).toEqual([
       `${TASK_DIR}:/workspace:rw`,
-      '/home/dev/projects/notes:/shared/notes:ro',
-      '/home/dev/data:/shared/data:ro',
+      `${HOST.underHome('projects', 'notes')}:/shared/notes:ro`,
+      `${HOST.underHome('data')}:/shared/data:ro`,
     ])
     // 可写挂载仍然只有任务目录一个：共享是只读的，不该占可写的额度。
     expect(volumes.filter((volume) => volume.endsWith(':rw'))).toEqual([`${TASK_DIR}:/workspace:rw`])
@@ -323,7 +364,7 @@ describe('共享条目：只读挂进 /shared，且不计入可写', () => {
   it('目录共享就是一条挂载——1000 个文件也是这一条', () => {
     // 这条断言防的是「递归展开成单文件挂载」那种改法：它会让 argv 的体积跟着
     // 目录内容走，而且目录里新增的文件从此不再出现。
-    const shared = [{ source: '/home/dev/projects/notes', target: '/shared/notes', mode: 'ro' as const }]
+    const shared = [{ source: HOST.underHome('projects', 'notes'), target: '/shared/notes', mode: 'ro' as const }]
     const current = spec({ sharedMounts: shared })
 
     const args = buildDockerArgs(current, MOUNT_POLICY.buildMounts(current.taskDir, current.workdir, [], [], shared))
@@ -342,21 +383,6 @@ describe('containerName', () => {
 
   it('结果符合 docker 的命名规则', () => {
     expect(containerName('claude-2026/x')).toMatch(/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/)
-  })
-})
-
-describe('isExecutableOnPath', () => {
-  it('绝对路径直接查文件是否存在且可执行', () => {
-    expect(isExecutableOnPath('/bin/sh')).toBe(true)
-    expect(isExecutableOnPath('/definitely/not/here')).toBe(false)
-  })
-
-  it('PATH 上的命令能查到', () => {
-    expect(isExecutableOnPath('sh')).toBe(true)
-  })
-
-  it('不存在的命令查不到', () => {
-    expect(isExecutableOnPath('abx-definitely-not-a-command')).toBe(false)
   })
 })
 
@@ -407,18 +433,56 @@ describe('后端契约', async () => {
     expect(error?.message).not.toContain('sk-ant-super-secret')
   })
 
-  it('docker 起不来时给一句能照着做的提示', async () => {
+  it('没装 docker（ENOENT）：说的是「找不到这个可执行文件」，不是「守护进程没起」', async () => {
     const backend = createDockerBackend({
       spawnProcess: (() => {
         const child = new EventEmitter()
         // spawn 失败是异步发 error 事件，不是同步抛。
-        setImmediate(() => child.emit('error', new Error('ENOENT')))
+        // `code` 必须是 ENOENT：**只看 message 里有没有 ENOENT 那几个字母是不够的**，
+        // 真实世界里别的失败也可能在文案里带上它，而这两条分支的下一步完全不同。
+        setImmediate(() => child.emit('error', Object.assign(new Error('spawn docker ENOENT'), { code: 'ENOENT' })))
+        return child as never
+      }) as never,
+    })
+
+    const handle = await backend.create(spec(), { mode: 'pipe', onStdout: () => undefined, onStderr: () => undefined })
+    const error = await handle.exit.then(
+      () => null,
+      (reason: Error) => reason,
+    )
+
+    // 这里钉的是**走哪条分支**，不是某一句原文：原文按平台不同（Windows 上要提
+    // PATHEXT 和「装完没重开终端」），那两句的逐字原文由下面那条
+    // `missingDockerMessage` 的用例负责。判据因此写成「说了找不到」+「没给守护进程
+    // 那条建议」——写死一句 `找不到 docker 可执行文件` 的话，这条断言会在 Windows
+    // 上红在一个跟分支无关的地方（第一次 windows run 就是这么红的）。
+    expect(error).not.toBeNull()
+    expect(error?.message).toContain('找不到 docker')
+    expect(error?.message).not.toContain('abx doctor')
+  })
+
+  it('装了但守护进程没起：给的是另一条路——abx doctor，或者临时走 local', async () => {
+    const backend = createDockerBackend({
+      spawnProcess: (() => {
+        const child = new EventEmitter()
+        setImmediate(() =>
+          child.emit('error', Object.assign(new Error('connect ECONNREFUSED /var/run/docker.sock'), { code: 'ECONNREFUSED' })),
+        )
         return child as never
       }) as never,
     })
 
     const handle = await backend.create(spec(), { mode: 'pipe', onStdout: () => undefined, onStderr: () => undefined })
     await expect(handle.exit).rejects.toThrow(/abx doctor/)
+  })
+
+  it('windows 上那句「找不到」要把两条出路都写上：没装，或者装完没重开终端', () => {
+    const windows = missingDockerMessage('docker', 'win32')
+    expect(windows).toContain('PATHEXT')
+    expect(windows).toContain('重开')
+    // POSIX 上没有 PATHEXT 这回事，那句话就不该提它——提了等于把人引到一条
+    // 在那台机器上不存在的路上。
+    expect(missingDockerMessage('docker', 'linux')).not.toContain('PATHEXT')
   })
 })
 

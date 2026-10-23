@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { renderApp, textOf } from '../test-support'
+import { FULL_PAGE_TIMEOUT, renderApp, textOf } from '../test-support'
 
 /**
  * FAQ 的判据是**每一问都答在机制上**，而不是「都填了字」。
@@ -14,7 +14,8 @@ afterEach(cleanup)
 
 const section = () => screen.getByRole('region', { name: /八件事|Eight things/ })
 
-describe('FAQ', () => {
+// 每一条都挂载整页，所以用整页那一档超时（理由见 `test-support.tsx`）。
+describe('FAQ', { timeout: FULL_PAGE_TIMEOUT }, () => {
   it('answers the questions a reader has before deciding', async () => {
     await renderApp('zh')
 

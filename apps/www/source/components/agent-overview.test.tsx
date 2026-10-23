@@ -2,7 +2,7 @@
 import { cleanup, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { AGENT_ROWS } from '../agents'
-import { renderApp, textOf } from '../test-support'
+import { FULL_PAGE_TIMEOUT, renderApp, textOf } from '../test-support'
 
 /**
  * 这一节的判据是「页面上没有手抄的 agent 数据」：
@@ -13,7 +13,8 @@ afterEach(cleanup)
 const section = () => screen.getByRole('region', { name: /三个 agent|Three agents/ })
 const cardFor = (label: string) => within(section()).getByRole('heading', { name: label })
 
-describe('agent overview', () => {
+// 每一条都挂载整页，所以用整页那一档超时（理由见 `test-support.tsx`）。
+describe('agent overview', { timeout: FULL_PAGE_TIMEOUT }, () => {
   it('renders one card per manifest entry', async () => {
     await renderApp('zh')
 

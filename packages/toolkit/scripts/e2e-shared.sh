@@ -190,9 +190,15 @@ import { readFileSync, writeFileSync } from 'node:fs'
 // 驱动住在临时目录里（仓库外面），所以 `@abx/*` 这种裸标识符解析不到——
 // 一律按**绝对路径**导入源码文件。这些文件自己的相对 import 由解析钩子补扩展名。
 const REPO = process.env.ABX_REPO
+const { requireHostPlatform } = await import(`${REPO}/packages/core/source/host-platform.ts`)
 const { resolveSharedMounts } = await import(`${REPO}/packages/core/source/session/shared.ts`)
 const { createDockerBackend } = await import(`${REPO}/packages/core/source/session/docker-backend.ts`)
 const { generateCellId } = await import(`${REPO}/packages/core/source/session/env.ts`)
+
+// 宿主平台由**宿主层**读一次再传下去（见 core 的 `host-platform.ts`）：core 不自己去读
+// `process.platform`，所以这个夹具得像产品入口那样读一次。产品里那一处是
+// `apps/app/source/main.ts`，这里是它的等价物。少了它，禁挂规则一份都取不到。
+const PLATFORM = requireHostPlatform(process.platform)
 
 const env = process.env
 const record = {
@@ -215,6 +221,7 @@ try {
     record.source = `pre-resolved:${env.ABX_MOUNTS_FILE}`
   } else {
     const result = resolveSharedMounts(record.entries, {
+      platform: PLATFORM,
       homeDir: env.ABX_HOME_DIR,
       instancesRoot: env.ABX_INSTANCES_ROOT,
       requireAtLeastOne: env.ABX_REQUIRE_ONE === '1',
@@ -236,6 +243,7 @@ if (record.mounts.length > 0 && env.ABX_START === '1') {
     {
       cellId: record.cellId,
       agentId: 'claude',
+      platform: PLATFORM,
       command: ['sh', '-c', env.ABX_CELL_CMD],
       // 脚本没有终端：照实传 false（产品侧就是靠这个决定加不加 `--tty`）。
       allocateTty: false,
