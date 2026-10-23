@@ -57,15 +57,26 @@ export const MAX_REPORTED_CREDENTIAL_FILES = 10
 /**
  * 共享源额外禁掉的前缀：`FORBIDDEN_MOUNT_PREFIXES` 的补充，只作用于共享。
  *
- * `/run` 这一条是**实测**踩出来的：docker socket 的父目录在名单里写的是 `/var/run`，
+ * 前三条是**实测**踩出来的：docker socket 的父目录在名单里写的是 `/var/run`，
  * 而在相当多的 Linux 上 `/var/run` 就是 `/run` 的软链。判 realpath 之后，
  * `/run` 一个前缀都对不上，于是「docker socket 的父目录不许共享」这条闸门
  * 形同不存在——舱内拿到 `/run` 就拿到了 `/run/docker.sock`。
  *
+ * `/private/...` 三条是同一个坑的 macOS 版本，而 macOS 恰恰是 V1 唯一的目标平台：
+ * 那里 `/etc` `/var` 都是指向 `/private/...` 的软链，`ln -s /etc ~/link` 拖进来解析
+ * 之后落在 `/private/etc`，前缀名单里`/etc`那一行一个字都拦不住——而 `passwd`、
+ * `shadow`、docker socket 全在里面。直接写 `/private/etc/...` 也一样，它压根不
+ * 「在 `/etc` 之下」。Linux 上没有 `/private`，这几条在那儿是空转。
+ *
  * 放在这里而不是并进 `FORBIDDEN_MOUNT_PREFIXES`：那个名单还被挂载闸门与实例根用着，
- * 动它要重新论证另外两处的后果；而这一条只需要对共享成立就够了。
+ * 动它要重新论证另外两处的后果；而这几条只需要对共享成立就够了。
  */
-export const EXTRA_FORBIDDEN_SHARED_PREFIXES: readonly string[] = ['/run']
+export const EXTRA_FORBIDDEN_SHARED_PREFIXES: readonly string[] = [
+  '/run',
+  '/private/etc',
+  '/private/var/run',
+  '/private/var/lib/docker',
+]
 
 /**
  * 扫描时整个跳过的目录名。

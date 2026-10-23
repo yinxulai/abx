@@ -5,7 +5,12 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { SharedEntry } from '@abx/contracts'
 import { MountPolicyViolation } from './mount-policy'
-import { MAX_REPORTED_CREDENTIAL_FILES, resolveSharedMounts, type ResolveSharedMountsOptions } from './shared'
+import {
+  MAX_REPORTED_CREDENTIAL_FILES,
+  resolveSharedMounts,
+  sharedSourceViolationReason,
+  type ResolveSharedMountsOptions,
+} from './shared'
 
 /*
  * 这一层是「共享条目 → 只读挂载」的**全部**判定：挂哪儿、什么不能挂、拒了怎么说。
@@ -303,6 +308,17 @@ describe('resolveSharedMounts · 不能当共享源的地方', () => {
     const reason = resolve([directoryEntry(link)]).rejected[0]?.reason ?? ''
     expect(reason).toContain('禁挂前缀')
     expect(reason).toContain('/run')
+  })
+
+  it('macOS 上解析进 /private/... 的路径一样拒：/etc 与 /var 在那边都是软链', () => {
+    // 这条只能在纯字符串这一层测：Linux 上没有 /private，造不出这样的路径。
+    // 但它是 V1 唯一目标平台上的真实逃逸——`ln -s /etc ~/link` 拖进来，
+    // 解析之后是 /private/etc，而前缀名单里写的是 /etc。
+    for (const resolved of ['/private/etc', '/private/etc/passwd', '/private/var/run/docker.sock']) {
+      expect(sharedSourceViolationReason(resolved, { homeDir: '/Users/alain', instancesRoot: '/Users/alain/.abx/instances' })).toContain(
+        '禁挂前缀',
+      )
+    }
   })
 
   it('和实例目录互斥：实例根的祖先与后代都不许当共享源', () => {
