@@ -57,6 +57,18 @@ export {
 export type { InstancePlan, InstancePlanInput, InstanceSessionRecord } from './instance'
 
 export {
+  EXTRA_FORBIDDEN_SHARED_PREFIXES,
+  MAX_REPORTED_CREDENTIAL_FILES,
+  MAX_SHARED_SCAN_ENTRIES,
+  SHARED_CELL_ROOT,
+  SHARED_SCAN_SKIPPED_DIRS,
+  inspectSharedEntry,
+  resolveSharedMounts,
+  sharedSourceViolationReason,
+} from './shared'
+export type { ResolveSharedMountsOptions, ResolveSharedMountsResult, SharedSourceContext } from './shared'
+
+export {
   DANGEROUS_TASK_DIRS,
   DOCKER_SOCKET_PATH,
   FORBIDDEN_CREDENTIAL_FILE_PATTERNS,

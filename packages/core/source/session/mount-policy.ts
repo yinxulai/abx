@@ -648,12 +648,19 @@ function assertConfigMount(mount: SandboxMount, file: SandboxConfigFile): void {
   }
 }
 
-function isAncestor(candidate: string, filePath: string): boolean {
+/**
+ * 这两个是整套闸门的基本词：`isAncestor(a, b)` 是「a 是 b 的上级」，
+ * `isUnder(c, p)` 是「c 就在 p 里面（或就是 p）」。
+ *
+ * 导出给 `shared.ts` 用。理由不是省两行，是**两边必须逐字一致**：
+ * 前缀判定差一个字符（`/homely` 算不算 `/home` 下面）就是一道闸门的开与关。
+ */
+export function isAncestor(candidate: string, filePath: string): boolean {
   return filePath.startsWith(`${candidate}${path.sep}`)
 }
 
 /** `child` 是 `parent` 本身或者它下面的一层。`/homely` 不算 `/home` 下面。 */
-function isUnder(child: string, parent: string): boolean {
+export function isUnder(child: string, parent: string): boolean {
   return child === parent || isAncestor(parent, child)
 }
 
