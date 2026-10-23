@@ -28,14 +28,19 @@
               ? 'light'
               : 'dark'
 
+        // 语言的优先级与 `source/i18n.ts` 的 detectLang 完全一致：
+        // URL 参数 > 上次选择 > 浏览器语言 > 中文兜底。
         let storedLanguage = null
         try {
           storedLanguage = window.localStorage.getItem('abx-language')
         } catch {
           // 隐私模式等场景可能禁止访问；按浏览器语言兜底即可。
         }
-        const language =
-          storedLanguage === 'en' || storedLanguage === 'zh'
+        const queryLanguage = new URLSearchParams(window.location.search).get('lang')
+        const isLanguage = value => value === 'en' || value === 'zh'
+        const language = isLanguage(queryLanguage)
+          ? queryLanguage
+          : isLanguage(storedLanguage)
             ? storedLanguage
             : navigator.language.toLowerCase().startsWith('zh')
               ? 'zh'

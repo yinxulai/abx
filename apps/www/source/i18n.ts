@@ -30,6 +30,13 @@ export const LANGS: readonly { id: Lang; label: string }[] = [
 export const FALLBACK_LANG: Lang = 'zh'
 
 /**
+ * URL 上钉住语言的参数：`?lang=en`。与 `?theme=` 同一套用法，理由也一样 ——
+ * 截图、评审、分享一条固定语言的链接时，语言不能由浏览器的 `navigator.language`
+ * 决定（无头浏览器报的是 `en-US`，看到的就是英文页，而那并不是主要维护语言）。
+ */
+export const LANG_QUERY_KEY = 'lang'
+
+/**
  * 英文译文表，key 与各组件的 `t()` 第一个参数一一对应。
  *
  * 这里只放英文：中文是「代码里的原文」，英文是「翻译」。两层分开，
@@ -236,27 +243,59 @@ export const en = {
   },
 } as const
 
-/** 首次进入优先沿用上次选择，其次按浏览器语言；识别不到就用兜底语言（中文）。 */
-function detectLang(): Lang {
-  if (typeof localStorage !== 'undefined') {
-    try {
-      const stored = localStorage.getItem(LANG_STORAGE_KEY)
-      if (stored === 'en' || stored === 'zh') return stored
-    } catch {
-      // 隐私模式等场景可能禁止访问；继续按浏览器语言判断。
-    }
+const isLang = (value: string | null | undefined): value is Lang => value === 'en' || value === 'zh'
+
+/**
+ * 首次进入的语言，优先级：URL 参数 > 上次选择 > 浏览器语言 > 兜底（中文）。
+ *
+ * 与 `theme.ts` 的 `initialTheme` 是同一套顺序 —— 首帧语言由 `index.html` 的
+ * 内联脚本按这里的规则先写好，两边不一致就会「先中文后英文」闪一下。
+ */
+export function detectLang(): Lang {
+  const pinned = readPinnedLang()
+  if (pinned) return pinned
+
+  try {
+    const stored = localStorage.getItem(LANG_STORAGE_KEY)
+    if (isLang(stored)) return stored
+  } catch {
+    // 隐私模式等场景可能禁止访问；继续按浏览器语言判断。
   }
+
   const preferred = typeof navigator === 'undefined' ? '' : navigator.language
   return preferred.toLowerCase().startsWith('zh') ? 'zh' : 'en'
 }
 
+/** 读 `?lang=`。不是合法语言就当没写，而不是把页面切到空语言。 */
+function readPinnedLang(): Lang | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const value = new URLSearchParams(window.location.search).get(LANG_QUERY_KEY)
+    return isLang(value) ? value : null
+  } catch {
+    // 拿不到 location（非浏览器环境）时按「没钉」处理。
+    return null
+  }
+}
+
+/** 当前语言写回 URL：切过语言之后复制地址，打开的还是同一幅界面。 */
+export function syncLangUrl(lang: Lang): void {
+  if (typeof window === 'undefined') return
+
+  const url = new URL(window.location.href)
+  url.searchParams.set(LANG_QUERY_KEY, lang)
+  window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`)
+}
+
 i18n.on('languageChanged', (language) => {
-  if (language !== 'en' && language !== 'zh') return
+  if (!isLang(language)) return
+
   try {
     localStorage.setItem(LANG_STORAGE_KEY, language)
   } catch {
     // 无法持久化不影响当前页面的语言切换。
   }
+  syncLangUrl(language)
 })
 
 void i18n.use(initReactI18next).init({
