@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { renderApp, textOf } from '../test-support'
+import { FULL_PAGE_TIMEOUT, renderApp, textOf } from '../test-support'
 
 /**
  * 这一节的判据不是「有没有写限制」，而是**限制和承诺在同一屏上**：
@@ -16,7 +16,8 @@ afterEach(cleanup)
 
 const section = () => screen.getByRole('region', { name: /默认安全|Safe by default/ })
 
-describe('boundaries', () => {
+// 每一条都挂载整页，所以用整页那一档超时（理由见 `test-support.tsx`）。
+describe('boundaries', { timeout: FULL_PAGE_TIMEOUT }, () => {
   it('states the four defaults that are not settings', async () => {
     await renderApp('zh')
 

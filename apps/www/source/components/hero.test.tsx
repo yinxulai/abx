@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { renderApp, textOf } from '../test-support'
+import { FULL_PAGE_TIMEOUT, renderApp, textOf } from '../test-support'
 
 /**
  * 首屏是唯一一处「不读下去也能带走」的地方，所以只锁三件事：
@@ -9,7 +9,8 @@ import { renderApp, textOf } from '../test-support'
  */
 afterEach(cleanup)
 
-describe('hero', () => {
+// 每一条都挂载整页，所以用整页那一档超时（理由见 `test-support.tsx`）。
+describe('hero', { timeout: FULL_PAGE_TIMEOUT }, () => {
   it('carries the three properties the rest of the page then has to back up', async () => {
     await renderApp('zh')
 

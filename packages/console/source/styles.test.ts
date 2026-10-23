@@ -226,7 +226,9 @@ describe('状态：样式表里的分段与组件能发出的状态一致', () =
   )
 
   it('组件确实声明了状态联合类型', () => {
-    expect(states).toEqual(['running', 'idle', 'unavailable'])
+    // 两档，不是三档：托盘里只有已安装的 agent，所以「不可用」那一档不存在
+    // （`tray-ui.md` §3.1 ④）。多出一档就说明有 agent 被放进了这一排。
+    expect(states).toEqual(['running', 'idle'])
   })
 
   it('每一个状态在样式表里都有自己的一段，且没有第四段', () => {
@@ -237,11 +239,57 @@ describe('状态：样式表里的分段与组件能发出的状态一致', () =
     expect([...new Set(styled)].sort()).toEqual([...states].sort())
   })
 
-  it('agent 名字不随状态变淡', () => {
+  it('agent 名字不随状态变淡（现在名字住在 tooltip 里）', () => {
     // 整套改动的缘由就是这一条：原来「未运行」同时被削了两处（灰底 + 弱化文字），
-    // 于是最该点的那一个看起来像禁用。名字这一行现在只有一个颜色来源。
-    const coloured = rules.filter((rule) => rule.selector.includes('.abx-agent-name') && valueOf(rule.body, 'color') !== undefined)
-    expect(coloured.map((rule) => rule.selector)).toEqual(['.abx-agent-name'])
+    // 于是最该点的那一个看起来像禁用。名字搬进 tooltip 之后规矩不变——
+    // 它是这一面上**唯一**的文字，仍然只有一个颜色来源，且与 `data-state` 无关。
+    const coloured = rules.filter((rule) => rule.selector.includes('.abx-agent-tip') && valueOf(rule.body, 'color') !== undefined)
+    expect(coloured.map((rule) => rule.selector)).toEqual(['.abx-agent-tip'])
     expect(valueOf(coloured[0]?.body ?? '', 'color')).toBe('var(--text)')
+  })
+})
+
+describe('托盘：agent 那一排只有图标（tray-ui.md §3、§3.1）', () => {
+  const component = readFileSync(new URL('./components/AgentStatusRow.tsx', import.meta.url), 'utf8')
+
+  const rule = (selector: string): string => rules.find((entry) => entry.selector === selector)?.body ?? ''
+
+  it('每个方块都是 44×44', () => {
+    // 44 不是审美：指针/触控目标的下限就是它，而审计查的就是这一条（§3.1 ①）。
+    expect([valueOf(rule('.abx-agent'), 'width'), valueOf(rule('.abx-agent'), 'height')]).toEqual(['44px', '44px'])
+  })
+
+  it('一排折行，不横滚', () => {
+    const agents = rule('.abx-agents')
+    expect([valueOf(agents, 'flex-wrap'), valueOf(agents, 'gap')]).toEqual(['wrap', 'var(--space-8)'])
+    // 左对齐：个数从 1 变到 7 时不会跳位（§3.1 ①）。
+    expect(valueOf(agents, 'justify-content')).toBe('flex-start')
+    // 横滚的写法一个都不许有：面板固定 422 宽，横滚会让这一排变成要摸黑滑动的带子。
+    expect(agents).not.toMatch(/overflow/)
+    expect(css).not.toMatch(/overflow-x/)
+  })
+
+  it('名字在悬停和键盘聚焦时都出现，而且不是原生 title', () => {
+    // 只做 `:hover` 等于把名字只给了鼠标用户，触屏与键盘用户永远看不到它（§3.1 ②）。
+    // 两条选择器写在同一条规则里，删掉任何一条都会让这条断言红。
+    const shown = rules.find(
+      (entry) => entry.selector.includes('.abx-agent-tip') && entry.selector.includes(':hover'),
+    )
+    expect(shown?.selector).toContain('.abx-agent:focus-visible .abx-agent-tip')
+    expect(valueOf(shown?.body ?? '', 'display')).toBe('block')
+    // 默认是藏起来的，否则它就一直占着卡片。
+    expect(valueOf(rule('.abx-agent-tip'), 'display')).toBe('none')
+    // 原生 `title` 延迟约 1 秒、样式不受控，而名字是这一面上唯一的文字。
+    expect(component).not.toMatch(/\stitle=/)
+  })
+
+  it('状态先由形状承载：实心点与空心圈各一段', () => {
+    // 文字没了之后，形状要是也一样，状态就只剩颜色一个通道——那是设计体系禁止的。
+    expect(valueOf(rule('.abx-agent-dot'), 'background')).toBe('transparent')
+    // 空心圈用 `--text`：`--border-strong` 在 tile 那种「掺了品牌色的中性底」上只有
+    // 2.84:1，低于状态标记要求的 3:1（实测，见 styles.css 里的那段注释）。
+    expect(valueOf(rule('.abx-agent-dot'), 'border')).toContain('var(--text)')
+    expect(valueOf(rule(".abx-agent[data-state='running'] .abx-agent-dot"), 'background')).toBe('var(--accent)')
+    expect(valueOf(rule(".abx-agent[data-state='running'] .abx-agent-dot"), 'border')).toBe('0')
   })
 })

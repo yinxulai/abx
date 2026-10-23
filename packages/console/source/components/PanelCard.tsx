@@ -1,8 +1,12 @@
 import type { DragEventHandler, ReactNode, RefObject } from 'react'
 
 export interface PanelCardProps {
-  /** 当前有几个舱在跑。0 表示气闸未启动。 */
-  readonly runningCount: number
+  /**
+   * 气闸有没有在跑。它只影响副标题那一句，**不影响这里有没有一个胶囊**——
+   * 「N 舱」那个胶囊已经按 `design-system.md` §8 去掉了：副标题已经说了气闸在不在跑，
+   * 舱数是管理面板的职责（`tray-ui.md` §3 里那张图也不再画它）。
+   */
+  readonly running: boolean
   /** 有东西正悬在卡片上，卡片外框加一圈 ring。 */
   readonly dragging: boolean
   /** 卡片本体，渲染层量它的高度上报给宿主窗口。 */
@@ -21,8 +25,6 @@ export interface PanelCardProps {
  * 高度不写死：卡片由内容撑开，`useReportHeight` 量完交给宿主。
  */
 export function PanelCard(props: PanelCardProps) {
-  const running = props.runningCount > 0
-
   return (
     <section
       className="abx-card"
@@ -42,12 +44,8 @@ export function PanelCard(props: PanelCardProps) {
               下面的 `共享给全部 agent` 是 `<h2>`，中间不能缺一级。 */}
           <h1 className="abx-title-name">abx</h1>
           <span className="abx-title-sub">
-            {running ? '气闸运行中 · 凭据全部在舱外' : '气闸待启动 · 凭据全部在舱外'}
+            {props.running ? '气闸运行中 · 凭据全部在舱外' : '气闸待启动 · 凭据全部在舱外'}
           </span>
-        </span>
-        <span className="abx-status" data-running={running} role="status" aria-live="polite">
-          <span className="abx-status-dot" aria-hidden="true" />
-          {running ? `${props.runningCount} 舱` : '待启动'}
         </span>
       </header>
       {props.children}

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { renderApp, textOf } from '../test-support'
+import { FULL_PAGE_TIMEOUT, renderApp, textOf } from '../test-support'
 
 /**
  * 托盘面板是**示意图**，不是产品截图。这一块最容易出的两种错：
@@ -11,7 +11,8 @@ afterEach(cleanup)
 
 const figure = () => screen.getByRole('figure')
 
-describe('tray panel mock-up', () => {
+// 每一条都挂载整页，所以用整页那一档超时（理由见 `test-support.tsx`）。
+describe('tray panel mock-up', { timeout: FULL_PAGE_TIMEOUT }, () => {
   it('is hidden from assistive technology, with the caption carrying the meaning', async () => {
     await renderApp('zh')
 
