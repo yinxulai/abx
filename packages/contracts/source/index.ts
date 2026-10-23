@@ -18,15 +18,23 @@ export type {
 } from './config'
 
 export {
+  AGENT_CONFIG_TEMPLATE_VARIABLES,
   AGENT_DEFINITIONS,
+  AGENT_IMAGE_UNBUILT,
   ABX_BROKER_ORIGIN_ENV,
   ABX_CELL_ID_ENV,
   ABX_CELL_TOKEN_ENV,
   ABX_UPSTREAM_ID_ENV,
+  AgentManifestError,
   agentConfigFileNames,
+  agentHomeDirNames,
   agentIds,
+  agentImageRef,
+  agentManifestProblems,
   findAgent,
   generatedConfigFiles,
+  renderAgentConfigTemplate,
+  templateVariableNames,
 } from './agents'
 /** 产品名。提示语、默认路径、测试都从这里取，不许各处硬编码。 */
 export const productName = 'abx'
@@ -39,7 +47,14 @@ export const productName = 'abx'
  */
 export { DEFAULT_CELL_HOME } from './schema'
 
-export type { AgentConfigFile, AgentConfigFormat, AgentDefinition } from './agents'
+export type {
+  AgentConfigFile,
+  AgentConfigFormat,
+  AgentDefinition,
+  AgentIcon,
+  AgentImage,
+  AgentStatePath,
+} from './agents'
 
 export { expandEnvRefs, expandEnvTree } from './expand-env'
 export type { ExpandResult } from './expand-env'

@@ -1,6 +1,14 @@
+import type { CSSProperties } from 'react'
+import type { AgentIcon } from '@abx/contracts'
+
 export interface PanelAgent {
   readonly id: string
   readonly label: string
+  /**
+   * 注册表里的图标（标识 + 可选品牌色）。**可选**：没有的 agent 什么都不用写，
+   * 方块回退到 `label` 的第一个字。图形资产属于界面层，所以这里只拿标识与颜色。
+   */
+  readonly icon?: AgentIcon
 }
 
 export interface AgentStatusRowProps {
@@ -37,7 +45,19 @@ export function AgentStatusRow(props: AgentStatusRowProps) {
               if (!running) props.onStart(agent.id)
             }}
           >
-            <span className="abx-agent-square" aria-hidden="true">
+            <span
+              className="abx-agent-square"
+              // 有图标时带上标识（给图形资产和样式一个锚点），没有就整个属性都不出现。
+              data-icon={agent.icon?.slug}
+              // 品牌色走自定义属性，样式表里拿它调底色；没给颜色时变量缺席，退回中性色。
+              style={
+                agent.icon?.color === undefined
+                  ? undefined
+                  : ({ '--abx-agent-color': agent.icon.color } as CSSProperties)
+              }
+              aria-hidden="true"
+            >
+              {/* 两行结构不变：上一行是图标方块，下一行是名字。字母仍是最稳的回退。 */}
               {agent.label.slice(0, 1)}
             </span>
             <span className="abx-agent-name">{agent.label}</span>

@@ -183,10 +183,12 @@ const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 /**
  * 舱内那个 home 的默认值。
  *
- * `node:22-slim` 镜像里 uid 1000 是 `node` 用户，它的 home 就是这里，
- * 而 `session.user` 默认也正是 `1000:1000`。写成一个常量而不是在 schema 里
- * 直接写字面量，是因为**别处也要用它**：生成 agent 配置时展开 `~/.claude/...`
- * 用的就是这个值（见 `core/session/agent-config.ts`），两处写两遍迟早会漂。
+ * abx 的 agent 镜像目前都以 `node:22-slim` 为基础，那里 uid 1000 是 `node` 用户，
+ * 它的 home 就是这里，而 `session.user` 默认也正是 `1000:1000`。**镜像是按 agent
+ * 给的**，所以换上一个 uid 或 home 不同的镜像时，这两处要一起改——否则历史会写到
+ * 舱内一个没人读的目录里。写成一个常量而不是在 schema 里直接写字面量，是因为
+ * **别处也要用它**：生成 agent 配置时展开 `~/.claude/...` 用的就是这个值
+ * （见 `core/session/agent-config.ts`），两处写两遍迟早会漂。
  */
 export const DEFAULT_CELL_HOME = '/home/node'
 
@@ -404,8 +406,17 @@ const sessionSchema = withFieldDefaults(
       // 默认必须是 docker。默认 local 等于默认没有沙箱，
       // 而「默认不安全」是这类工具最不该有的性质。
       backend: orDefault(sandboxBackendSchema, 'docker'),
-      /** docker 镜像。 */
-      image: orDefault(stringField().min(1, '不能为空'), 'node:22-slim'),
+      /**
+       * docker 镜像。**可选**：不写就用所选 agent 清单里那个（`AgentDefinition.image`）。
+       *
+       * 镜像本来就是 agent 的性质——`command: 'claude'` 在一个没有装 claude 的镜像里
+       * 起不来，而会话看起来「起来了」，其实什么都干不了。默认值写死成某个裸镜像，
+       * 等于让每个新 agent 都被它悄悄盖掉。
+       *
+       * 显式写仍然有效，而且是有用的：只跑一个裸容器（例如 `node:22-slim`）做网络/挂载
+       * 验证时，没道理为它登记一条 agent 清单。这句话就是那个出口。
+       */
+      image: optionalString(),
       /** 舱内以哪个用户跑。非 root。 */
       user: orDefault(stringField().min(1, '不能为空'), '1000:1000'),
       /** docker 网络。 */

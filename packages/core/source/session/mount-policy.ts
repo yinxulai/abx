@@ -28,7 +28,7 @@
 import path from 'node:path'
 import { readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { agentConfigFileNames } from '@abx/contracts'
+import { agentConfigFileNames, agentHomeDirNames } from '@abx/contracts'
 import type { SandboxConfigFile, SandboxMount, SandboxStateDir } from './backend'
 import { defaultInstancesRoot } from './instance'
 
@@ -115,8 +115,9 @@ function matchesCredentialRule(name: string, rule: string): boolean {
  * 为什么单列一条：实例根本来就落在主目录下（默认 `~/.abx/instances`），所以前缀
  * 名单里的 `/home` 那一条在这里必须让开——而让开之后 `~/.ssh/instances` 就没人拦了。
  * 这个名单补的就是这个口子。里面的东西有一个共同点：**读得到就等于拿到了身份**
- * （私钥、云凭据、kubeconfig、docker 凭据），而实例状态目录是可写挂载源，
- * 挂进去的哪怕只是它下面的一层，也足够把整个目录挖出来。
+ * （私钥、云凭据、kubeconfig、docker 凭据）。agent 自己那几个目录也在里面——它们的
+ * 隔壁就躺着 `~/.claude/.credentials.json`、`~/.codex/auth.json` 这类凭据文件。
+ * 前半段是固定的几个敏感目录，后半段由清单现算（见下面的 `agentHomeDirNames()`）。
  */
 export const FORBIDDEN_INSTANCE_ROOT_SUBDIRS: readonly string[] = [
   '.ssh',
@@ -125,9 +126,10 @@ export const FORBIDDEN_INSTANCE_ROOT_SUBDIRS: readonly string[] = [
   '.config',
   '.kube',
   '.docker',
-  '.claude',
-  '.codex',
-  '.dsh',
+  // agent 自己那几个目录（`.claude` / `.codex` / `.dsh`）从**清单**里现算，
+  // 不在这里再抄一份：抄的那份不会跟着新 agent 长，而漏掉一个的后果是
+  // 「`~/.<新 agent>/instances` 这种写法没人拦」——它看起来只是个路径。
+  ...agentHomeDirNames(),
 ]
 
 /**

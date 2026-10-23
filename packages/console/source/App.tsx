@@ -14,6 +14,8 @@ import { useReportHeight } from './hooks/useReportHeight'
 const PANEL_AGENTS: readonly PanelAgent[] = AGENT_DEFINITIONS.map((agent) => ({
   id: agent.id,
   label: agent.label,
+  // 图标也来自注册表；没有的 agent 就是 undefined，方块回退到首字母。
+  icon: agent.icon,
 }))
 
 /** 宿主还没答话时的空态。 */
