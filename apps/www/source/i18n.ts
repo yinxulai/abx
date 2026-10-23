@@ -238,6 +238,45 @@ export const en = {
         'You want a long-lived environment that keeps all its state across sessions — cells are disposable.',
     },
   },
+  faq: {
+    eyebrow: 'FAQ',
+    title: 'Eight things you are probably about to ask',
+    lead: 'These are the questions that come up before deciding whether to use this. A question with no answer is not worth guessing at, so everything here has something behind it.',
+    item: {
+      vsLocal: {
+        q: 'How is this different from running the agent on my machine?',
+        a: 'On your machine the agent runs as you: your ~/.ssh, your photo library, your whole disk are all within reach. Inside a cell it sees only the directories you hand in, traffic leaves only to allowlisted domains, and every outbound request leaves a line behind.',
+      },
+      keysReally: {
+        q: 'Does a key really never enter the cell?',
+        a: 'No. The environment inside holds no real key, and the config file the agent reads holds a placeholder; the key lives in the memory of the airlock process on the host, is attached at the moment of forwarding, and is not persisted. A test guards this — it is not a promise in a document.',
+      },
+      isSandbox: {
+        q: 'Is this a sandbox? How does it compare to a virtual machine?',
+        a: 'Container-level isolation: it shares the host kernel and simply cannot see, reach or delete anything else. So it does not claim to stop a kernel-level escape — when you need isolation that hard, use a virtual machine; a container should not be sold as one.',
+      },
+      macOnly: {
+        q: 'Why macOS only?',
+        a: 'Dropping files on a tray icon and dragging into the panel both use macOS ideas; another platform means redoing the interaction. On Linux there is only a development-time local backend, which isolates nothing — the product labels it "not a sandbox, not for demos".',
+      },
+      oswChange: {
+        q: 'Do I have to change my OSW configuration?',
+        a: 'No. The airlock is the front door of the cell: inside there is one address pointing at the airlock, and the airlock hands the request to OSW. Channels, keys, model routing and failover stay exactly as you configured them in OSW.',
+      },
+      allowlist: {
+        q: 'What if the allowlist is not enough?',
+        a: 'A blocked domain is recorded in the audit with its status code, so you can see what the agent was actually trying to reach instead of only noticing that it stopped working. In V1 the allowlist is a config file with no UI yet; you add entries to it one at a time.',
+      },
+      available: {
+        q: 'Can I download it yet?',
+        a: 'Not yet. The tray, the panel, the airlock and the sandbox are all still being built, there is no releasable installer, and the site does not put up a placeholder link.',
+      },
+      account: {
+        q: 'Is there an account? Does it report anything? Does it cost extra?',
+        a: 'No account, no cloud sync, no telemetry — all three are on the "explicitly not doing" list. Models come from the channels you configured in OSW; abx does not resell models and never touches a bill.',
+      },
+    },
+  },
   start: {
     eyebrow: 'Get started',
     title: 'Three steps to hand the work over',

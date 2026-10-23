@@ -4,6 +4,7 @@ import { AgentOverview } from './components/agent-overview'
 import { Boundaries } from './components/boundaries'
 import { CredentialModel } from './components/credential-model'
 import { DownloadSection } from './components/download-section'
+import { Faq } from './components/faq'
 import { GettingStarted } from './components/getting-started'
 import { Hero } from './components/hero'
 import { SiteFooter } from './components/site-footer'
@@ -58,6 +59,7 @@ export const App = () => {
         <AgentOverview />
         <GettingStarted />
         <Boundaries />
+        <Faq />
         <DownloadSection />
       </main>
 

@@ -15,6 +15,7 @@ const ANCHORS = [
   { id: 'agents', key: 'nav.agents', fallback: 'Agent 一览' },
   { id: 'start', key: 'nav.start', fallback: '开始使用' },
   { id: 'boundaries', key: 'nav.boundaries', fallback: '边界' },
+  { id: 'faq', key: 'nav.faq', fallback: '常见问题' },
   { id: 'download', key: 'nav.download', fallback: '下载' },
 ] as const
 

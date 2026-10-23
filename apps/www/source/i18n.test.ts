@@ -105,6 +105,22 @@ const DYNAMIC_TRANSLATION_KEYS = [
   'start.step.firstRun.body',
   'start.step.drop.title',
   'start.step.drop.body',
+  'faq.item.vsLocal.q',
+  'faq.item.vsLocal.a',
+  'faq.item.keysReally.q',
+  'faq.item.keysReally.a',
+  'faq.item.isSandbox.q',
+  'faq.item.isSandbox.a',
+  'faq.item.macOnly.q',
+  'faq.item.macOnly.a',
+  'faq.item.oswChange.q',
+  'faq.item.oswChange.a',
+  'faq.item.allowlist.q',
+  'faq.item.allowlist.a',
+  'faq.item.available.q',
+  'faq.item.available.a',
+  'faq.item.account.q',
+  'faq.item.account.a',
 ] as const
 
 describe('官网 i18n', () => {
