@@ -30,9 +30,11 @@ pnpm icons
 - **能当纯白蒙版用。** 整套几何不依赖颜色——托盘模板图就是把同一张形状涂成纯白、只留 alpha
   （macOS 的模板图由系统着色，RGB 根本不参与）。
 
-> **标志的渐变不是界面的点缀色。** `packages/console` 的 `--accent` 仍是青绿
-> （[`design-system.md`](../../specs/product/design-system.md) §2），标志是暖色渐变，
-> 两者现在各是各的。这是换形象的直接后果，界面要不要跟着走是另一件事。
+> **标志的渐变不是界面的点缀色。** `packages/console` 的 `--accent` 仍是青绿，
+> 标志是暖色渐变，两者各自独立：标志的颜色属于**品牌**，点缀色属于**状态**。
+> 为什么不跟着走、osw 那边怎么做的，写在
+> [`design-system.md`](../../specs/product/design-system.md) §2 末尾
+> 「标志与界面点缀色是两个东西」——这里不重复第二遍。
 
 ## 单一矢量源
 
