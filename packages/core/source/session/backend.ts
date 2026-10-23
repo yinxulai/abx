@@ -68,6 +68,17 @@ export interface SandboxSpec {
   /** 舱内要跑的命令，argv 形式。 */
   readonly command: readonly string[]
   /**
+   * 要不要给容器分配 TTY（docker 的 `--tty`）。
+   *
+   * 由**调用方**按「自己有没有终端」决定，不让后端替它猜：`--tty` 要求启动方的
+   * stdin 是终端，而托盘应用（管道 spawn）、CI 和脚本里都不是。无条件加 `--tty`
+   * 的后果不是「少点颜色」，而是 docker 直接拒绝起容器：
+   * `cannot attach stdin to a TTY-enabled container because stdin is not a terminal`。
+   *
+   * `--interactive` 是另一回事：它只要求 stdin 可读，任何情况下都保留。
+   */
+  readonly allocateTty: boolean
+  /**
    * 这次会话要挂进舱的 agent 配置文件，由 `stageAgentConfig()` 生成并落盘。
    *
    * 缺省为空数组。docker 后端把它们逐个只读挂进去；local 后端没有挂载这回事，

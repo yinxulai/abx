@@ -26,6 +26,7 @@ function spec(overrides: Partial<SandboxSpec> = {}): SandboxSpec {
     cellId: 'claude-20261023-ab12cd',
     agentId: 'claude',
     command: ['claude'],
+    allocateTty: true,
     taskDir: TASK_DIR,
     workdir: '/workspace',
     cellHome: '/home/node',
@@ -118,6 +119,21 @@ describe('buildDockerArgs', () => {
     expect(args).not.toContain('--privileged')
     expect(args).not.toContain('--pid=host')
     expect(args.some((arg) => arg.includes('--network=host'))).toBe(false)
+  })
+
+  it('调用方有终端时分配 TTY', () => {
+    expect(argsFor({ allocateTty: true })).toContain('--tty')
+    // 默认就是交互态，避免以后有人在 spec() 里改掉默认值而把「有终端」测丢。
+    expect(argsFor()).toContain('--tty')
+  })
+
+  it('调用方没有终端时不带 --tty，但 --interactive 仍然在', () => {
+    // 托盘（管道 spawn）、CI、脚本都没有终端。带上 --tty 时 docker 会直接
+    // 拒绝起容器：cannot attach stdin to a TTY-enabled container because
+    // stdin is not a terminal——不是降级，是起不来。
+    const args = argsFor({ allocateTty: false })
+    expect(args).not.toContain('--tty')
+    expect(args).toContain('--interactive')
   })
 
   it('舱内 home 显式注入，不依赖镜像默认值', () => {

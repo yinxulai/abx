@@ -34,6 +34,8 @@ function spec(overrides: Partial<SandboxSpec> = {}): SandboxSpec {
     cellId: 'test-cell',
     agentId: 'claude',
     command: [process.execPath, '-e', 'console.log("hello from the cell")'],
+    // local 后端不分配 pty（它直接用管道接了进程的 stdio），这个值只是把接口填满。
+    allocateTty: false,
     taskDir: directory,
     workdir: '/workspace',
     // local 后端跑在宿主上，`HOME` 是它自己改写到任务目录的（见 local-backend.ts），

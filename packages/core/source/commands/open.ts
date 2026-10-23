@@ -209,11 +209,15 @@ export async function runOpen(input: OpenInput): Promise<number> {
 
   const backend = createBackend(backendId)
   const startedAt = new Date().toISOString()
+  // 有没有终端由 CLI 自己判断：交互态给 `--tty`，托盘（管道 spawn）、CI、脚本不给。
+  // 无脑加 `--tty` 会让 docker 直接拒绝起容器——那不是「少了颜色」，是舱根本起不来。
+  const allocateTty = process.stdin.isTTY === true
   const session = await backend.create(
     {
       cellId,
       agentId: agent.id,
       command: [agent.command, ...agent.args],
+      allocateTty,
       taskDir,
       workdir: context.config.session.workdir,
       cellHome,

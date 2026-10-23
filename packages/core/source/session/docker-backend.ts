@@ -33,9 +33,12 @@ export function buildDockerArgs(spec: SandboxSpec, mounts: readonly SandboxMount
     // 退出即销毁。这是「不留持久化痕迹」的实现方式——不是靠事后清理，
     // 而是压根不给它留下一个可以被重新启动的容器。
     '--rm',
-    // 交互 + TTY：agent 命令行多半需要。
+    // 交互：stdin 保持可读，任何情况下都要。
     '--interactive',
-    '--tty',
+    // TTY 只在调用方确认自己有终端时才给。`--tty` 要求**启动方**的 stdin 是终端；
+    // 托盘（管道 spawn）、CI、脚本里都不是，这时带上 `--tty` 不是降级，
+    // 而是 docker 直接拒绝起容器（cannot attach stdin to a TTY-enabled container）。
+    ...(spec.allocateTty ? ['--tty'] : []),
     // pid 1 交给 tini，负责回收僵尸进程。
     '--init',
     '--name',
