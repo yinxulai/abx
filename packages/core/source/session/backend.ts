@@ -57,10 +57,19 @@ export interface SandboxSpec {
    * 但它照样把它们算进「本应挂什么」，让两种后端在上层看起来一样。
    */
   readonly agentConfigFiles?: readonly SandboxConfigFile[]
-  /** 宿主上的任务目录绝对路径。**唯一**会被挂进舱内的宿主目录。 */
+  /** 宿主上的任务目录绝对路径。会被挂进舱内的宿主目录之一。 */
   readonly taskDir: string
   /** 任务目录挂进舱内之后的路径，同时也是工作目录。 */
   readonly workdir: string
+  /**
+   * 舱内那个 home（`session.cellHome`）。
+   *
+   * 必须显式传，不能靠镜像默认值：docker 后端会把它注成 `HOME`，而 agent 的
+   * 「把历史写到 `~/.claude/projects/`」用的就是这个值。镜像默认值随镜像变，
+   * 而实例状态目录挂在哪，取决于这个值——两者对不上就是「挂了一个 agent
+   * 不会去写的地方」，表现是历史照样丢。
+   */
+  readonly cellHome: string
   /** 要注入的环境变量。必须已经由 `buildCellEnv` 脱敏过。 */
   readonly env: Readonly<Record<string, string>>
   /**

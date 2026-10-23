@@ -26,6 +26,7 @@ function spec(overrides: Partial<SandboxSpec> = {}): SandboxSpec {
     command: ['claude'],
     taskDir: TASK_DIR,
     workdir: '/workspace',
+    cellHome: '/home/node',
     env: { ANTHROPIC_AUTH_TOKEN: 'abx-placeholder-anthropic', ANTHROPIC_BASE_URL: 'http://172.17.0.1:8789/u/anthropic' },
     forbiddenEnvNames: ['ANTHROPIC_API_KEY'],
     limits: { memory: '2g', pids: 256, cpus: 2 },
@@ -117,9 +118,17 @@ describe('buildDockerArgs', () => {
     expect(args.some((arg) => arg.includes('--network=host'))).toBe(false)
   })
 
+  it('舱内 home 显式注入，不依赖镜像默认值', () => {
+    // agent 把会话历史写到 `$HOME/.claude/...`，而实例状态目录挂在 cellHome 下面。
+    // 两个值分家 = 往一个没挂载的路径写历史 = 历史照丢，且命令行里看不出来。
+    expect(allFlagValues(argsFor(), '--env')).toContain('HOME=/home/node')
+    expect(allFlagValues(argsFor({ cellHome: '/home/other' }), '--env')).toContain('HOME=/home/other')
+  })
+
   it('环境变量以 --env 注入，且不含被点名禁用的名字', () => {
     const envs = allFlagValues(argsFor(), '--env')
     expect(envs).toEqual([
+      'HOME=/home/node',
       'ANTHROPIC_AUTH_TOKEN=abx-placeholder-anthropic',
       'ANTHROPIC_BASE_URL=http://172.17.0.1:8789/u/anthropic',
     ])

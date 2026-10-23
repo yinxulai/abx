@@ -47,6 +47,14 @@ export function buildDockerArgs(spec: SandboxSpec, mounts: readonly SandboxMount
     // 非 root。
     '--user',
     spec.user,
+    // 舱内的 home 显式注入，不依赖镜像默认值。
+    //
+    // 为什么值得单独一行：agent 的会话历史（`~/.claude/projects/*.jsonl` 之类）
+    // 写在哪，取决于 `HOME`；而实例状态目录挂在哪，取决于配置里的 `cellHome`。
+    // 两个值一旦分家，舱内就会往一个**没挂载**的路径写历史——容器一退，
+    // 历史连同容器一起没，而命令行里看不出任何异常。
+    '--env',
+    `HOME=${spec.cellHome}`,
     '--workdir',
     spec.workdir,
     // 资源限额。

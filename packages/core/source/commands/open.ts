@@ -145,6 +145,7 @@ export async function runOpen(input: OpenInput): Promise<number> {
       command: [agent.command, ...agent.args],
       taskDir,
       workdir: context.config.session.workdir,
+      cellHome: context.config.session.cellHome,
       agentConfigFiles: staged === null ? [] : toSandboxConfigFiles(staged),
       env,
       forbiddenEnvNames: collectSecretEnvNames(context.config.upstreams),
