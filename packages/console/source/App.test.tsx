@@ -93,7 +93,26 @@ describe('App', () => {
       screen.getByRole('button', { name }).querySelector('.abx-agent-square')
 
     expect(square('Claude Code：未运行，点击启动')?.getAttribute('data-icon')).toBe('claude')
-    expect(square('dsh：未运行，点击启动')?.hasAttribute('data-icon')).toBe(false)
+    expect(square('dsh：不可用，先构建镜像')?.hasAttribute('data-icon')).toBe(false)
+  })
+
+  it('takes the image from the registry, and calls an unbuilt one unavailable', () => {
+    render(<App />)
+
+    // dsh 的镜像是 `unbuilt`（注册表里写的），所以它是「不可用」而不是「未运行」：
+    // 面板要说清是哪个镜像、下一步做什么，而不是把它混进可点的那一排。
+    const dsh = screen.getByRole('button', { name: 'dsh：不可用，先构建镜像' })
+    expect(dsh.getAttribute('data-state')).toBe('unavailable')
+    expect((dsh as HTMLButtonElement).disabled).toBe(true)
+    expect(dsh.textContent).toContain('镜像未构建')
+    expect(dsh.textContent).toContain('先构建镜像')
+    expect(dsh.getAttribute('title')).toBe('abx-agent-dsh:unbuilt 还没构建 · 先构建镜像')
+
+    // 另外两个构建好了：它们只是「未运行」，等着被点。
+    expect(screen.getByRole('button', { name: 'Claude Code：未运行，点击启动' }).getAttribute('data-state')).toBe('idle')
+    expect(screen.getByRole('button', { name: 'OpenAI Codex CLI：未运行，点击启动' }).getAttribute('data-state')).toBe(
+      'idle',
+    )
   })
 
   it('flips an agent to running when its tile is clicked', () => {
@@ -101,8 +120,9 @@ describe('App', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Claude Code：未运行，点击启动' }))
 
-    const running = screen.getByRole('button', { name: 'Claude Code：运行中' })
+    const running = screen.getByRole('button', { name: 'Claude Code：运行中，点击聚焦' })
     expect(running.getAttribute('aria-pressed')).toBe('true')
+    expect(running.getAttribute('data-state')).toBe('running')
     expect(screen.getByRole('status').textContent).toContain('1 舱')
   })
 
