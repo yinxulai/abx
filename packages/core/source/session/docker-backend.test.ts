@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { agentConfigFileNames } from '@abx/contracts'
 import { RUNNING_PLATFORM, RUNNING_VOCABULARY } from '../test-support'
 import type { SandboxSpec } from './backend'
-import { buildDockerArgs, containerName } from './docker-backend'
+import { buildDockerArgs, containerName, missingDockerMessage } from './docker-backend'
 import { MOUNT_POLICY } from './mount-policy'
 
 /**
@@ -425,17 +425,43 @@ describe('后端契约', async () => {
     expect(error?.message).not.toContain('sk-ant-super-secret')
   })
 
-  it('docker 起不来时给一句能照着做的提示', async () => {
+  it('没装 docker（ENOENT）：说的是「找不到这个可执行文件」，不是「守护进程没起」', async () => {
     const backend = createDockerBackend({
       spawnProcess: (() => {
         const child = new EventEmitter()
         // spawn 失败是异步发 error 事件，不是同步抛。
-        setImmediate(() => child.emit('error', new Error('ENOENT')))
+        // `code` 必须是 ENOENT：**只看 message 里有没有 ENOENT 那几个字母是不够的**，
+        // 真实世界里别的失败也可能在文案里带上它，而这两条分支的下一步完全不同。
+        setImmediate(() => child.emit('error', Object.assign(new Error('spawn docker ENOENT'), { code: 'ENOENT' })))
+        return child as never
+      }) as never,
+    })
+
+    const handle = await backend.create(spec(), { mode: 'pipe', onStdout: () => undefined, onStderr: () => undefined })
+    await expect(handle.exit).rejects.toThrow(/找不到 docker 可执行文件/)
+  })
+
+  it('装了但守护进程没起：给的是另一条路——abx doctor，或者临时走 local', async () => {
+    const backend = createDockerBackend({
+      spawnProcess: (() => {
+        const child = new EventEmitter()
+        setImmediate(() =>
+          child.emit('error', Object.assign(new Error('connect ECONNREFUSED /var/run/docker.sock'), { code: 'ECONNREFUSED' })),
+        )
         return child as never
       }) as never,
     })
 
     const handle = await backend.create(spec(), { mode: 'pipe', onStdout: () => undefined, onStderr: () => undefined })
     await expect(handle.exit).rejects.toThrow(/abx doctor/)
+  })
+
+  it('windows 上那句「找不到」要把两条出路都写上：没装，或者装完没重开终端', () => {
+    const windows = missingDockerMessage('docker', 'win32')
+    expect(windows).toContain('PATHEXT')
+    expect(windows).toContain('重开')
+    // POSIX 上没有 PATHEXT 这回事，那句话就不该提它——提了等于把人引到一条
+    // 在那台机器上不存在的路上。
+    expect(missingDockerMessage('docker', 'linux')).not.toContain('PATHEXT')
   })
 })

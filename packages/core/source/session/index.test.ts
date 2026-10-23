@@ -148,7 +148,9 @@ describe('createBackend：docker 不可用时不降级', () => {
         onStderr: () => undefined,
       })
       // 失败落在 exit 上，而不是被吞掉、更不是换个后端重来一遍。
-      await expect(handle.exit).rejects.toThrow(/起不了 docker/)
+      // 这里 PATH 是空目录，所以失败的具体形态是 `ENOENT` —— 说的是
+      // 「这台机器上没有 docker 这个可执行文件」，而不是「守护进程没起」。
+      await expect(handle.exit).rejects.toThrow(/找不到 docker/)
     } finally {
       if (savedPath === undefined) delete process.env['PATH']
       else process.env['PATH'] = savedPath
