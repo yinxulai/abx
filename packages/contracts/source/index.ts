@@ -47,6 +47,20 @@ export type { ExpandResult } from './expand-env'
 export { findInlineSecrets } from './inline-secret-guard'
 export type { InlineSecretFinding, InlineSecretReason } from './inline-secret-guard'
 
+export {
+  SHARED_ENTRY_KINDS,
+  parseSharedEntry,
+  sharedEntrySchema,
+} from './shared-entry'
+export type {
+  ParseSharedEntryResult,
+  SharedEntry,
+  SharedEntryKind,
+  SharedEntryRejection,
+  SharedEntryState,
+  SharedListSnapshot,
+} from './shared-entry'
+
 export { normalizeHost, isIpv4Literal, isValidHostname, isValidDomainPattern, parseDomainPattern } from './domain-pattern'
 export type { DomainPattern, ParseDomainPatternResult } from './domain-pattern'
 

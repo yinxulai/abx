@@ -65,6 +65,7 @@ export function createLocalBackend(options: LocalBackendOptions = {}): SandboxBa
         spec.workdir,
         spec.agentConfigFiles ?? [],
         spec.stateDirs ?? [],
+        spec.sharedMounts ?? [],
       )
 
       const scrubbed = scrubEnv(baseEnv, {

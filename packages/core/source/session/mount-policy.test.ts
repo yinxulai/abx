@@ -612,3 +612,83 @@ describe('findRiskyFilesInTaskDir', () => {
     expect(findRiskyFilesInTaskDir('/definitely/not/here')).toEqual([])
   })
 })
+
+/*
+ * 共享挂载：本作业新加的那一类。
+ *
+ * 与另外两类的关系是「构造在 shared.ts，闸门在这里」：`resolveSharedMounts()` 算出
+ * 只读挂载（那一步要读文件系统），这份名单把它带进闸门，闸门只核形态。所以下面断言
+ * 的是「名单放行 + 形态不对就拒」，不复述 shared.ts 那边的判定。
+ */
+describe('共享挂载', () => {
+  const SHARED: SandboxMount = { source: '/home/dev/projects/notes', target: '/shared/notes', mode: 'ro' }
+  const SHARED_SECOND: SandboxMount = { source: '/home/dev/data', target: '/shared/data', mode: 'ro' }
+
+  function check(mounts: readonly SandboxMount[], sharedMounts: readonly SandboxMount[]): void {
+    assertMountPolicy({ mounts, taskDir: TASK_DIR, workdir: WORKDIR, sharedMounts })
+  }
+
+  it('buildMounts 把它们接在最后，形态原样带过去', () => {
+    expect(MOUNT_POLICY.buildMounts(TASK_DIR, WORKDIR, [], [], [SHARED, SHARED_SECOND])).toEqual([
+      { source: TASK_DIR, target: WORKDIR, mode: 'rw' },
+      SHARED,
+      SHARED_SECOND,
+    ])
+  })
+
+  it('不传共享条目就是老样子——现有调用点一个都不用改', () => {
+    expect(MOUNT_POLICY.buildMounts(TASK_DIR, WORKDIR, [], [])).toHaveLength(1)
+  })
+
+  it('策略对象上写明共享只有只读一种', () => {
+    expect(MOUNT_POLICY.sharedMountMode).toBe('ro')
+  })
+
+  it('共享源住在主目录下面也放行——那正是共享要开的口子', () => {
+    // `/home` 在禁挂前缀里（对配置文件那条规则是对的），共享条目恰恰住在那里。
+    expect(() => check(MOUNT_POLICY.buildMounts(TASK_DIR, WORKDIR, [], [], [SHARED]), [SHARED])).not.toThrow()
+  })
+
+  it('共享挂载不计入可写上限：只读的东西不占可写的额度', () => {
+    const mounts = MOUNT_POLICY.buildMounts(TASK_DIR, WORKDIR, [], [], [SHARED, SHARED_SECOND])
+
+    expect(mounts.filter((mount) => mount.mode === 'rw')).toHaveLength(1)
+    expect(() => check(mounts, [SHARED, SHARED_SECOND])).not.toThrow()
+  })
+
+  it('没进名单的共享挂载一个都不放——名单是收紧用的', () => {
+    expect(() => check(MOUNT_POLICY.buildMounts(TASK_DIR, WORKDIR, [], [], [SHARED]), [])).toThrow(/一律不进舱内/)
+  })
+
+  it('共享挂载被改成可写 → 拒绝，理由说清「改坏了回不去」', () => {
+    const writable = { ...SHARED, mode: 'rw' as const }
+    expect(() => check(MOUNT_POLICY.buildMounts(TASK_DIR, WORKDIR, [], [], [writable]), [SHARED])).toThrow(/只能只读挂载/)
+  })
+
+  it('共享挂载被挂到共享区外面 → 拒绝', () => {
+    const elsewhere = { ...SHARED, target: '/home/node/notes' }
+    expect(() => check(MOUNT_POLICY.buildMounts(TASK_DIR, WORKDIR, [], [], [elsewhere]), [SHARED])).toThrow(/必须挂在 \/shared/)
+  })
+
+  it('挂载点对得上、来源被换掉 → 拒绝（两者必须一起对）', () => {
+    const swapped = { ...SHARED, source: '/etc' }
+    expect(() => check(MOUNT_POLICY.buildMounts(TASK_DIR, WORKDIR, [], [], [swapped]), [SHARED])).toThrow(/批准的来源/)
+  })
+
+  it('两个共享条目挂同一个位置 → 拒绝：后一个会把前一个盖掉', () => {
+    const clashing = { ...SHARED_SECOND, target: SHARED.target }
+    expect(() => check(MOUNT_POLICY.buildMounts(TASK_DIR, WORKDIR, [], [], [SHARED, clashing]), [SHARED, clashing])).toThrow(
+      /同一个位置/,
+    )
+  })
+
+  it('共享源是凭据文件时照样拒绝——凭据那条规则排在名单前面', () => {
+    const credential = { source: '/home/dev/projects/.env', target: '/shared/.env', mode: 'ro' as const }
+    expect(() => check(MOUNT_POLICY.buildMounts(TASK_DIR, WORKDIR, [], [], [credential]), [credential])).toThrow(/凭据文件/)
+  })
+
+  it('目标带 .. 的共享挂载也拦得住（形状检查前的通用那几条照样生效）', () => {
+    const traversal = { source: SHARED.source, target: '/shared/../../etc', mode: 'ro' as const }
+    expect(() => check(MOUNT_POLICY.buildMounts(TASK_DIR, WORKDIR, [], [], [traversal]), [traversal])).toThrow(MountPolicyViolation)
+  })
+})

@@ -7,6 +7,7 @@
   "description": "核心领域逻辑。纯 Node，不含任何宿主依赖。",
   "exports": {
     ".": "./source/index.ts",
+    "./session": "./source/session/index.ts",
     "./*": "./source/*.ts"
   },
   "dependencies": {

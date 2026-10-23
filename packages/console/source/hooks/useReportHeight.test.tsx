@@ -38,7 +38,9 @@ function makeRef() {
 function installBridge(): void {
   const bridge: AbxBridge = {
     reportPanelHeight: state.reportPanelHeight,
-    onDroppedFiles: () => () => {},
+    onDroppedEntries: () => () => {},
+    onSharedList: () => () => {},
+    requestSharedList: () => {},
     hide: () => {},
   }
   Object.defineProperty(window, 'abx', { value: bridge, configurable: true })

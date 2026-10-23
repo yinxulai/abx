@@ -93,6 +93,18 @@ export interface SandboxSpec {
    * 所以它必须过 `mount-policy.ts` 里那几道闸，而不是「调用方说挂就挂」。
    */
   readonly stateDirs?: readonly SandboxStateDir[]
+  /**
+   * 这次会话要挂进舱的**共享条目**，由 `resolveSharedMounts()` 从用户拖进来的
+   * 那批东西算出来。缺省为空数组。
+   *
+   * 这里收的是**已经算好的挂载**，不是条目本身：条目 → 挂载那一步要读文件系统
+   * （realpath、扫凭据文件），而且它的产出里还带着「哪几条被拒、为什么」——
+   * 那个理由要回到界面上，不能烂在后端里。构造与闸门分成两处，就是这个原因：
+   * 这里只保证「算好的东西确实只读、确实挂在共享区下」。
+   *
+   * 全是只读，所以它不进「可写挂载」的账。
+   */
+  readonly sharedMounts?: readonly SandboxMount[]
   /** 宿主上的任务目录绝对路径。会被挂进舱内的宿主目录之一。 */
   readonly taskDir: string
   /** 任务目录挂进舱内之后的路径，同时也是工作目录。 */

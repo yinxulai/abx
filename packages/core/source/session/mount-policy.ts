@@ -61,6 +61,15 @@ export const FORBIDDEN_MOUNT_PREFIXES: readonly string[] = [
 export const DOCKER_SOCKET_PATH = '/var/run/docker.sock'
 
 /**
+ * 舱内共享区的根：用户拖进来的东西一律挂在 `/shared/<名字>` 下，只读。
+ *
+ * 挂载点由 `resolveSharedMounts()` 算，不由调用方给——它是这套东西里唯一
+ * 「可以多出来几个」的挂载类别，位置再随便给就没法审了。定义放在**策略**这一侧
+ * 而不是共享那一侧：这是一条规定（挂哪儿、什么权限），不是实现细节。
+ */
+export const SHARED_CELL_ROOT = '/shared'
+
+/**
  * 凭据文件名规则：挂载源**命中即拒绝**，不看它在哪个目录下。
  *
  * 为什么需要这一条，而不是靠上面的前缀名单：**凭据文件就躺在配置文件的隔壁**。
@@ -170,6 +179,14 @@ export interface MountPolicy {
    */
   readonly stateDirMode: 'rw'
   /**
+   * 共享条目挂进舱时是什么权限。
+   *
+   * 只有 `ro`。共享的是**宿主上用户自己已有的东西**（项目目录、资料、数据），
+   * 舱内 agent 需要读它，不需要改它；可写共享是另一件要单独论证的事
+   * （改了回不去、而且舱内一写就把共享变成了双向往来的通道）。
+   */
+  readonly sharedMountMode: 'ro'
+  /**
    * 宿主主目录里的**现成内容**一个都不进舱。
    *
    * 从主目录下进去的只有两类，都是 abx 自己在 `~/.abx/` 里造出来的：
@@ -181,15 +198,17 @@ export interface MountPolicy {
    * 一个字节都不进舱。
    */
   readonly mountsHostHome: false
-  buildMounts(taskDir: string, workdir: string, agentConfigFiles?: readonly SandboxConfigFile[], stateDirs?: readonly SandboxStateDir[]): readonly SandboxMount[]
+  buildMounts(taskDir: string, workdir: string, agentConfigFiles?: readonly SandboxConfigFile[], stateDirs?: readonly SandboxStateDir[], sharedMounts?: readonly SandboxMount[]): readonly SandboxMount[]
 }
 
 export const MOUNT_POLICY: MountPolicy = {
   summary:
-    '任务目录与实例状态目录以可写方式挂进舱内；abx 生成的那几个 agent 配置文件逐个只读挂进去；宿主上的其他一切都不挂。',
+    '任务目录与实例状态目录以可写方式挂进舱内；abx 生成的那几个 agent 配置文件逐个只读挂进去；' +
+    '用户显式共享的条目只读挂在 /shared 下；宿主上的其他一切都不挂。',
   writableClasses: ['taskDir', 'instanceState'],
   taskDirMode: 'rw',
   stateDirMode: 'rw',
+  sharedMountMode: 'ro',
   mountsHostHome: false,
   forbiddenMountPrefixes: FORBIDDEN_MOUNT_PREFIXES,
   forbiddenInstanceRootSubdirs: FORBIDDEN_INSTANCE_ROOT_SUBDIRS,
@@ -236,8 +255,15 @@ export const MOUNT_POLICY: MountPolicy = {
         '配置文件就长在实例状态目录里，所以它在可写挂载**内部**再套一层只读挂载：' +
         '目录整体可写（历史要落盘），而配置那一格改不动。',
     },
+    {
+      requirement: '共享条目一律只读，且只挂在 /shared/<名字> 下',
+      rationale:
+        '共享的是宿主上用户自己已有的东西，舱内读得到就够了；改坏了是回不来的。' +
+        '挂载点由 resolveSharedMounts() 算而不是调用方给，是因为这是唯一一类「可以多出来几个」' +
+        '的挂载——位置再随便给，就没有一句话能说清舱内到底多了什么。',
+    },
   ],
-  buildMounts(taskDir: string, workdir: string, agentConfigFiles: readonly SandboxConfigFile[] = [], stateDirs: readonly SandboxStateDir[] = []) {
+  buildMounts(taskDir: string, workdir: string, agentConfigFiles: readonly SandboxConfigFile[] = [], stateDirs: readonly SandboxStateDir[] = [], sharedMounts: readonly SandboxMount[] = []) {
     return [
       { source: path.resolve(taskDir), target: workdir, mode: 'rw' as const },
       // 实例状态目录：rw，目录形态（这里恰恰**要**目录，见 instance.ts 的解释）。
@@ -245,6 +271,9 @@ export const MOUNT_POLICY: MountPolicy = {
       // 生成的文件逐个挂、只读。这一行是「单文件形态」唯一可能出现的地方，
       // 而它只认文件：每一项的来源是 `stageAgentConfig()` 写出来的那一个路径。
       ...agentConfigFiles.map((file) => ({ source: file.hostPath, target: file.cellPath, mode: 'ro' as const })),
+      // 共享条目：形态已经由 `resolveSharedMounts()` 定死（ro + /shared/<名字>），
+      // 这里原样带上，下面那道闸会再核一遍「确实是只读、确实挂在共享区里」。
+      ...sharedMounts,
     ]
   },
 }
@@ -283,6 +312,15 @@ export interface AssertMountPolicyInput {
    * 每一项还要自己过 `assertStateDirPolicy` 那几道闸。
    */
   readonly stateDirs?: readonly SandboxStateDir[]
+  /**
+   * 这次会话允许挂进舱的共享条目，由 `resolveSharedMounts()` 算出来。
+   *
+   * 同样是**收紧**用的名单，而且这里没有第二层闸：共享源是用户自己选的宿主路径，
+   * 「哪些路径不能共享」那套判定已经在 `resolveSharedMounts()` 里跑过一遍
+   * （那道判定要读文件系统，放不进这个纯字符串的闸门里）。这里只核形态：
+   * 只读、挂在 `/shared` 下、挂载点互不重复。
+   */
+  readonly sharedMounts?: readonly SandboxMount[]
   /** 实例根。缺省取 `ABX_INSTANCES_ROOT` / `~/.abx/instances`。 */
   readonly instancesRoot?: string
   /** 舱内 home。给了就顺带核一下状态目录挂在了舱内 home 底下。 */
@@ -485,6 +523,15 @@ export function assertMountPolicy(input: AssertMountPolicyInput): void {
   }
   const allowedStateDirs = new Map(stateDirs.map((dir) => [path.resolve(dir.hostPath), dir]))
 
+  // 共享挂载按**挂载点**索引，不按来源：同一个目录共享两次时来源相同、挂载点不同
+  // （`/shared/notes` 与 `/shared/notes-2`），按来源索引会把前一个悄悄弄丢。
+  const sharedMounts = input.sharedMounts ?? []
+  assertSharedMountTargetsUnique(sharedMounts)
+  const allowedSharedMounts = new Map(sharedMounts.map((mount) => [mount.target, mount]))
+  // 兜底索引：挂载点对不上时按来源再找一次，这样「来源对、挂到别处去了」得到的是
+  // 一句说挂载点的话，而不是一句「这个来源不许挂」——后者会让用户去改来源，而错在挂载点。
+  const sharedBySource = new Map(sharedMounts.map((mount) => [mount.source, mount]))
+
   for (const mount of mounts) {
     if (!path.isAbsolute(mount.source) || !path.isAbsolute(mount.target)) {
       throw new MountPolicyViolation(`挂载必须用绝对路径：${mount.source} → ${mount.target}`)
@@ -513,6 +560,15 @@ export function assertMountPolicy(input: AssertMountPolicyInput): void {
       continue
     }
 
+    // 共享挂载排在禁挂前缀检查**前面**，而且必须排前面：共享源本来就住在主目录下面，
+    // 而 `/home` 正是禁挂前缀里的一条。名单放行只是给了它一张准考证，
+    // 形态（只读 + 挂在共享区里）在下面那几行里逐条核。
+    const allowedShared = allowedSharedMounts.get(mount.target) ?? sharedBySource.get(mount.source)
+    if (allowedShared !== undefined) {
+      assertSharedMount(mount, allowedShared)
+      continue
+    }
+
     // 任务目录由用户显式指定，豁免前缀规则；其余的挂载源一个都不放过。
     if (mount.source === taskDir) continue
 
@@ -537,8 +593,9 @@ export function assertMountPolicy(input: AssertMountPolicyInput): void {
         )
       }
       throw new MountPolicyViolation(
-        `拒绝挂载 ${mount.source}：除任务目录、实例状态目录与 abx 生成的那几个配置文件外，` +
-          `宿主路径一律不进舱内。需要里面的文件时请复制到任务目录，而不是开一个挂载点。`,
+        `拒绝挂载 ${mount.source}：除任务目录、实例状态目录、abx 生成的那几个配置文件` +
+          `与用户显式共享的条目外，宿主路径一律不进舱内。` +
+          `需要里面的文件时，要么把它拖进面板共享，要么复制到任务目录，而不是开一个挂载点。`,
       )
     }
   }
@@ -564,9 +621,10 @@ export function assertMountPolicy(input: AssertMountPolicyInput): void {
     const isTaskDir = mount.source === taskDir
     const isConfigFile = allowedConfigSources.has(mount.source)
     const isStateDir = allowedStateDirs.has(path.resolve(mount.source))
-    if (!isTaskDir && !isConfigFile && !isStateDir) {
+    const isShared = allowedSharedMounts.has(mount.target)
+    if (!isTaskDir && !isConfigFile && !isStateDir && !isShared) {
       throw new MountPolicyViolation(
-        `除任务目录 ${taskDir}、实例状态目录与 abx 生成的配置文件外不允许有别的挂载源，实际是 ${mount.source}`,
+        `除任务目录 ${taskDir}、实例状态目录、abx 生成的配置文件与用户显式共享的条目外不允许有别的挂载源，实际是 ${mount.source}`,
       )
     }
     if (isTaskDir && mount.target !== workdir) {
@@ -593,6 +651,54 @@ function assertStateDirMount(mount: SandboxMount, dir: SandboxStateDir): void {
       `实例状态目录必须挂回它自己的位置：${mount.source} 应挂到 ${dir.cellPath}，实际是 ${mount.target}。` +
         `挂到别处等于没挂——agent 只往自己的 home 里写历史。`,
     )
+  }
+}
+
+/**
+ * 共享挂载的形状：只读、挂在 `<共享区根>/<名字>` 那一层、来源就是名单里那一个。
+ *
+ * 与状态目录那条刚好相反（那边必须可写），理由都写在消息里：可写共享意味着舱内能改
+ * 宿主上用户自己的文件，而改坏了回不去——这不是「顺手放宽一格」的事。
+ *
+ * 来源也要核一遍：挂载点对得上、来源却被换成一个敏感目录，是这份名单唯一防不住的
+ * 走法（挂载点由 `resolveSharedMounts()` 算，改来源比改挂载点容易）。
+ */
+function assertSharedMount(mount: SandboxMount, expected: SandboxMount): void {
+  if (mount.source !== expected.source) {
+    throw new MountPolicyViolation(
+      `共享挂载 ${mount.target} 的来源是 ${mount.source}，而这次会话批准的来源是 ${expected.source}：` +
+        `挂载点对得上不代表来源对得上，两者必须一起对。`,
+    )
+  }
+  if (mount.mode !== 'ro') {
+    throw new MountPolicyViolation(
+      `共享条目只能只读挂载，${mount.source} 被要求以 ${mount.mode} 挂进去：` +
+        `共享的是宿主上用户自己的文件，舱内改坏了是回不来的。需要舱内能写的东西请放进任务目录。`,
+    )
+  }
+  // 形状：正好一层，不许嵌套，也不许就是共享区根本身。
+  if (path.dirname(mount.target) !== SHARED_CELL_ROOT) {
+    throw new MountPolicyViolation(
+      `共享条目必须挂在 ${SHARED_CELL_ROOT}/<名字> 那一层，实际是 ${mount.target}：` +
+        `挂载点由 resolveSharedMounts() 算，调用方给不了——换了位置，舱内就多出一个没人说得清来历的目录。`,
+    )
+  }
+}
+
+/**
+ * 两个共享条目的挂载点不能是同一个。
+ *
+ * 挂载点撞车意味着后一个把前一个盖掉，而两个都在列表里、界面上都显示「已共享」。
+ * 这类事在命令行里看不出来，只在「我明明共享了 a/notes，舱内打开却是 b/notes」时
+ * 才被发现——所以宁可在起容器之前就拒。
+ */
+function assertSharedMountTargetsUnique(sharedMounts: readonly SandboxMount[]): void {
+  const seen = new Set<string>()
+  for (const mount of sharedMounts) {
+    if (seen.has(mount.target)) {
+      throw new MountPolicyViolation(`两个共享条目挂在同一个位置 ${mount.target}：后一个会把前一个盖掉，只剩一个。`)
+    }
+    seen.add(mount.target)
   }
 }
 
@@ -648,12 +754,19 @@ function assertConfigMount(mount: SandboxMount, file: SandboxConfigFile): void {
   }
 }
 
-function isAncestor(candidate: string, filePath: string): boolean {
+/**
+ * 这两个是整套闸门的基本词：`isAncestor(a, b)` 是「a 是 b 的上级」，
+ * `isUnder(c, p)` 是「c 就在 p 里面（或就是 p）」。
+ *
+ * 导出给 `shared.ts` 用。理由不是省两行，是**两边必须逐字一致**：
+ * 前缀判定差一个字符（`/homely` 算不算 `/home` 下面）就是一道闸门的开与关。
+ */
+export function isAncestor(candidate: string, filePath: string): boolean {
   return filePath.startsWith(`${candidate}${path.sep}`)
 }
 
 /** `child` 是 `parent` 本身或者它下面的一层。`/homely` 不算 `/home` 下面。 */
-function isUnder(child: string, parent: string): boolean {
+export function isUnder(child: string, parent: string): boolean {
   return child === parent || isAncestor(parent, child)
 }
 
