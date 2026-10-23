@@ -16,6 +16,15 @@
  * 唯一的例外是开发版（右下角要腾出圆点的位置），那里才真的需要知道墨迹落在哪，
  * 于是脚本会**从已渲染的 1024 里量一次**（`measureInk`），而不是把 16 / 34 写死成常量。
  *
+ * ## 手改一张 png 是查得出来的
+ *
+ * 「禁止手改位图」原来只是一句话：上一版的漂移测试只看尺寸、看轮廓、看某一像素的色相，
+ * 于是一张**几何全对但内容被涂改过**的 png 能一路绿到底。
+ * 现在每次运行都会把全部产物的 sha256 写进
+ * `packages/console/source/brand-assets.hash.json`，`brand-assets.test.ts` 逐条对账。
+ * 清单**每次都重写**（它是本次运行的产物，不是需要人手维护的常量），
+ * 所以更新路径就是这一条命令本身：改真源 → `pnpm icons` → 清单里出现 diff → 跑测试。
+ *
  * ## 怎么渲染
  *
  * 本仓库没有 `sharp`（也不打算为图标引一个），用的是机器上已有的两件工具：
@@ -35,6 +44,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -54,6 +64,8 @@ const BRAND_PNG_DIR = resolve(BRAND_DIR, 'png')
 const DOCS_PUBLIC_DIR = resolve(repoRoot, 'apps/docs/public')
 /** 官网自己的图标位（Vite 的 `public/`，构建时原样拷到站点根）。 */
 const WWW_PUBLIC_DIR = resolve(repoRoot, 'apps/www/public')
+/** 产物 sha256 清单，给 `packages/console/source/brand-assets.test.ts` 对账用。 */
+const HASH_MANIFEST = resolve(repoRoot, 'packages/console/source/brand-assets.hash.json')
 
 /**
  * Windows 的 ico 档位。
@@ -332,6 +344,11 @@ function measureInk(pngPath, pixels, box) {
   return { x: box.minX + minX * unit, y: box.minY + minY * unit, w: (maxX - minX + 1) * unit, h: (maxY - minY + 1) * unit }
 }
 
+/** 产物的 sha256，小写十六进制。清单里存它、测试里也这么算，两边必须是同一种写法。 */
+function sha256(file) {
+  return createHash('sha256').update(readFileSync(file)).digest('hex')
+}
+
 // ---------------------------------------------------------------- ICO
 
 /**
@@ -510,10 +527,16 @@ function main() {
     copyFileSync(join(BRAND_PNG_DIR, 'icon-256.png'), join(DOCS_PUBLIC_DIR, 'icon-256.png'))
     written.push({ file: join(DOCS_PUBLIC_DIR, 'icon-256.png'), note: '文档站引用的 256' })
 
+    // ── sha256 清单：本次运行产出的每一个文件的指纹。
+    const assets = {}
+    for (const { file } of written) assets[toPosix(file)] = sha256(file)
+    writeFileSync(HASH_MANIFEST, `${JSON.stringify({ assets }, null, 2)}\n`)
+
     for (const { file, note } of written) {
       const { size } = statSync(file)
       console.log(`${toPosix(file)}  ${(size / 1024).toFixed(1)} KB${note === undefined ? '' : `  (${note})`}`)
     }
+    console.log(`${toPosix(HASH_MANIFEST)}  ${written.length} 条 sha256`)
     // 留白按四边分开打：这个脚本的构图全都建立在「标志自带对称留白」上面，
     // 打出来的两对数不相等就是那个前提不成立了（`brand-assets.test.ts` 也这么断言）。
     console.log(

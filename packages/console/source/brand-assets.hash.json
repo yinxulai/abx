@@ -1,0 +1,26 @@
+{
+  "assets": {
+    "apps/app/build/icon.png": "7cc6ca529d327c6e2d031e1f7c3af47f5e7b510c76d1bf15e4c51b8e952d2fa3",
+    "apps/app/build/icon-mac.png": "7cc6ca529d327c6e2d031e1f7c3af47f5e7b510c76d1bf15e4c51b8e952d2fa3",
+    "apps/docs/assets/brand/png/icon-1024.png": "7cc6ca529d327c6e2d031e1f7c3af47f5e7b510c76d1bf15e4c51b8e952d2fa3",
+    "apps/app/build/icon-win.ico": "96866740396c752f59697e6cc31d9ee15e2df588d0a8dd6bd92a108d32a7a65b",
+    "apps/app/build/trayTemplate.png": "9dfdde51bb16d2fc5d6f86e3795a836b075e018b9563649de4a963c011cc63c9",
+    "apps/app/build/trayTemplate@2x.png": "3c110d7f3d75bf5dfe7703154b785a90c785b0ee22ec6e47c0e81cc4dced4c33",
+    "apps/app/build/trayTemplate-dev.png": "5b477edda95b07a7217d1bf8eebc70bbedc5f60210339408b0a642805a9f96e2",
+    "apps/app/build/trayTemplate-dev@2x.png": "60e1160e179254d6a9ae63210df605b88b9c4fbb7d46410f9e3c9d40a99dd1ca",
+    "apps/docs/assets/brand/png/icon-512.png": "7403eec8b59cf1391bc04b8ca4e64761211b75a7d55f00735d70decc0a722471",
+    "apps/docs/assets/brand/png/icon-256.png": "22f1843bb08caa07eb11a550fffd5b97ce4e57a49d4dc3165c870a76d9226a9a",
+    "apps/docs/assets/brand/png/icon-128.png": "28edd71831ca8b02ccdac1fbaf08f5544f7ecadc1502c633e5f52b250659e004",
+    "apps/docs/assets/brand/png/icon-64.png": "7deaf498acc055a8e5bb14684a87ee004f8c70db70af25658fb25952a1d3da86",
+    "apps/docs/assets/brand/png/icon-32.png": "4e17d815647139c7a4c5406821757d9936ab5102a5906d83179d0f79bfeb0b5c",
+    "apps/docs/assets/brand/png/icon-mono-white-1024.png": "713bbd54aa6d458ad4290f5f77efbf0aaf148f287d12c65f89caebac355bab40",
+    "apps/docs/assets/brand/png/icon-mono-black-1024.png": "bc651505dd45b676660a1f4ddabf14205b0a799e77d1bf4ea178c70a0989f834",
+    "apps/docs/assets/brand/png/icon-on-dark-1024.png": "b29f87c7995a4941dd05922c1a66e6be183c0ddcb4474d31c9bf953e4b7f6b20",
+    "apps/docs/assets/brand/png/social-preview.png": "1164eb0580867cd8410a3f2c94d3dcb1e04dd95b385e1a21b39658a73a939812",
+    "apps/docs/assets/brand/icon.svg": "262cadedddac9dcd01aee5efb953a6ecda07d92c5b02c3fb02753bb9712e0709",
+    "apps/docs/public/logo.svg": "262cadedddac9dcd01aee5efb953a6ecda07d92c5b02c3fb02753bb9712e0709",
+    "apps/docs/public/favicon.svg": "262cadedddac9dcd01aee5efb953a6ecda07d92c5b02c3fb02753bb9712e0709",
+    "apps/www/public/icon.svg": "262cadedddac9dcd01aee5efb953a6ecda07d92c5b02c3fb02753bb9712e0709",
+    "apps/docs/public/icon-256.png": "22f1843bb08caa07eb11a550fffd5b97ce4e57a49d4dc3165c870a76d9226a9a"
+  }
+}

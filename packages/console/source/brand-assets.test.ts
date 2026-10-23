@@ -9,7 +9,14 @@
  * 这里自己解 PNG（`node:zlib` + 手工反过滤）：仓库里没有图像库，也不打算为图标引一个
  * （见 AGENTS.md 的依赖选型）。生成器把输出钉成**8 位 RGBA、非隔行**（脚本里的 `PNG32:`），
  * 所以解码器只认这一种，遇到别的直接抛错——不是「凑合读」，而是「规格变了，这里要跟着改」。
+ *
+ * 尺寸、轮廓、某一像素的色相这三样合起来**仍然漏得掉一种漂移**：一张几何全对、
+ * 轮廓全对、连采样点颜色都对，但内容被人手动涂改过的 png。所以最后一组断言不看图，
+ * 只看指纹：`brand-assets.hash.json` 里存着生成器写下的每一个产物的 sha256，
+ * 对不上就是「这张图不是生成器产出的那一张」。清单由 `pnpm icons` 每次重写
+ * （它本身就是本次运行的产物），所以改了真源就重跑那一条命令，不需要手编清单。
  */
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { inflateSync } from 'node:zlib'
@@ -283,6 +290,29 @@ const GEOMETRY_TOLERANCE = 1.5
 const REFERENCE = rasterOf(`${APP_BUILD}icon.png`)
 const REFERENCE_BOX = shapeBox(REFERENCE, undefined)
 
+/**
+ * 全部产物，一处列全。清单对账拿它当「应该有哪几张」的答案。
+ *
+ * 由上面几张表推出来而不是再抄一遍：抄一遍的意思是「加了一张图、这里忘了补」
+ * 会变成一条无声的漏检，而这张表的全部意义就是没有漏检。
+ */
+const PRODUCTS = [
+  ...COLOUR_ICONS.map((entry) => entry.file),
+  ...MONO_ICONS.map((entry) => entry.file),
+  ...TRAY.map((entry) => entry.file),
+  ICO_FILE,
+  `${BRAND_PNG}icon-on-dark-1024.png`,
+  `${BRAND_PNG}social-preview.png`,
+  ...SOURCE_COPIES,
+] as const
+
+/** 产物 sha256 清单，由 `pnpm icons` 每次重写。**不是**手编的常量。 */
+const HASH_MANIFEST = '../../../packages/console/source/brand-assets.hash.json'
+/** 清单里的键是仓库相对路径（生成脚本的 `toPosix`），这里把测试用的相对路径换算过去。 */
+const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url))
+const repoPath = (file: string): string =>
+  fileURLToPath(new URL(file, import.meta.url)).slice(REPO_ROOT.length).replaceAll('\\', '/')
+
 describe('矢量源：一个文件，所有派生图都从它来', () => {
   const source = textOf(SOURCE_SVG)
 
@@ -520,5 +550,27 @@ describe('文档导出：单色、底板与社交预览', () => {
 
   it('文档站那张 256 就是品牌目录里那张，不是另渲一份', () => {
     expect(bytesOf(`${DOCS_PUBLIC}icon-256.png`).equals(bytesOf(`${BRAND_PNG}icon-256.png`))).toBe(true)
+  })
+})
+
+describe('sha256 清单：手改一张 png 就跑不过', () => {
+  /** 清单是 `pnpm icons` 写的，不是手编的；这里只读它，从不改它。 */
+  const manifest = JSON.parse(textOf(HASH_MANIFEST)) as { assets: Record<string, string> }
+
+  it('清单覆盖的正是全部产物，不多不少', () => {
+    // 少一条 = 有人加了产物却没人给它记账；多一条 = 清单里留着已经删掉的文件。
+    // 两种都是「清单不再描述现实」，而清单的全部价值就是它描述现实。
+    expect(Object.keys(manifest.assets).sort()).toEqual(PRODUCTS.map(repoPath).sort())
+  })
+
+  it('每一个产物的 sha256 都与清单一致', () => {
+    // 上面那些断言看的是「画得对不对」，这一条看的是「这张图是不是生成器产出的那一张」：
+    // 几何全对、颜色也对、但内容被人涂改过的 png，只有指纹能抓住。
+    // 红了不代表产物错了——先想想有没有人手改过 png；确实改了真源就重跑 `pnpm icons`。
+    for (const file of PRODUCTS) {
+      const at = repoPath(file)
+      const digest = createHash('sha256').update(bytesOf(file)).digest('hex')
+      expect([at, digest]).toEqual([at, manifest.assets[at]])
+    }
   })
 })
