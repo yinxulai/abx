@@ -14,10 +14,21 @@ export type { LocalBackendOptions, UsernsProbeResult } from './local-backend'
 export {
   DANGEROUS_HOST_ENV_NAMES,
   buildCellEnv,
+  cellBaseUrlFor,
   generateCellId,
   scrubEnv,
 } from './env'
-export type { BuildCellEnvOptions, ScrubEnvResult } from './env'
+export type { BuildCellEnvOptions, CellBaseUrlOptions, ScrubEnvResult } from './env'
+
+export { AgentConfigError, renderAgentConfig, stageAgentConfig } from './agent-config'
+export type {
+  RenderAgentConfigOptions,
+  RenderedAgentConfig,
+  RenderedAgentConfigFile,
+  StageAgentConfigOptions,
+  StagedAgentConfig,
+  StagedAgentConfigFile,
+} from './agent-config'
 
 export {
   DANGEROUS_TASK_DIRS,
