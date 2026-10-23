@@ -379,8 +379,21 @@ const egressSchema = withFieldDefaults(
 // session
 // ---------------------------------------------------------------------------
 
-export const sandboxBackendSchema = z.enum(['docker', 'local'], {
-  error: (issue: IssueInput): string => `只支持 "docker" 或 "local"，实际是 ${describe(issue.input)}`,
+/**
+ * 受支持的沙箱后端 id。
+ *
+ * **这份元组是唯一来源**：schema 由它构造，报错文案也从它推导——写第二份 id 列表
+ * 的代价是「加了一个 id，提示语里那串旧名单还在」，而用户看到的恰好是那句提示。
+ *
+ * ⚠️ 往这里加一个 id **不等于**加了一个后端：`@abx/core` 那边有一张
+ * `Record<SandboxBackendId, () => SandboxBackend>` 的工厂映射表，加进来就编译不过，
+ * 一直到真的把那个后端实现了为止。这是有意的。
+ */
+export const SANDBOX_BACKEND_IDS = ['docker', 'local'] as const
+
+export const sandboxBackendSchema = z.enum(SANDBOX_BACKEND_IDS, {
+  error: (issue: IssueInput): string =>
+    `只支持 ${SANDBOX_BACKEND_IDS.map((id) => `"${id}"`).join(' 或 ')}，实际是 ${describe(issue.input)}`,
 })
 
 const resourceLimitsSchema = withFieldDefaults(

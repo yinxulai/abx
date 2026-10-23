@@ -302,26 +302,65 @@ interface SandboxHandle { readonly cellId: string; stop(): Promise<void> }
 
 - `SandboxSpec`：镜像/命令、挂载 `SandboxMount[]`、环境变量、`ResourceLimits`。
 - `SandboxIo`：把 stdin/stdout/stderr 接出来（宿主终端只是**窗口**）。
-- `createBackend(id)` 是唯一的工厂入口 —— **换平台只换这一层**。
+- `createBackend(id)` 是唯一的工厂入口 —— **换平台只换这一层**（选谁、以及选不到时的
+  行为，见 §7.2）。
 
 **I-S1**：`assertNoForbiddenEnv(spec)` 必须在 `create` 之前被执行，
 禁止把宿主敏感环境变量带进舱（与 `DANGEROUS_HOST_ENV_NAMES` 配套）。
 
-### 7.2 `docker` 后端（主实现）
+### 7.2 后端策略：docker 优先，扩展的口子留着（2026-10-23 拍板）
+
+**决定**：MVP 阶段**只推广 docker 一个后端**。`local` 只为开发自测存在 ——
+**它不是沙箱，永远不做默认，永远不做回退**。「以后换成别的容器后端」这条路**留着**，
+但现在**没有实现**：今天没有 podman、没有 bwrap，`--backend` 只认 `docker` 与 `local`。
+
+**为什么留口子**：容器后端是会变的 —— Docker Desktop 的许可、macOS 上的替代品、
+以后要不要在 Linux 服务器上跑，哪一样都可能让「只有 docker」变成一个问题。
+把后端做成可插拔接口的代价很小，而事后从各个角落里往外拔 docker 假设的代价很大。
+所以接口留着，**但推广的只有 docker 一个**：多一个后端就多一份「它到底隔不隔离」的
+证据责任，没验过的东西不进演示路径。
+
+**这条策略靠代码站着，不靠文档。** 三处，各有各管的事：
+
+| 位置 | 强制的性质 |
+|---|---|
+| `contracts` 的 `SANDBOX_BACKEND_IDS` | 支持的 id **只声明一次**；schema 由它构造，报错文案也从它推导——不会有第二份过期名单 |
+| `core` 的 `backendFactories` | 类型是 `Record<SandboxBackendId, () => SandboxBackend>`：往契约里加一个 id 而没实现，**编译不过** |
+| `createBackend(id: string)` | 运行期查不到就**抛错**（报出这个 id 与支持名单），什么后端都不造 |
+
+**「绝不回退」值得单说。** `local` 与 `docker` 在上层是同一个 `SandboxBackend` 接口，
+区别只在 `isRealSandbox` 这一个字段上。于是一次拼错的 id 一旦被「兜底」成 `local`，
+拿到手的就是一个**看起来完全正常、实际没有任何隔离**的会话 —— 这是这类工具最不该有的
+失败形状：用户以为自己在沙箱里，而它正在宿主上以他的身份跑。所以未知 id 的处理方式是
+**响亮失败**，不是「随便挑一个能跑的顶上」。
+
+**加一个后端要做什么**（**未来的路径，现在没有第二个后端**）：
+
+1. 往 `SANDBOX_BACKEND_IDS`（`packages/contracts/source/schema.ts`）里加 id；
+2. `packages/core/source/session/index.ts` 的 `backendFactories` **立刻编译不过**——
+   实现一个新后端，把它补进那张表；
+3. 实现 `SandboxBackend.create(spec, io)`，自己走完 `assertNoForbiddenEnv` 与
+   `assertMountPolicy`：**I-S1 / I-S3 是每一个后端自己的责任**，不是 docker 的；
+4. **如实声明** `isRealSandbox` 与 `warning`（I-S2）。一个后端声称自己隔离、其实没有，
+   比一个明说自己不隔离的后端严重得多；
+5. 用例不用重写：`session/index.test.ts` 是照着契约列表循环的，新 id 自动进覆盖；
+   但要给它补上「它的隔离性质到底是什么」的实测证据。
+
+### 7.3 `docker` 后端（主实现）
 
 - `buildDockerArgs(spec, mounts)` 是**纯函数**产出 argv —— 可单测，不真起容器。
 - 要点：`--rm` 一次性、非 root、无 sudo、`--memory`/`--pids-limit`/CPU 限额、
   网络只通往 broker。
 - `probeDocker()` + `isExecutableOnPath()` 供 `doctor` 用。
 
-### 7.3 `local` 后端（**不是沙箱**）
+### 7.4 `local` 后端（**不是沙箱**）
 
 - 显式导出 `LOCAL_BACKEND_WARNING`，代码里标注「**禁止用于演示**」。
 - 存在理由：本机 docker daemon 未起、`bwrap` 因 userns 被禁（`probeUserNamespaces()` 探测）。
 - **I-S2**：`local` 后端只做环境注入 + 目录切换，**不得**声称任何隔离；
   CLI 在 `local` 模式下必须把警告打到 stderr。
 
-### 7.4 挂载策略
+### 7.5 挂载策略
 
 `MOUNT_POLICY.buildMounts(taskDir, workdir)` + `assertMountPolicy()`：
 
@@ -334,7 +373,7 @@ interface SandboxHandle { readonly cellId: string; stop(): Promise<void> }
 **I-S3**（安全关键）：`assertMountPolicy()` 在**每一次** `create` 前必经；
 任何绕过它直接建容器的路径都是漏洞。
 
-### 7.5 环境清洗
+### 7.6 环境清洗
 
 - `scrubEnv()` 剔除 `DANGEROUS_HOST_ENV_NAMES`，返回 `ScrubEnvResult`。
 - `buildCellEnv()` 组装舱内环境：`<AGENT>_BASE_URL` 指向 broker 舱面、
@@ -343,7 +382,7 @@ interface SandboxHandle { readonly cellId: string; stop(): Promise<void> }
 
 **I-S4**：舱内环境里**永不出现真密钥**；占位符是固定串，broker 无条件替换。
 
-### 7.6 会话状态机
+### 7.7 会话状态机
 
 ```
 idle ──open()──▶ preparing ──create()──▶ running ──stop()/exit──▶ reclaimed
@@ -845,6 +884,11 @@ Docker Desktop 只把特定宿主路径共享给 VM（macOS 默认 `/Users`、`/
 
 **要求**：`local` 后端下必须在**所有**用户可见的输出里标注它不是沙箱，
 包括 `audit` 的每一条记录（审计里看不出这条请求是不是被隔离的，就等于审计骗人）。
+
+**补充（同日拍板）**：保留 `local` **不等于**它可以被自动选中。它是**开发自测**的一条路，
+不是一条降级路 —— **永远不做默认**（默认在 `sessionSchema` 上钉死为 `docker`），
+**永远不做回退**（未知 id 响亮失败，绝不换成 `local` 把会话跑成）。
+理由与「加后端要做什么」见 §7.2。
 
 ### 20.3 broker 单实例多舱 ⚠️ 当前实现不满足
 

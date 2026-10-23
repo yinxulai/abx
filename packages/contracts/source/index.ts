@@ -45,7 +45,7 @@ export const productName = 'abx'
  * 它出现在两个地方：配置的默认值，以及「把注册表里的 `~/.claude/...` 展开成舱内
  * 路径」的那一步。两处必须同一个值，所以它是一个导出常量。
  */
-export { DEFAULT_CELL_HOME } from './schema'
+export { DEFAULT_CELL_HOME, SANDBOX_BACKEND_IDS } from './schema'
 
 export type {
   AgentConfigFile,
