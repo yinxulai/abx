@@ -1,4 +1,4 @@
-import { defineConfig } from '@clarify-labs/cli'
+import { defineConfig, type ClarifyPlugin } from '@clarify-labs/cli'
 
 // abx 使用手册的站点结构。
 //
@@ -50,7 +50,62 @@ import { defineConfig } from '@clarify-labs/cli'
 // `title` / `description` 仍是单值字符串（即默认语言中文），用于 SEO。
 const zh = (zhText: string, enText: string) => ({ zh: zhText, en: enText })
 
+// ── 触控目标 ────────────────────────────────────────────────────────────
+// 主题自带的顶栏按钮是 36×36、页脚链接高 24px，在 390px 宽的视口下都低于 44×44 的
+// 触控建议值（`pnpm --filter @abx/docs audit:ui` 会在窄屏把这条报成 🔴）。
+//
+// 站点配置里没有自定义 CSS 的入口，能用的只有 html 注入这一条：`html:transform`
+// 钩子拿得到要插进 `<head>` 的 tag 列表，于是这里补一段只在窄屏生效的样式，
+// 把可点区域撑到 44px——**只放大热区，不改图标尺寸**（图标仍按原样居中）。
+//
+// 代价是这些选择器是主题的内部类名（`.clarify-*`）。升级 @clarify-labs/cli 之后
+// 要重跑 `audit:ui`：类名变了，这段样式会静默失效，而审计会照旧把 🔴 报出来。
+const TOUCH_TARGET_CSS = `
+/* 页内目录条目在宽屏下是 23px 高的行内链接，差 1px 够不到审计的 24px 桌面阈值；
+   换成 flex 盒子给它一个下限，窄屏那段的 44px 也才有作用。 */
+.clarify-anchor { display: inline-flex; align-items: center; min-height: 1.5rem; }
+
+@media (max-width: 480px) {
+  /* 顶栏图标按钮、页脚链接、正文操作（复制页面）、代码复制、页内目录。 */
+  .clarify-mobile-navigation-button,
+  .clarify-mobile-search-button,
+  .clarify-language-switcher-button,
+  .clarify-theme-toggle-button,
+  .clarify-mobile-navbar-menu-button,
+  .clarify-brand,
+  .clarify-footer-link,
+  .clarify-built-with,
+  .clarify-content-actions-primary,
+  .clarify-content-actions-trigger,
+  .clarify-code-copy,
+  .clarify-anchor { min-height: 44px; min-width: 44px; }
+
+  /* 热区撑大之后顶栏变挤，站点名会被截成「abx …」。收间距比缩小字号或隐藏站点名都更不伤可读性。 */
+  .clarify-header-main { gap: 0.5rem; }
+  .clarify-header-left { gap: 0.5rem; }
+  .clarify-header-actions { gap: 0.25rem; }
+  .clarify-brand { gap: 0.25rem; }
+
+  /* 这一段样式插在主题样式表**之前**，同权重会被主题盖掉；字号这类正面冲突的属性
+     要靠多一层选择器提权重（min-width/min-height 是主题没设过的属性，不冲突）。 */
+  .clarify-header .clarify-brand-title { font-size: 0.8125rem; }
+}`
+
+const touchTargets: ClarifyPlugin = {
+  name: 'abx:touch-targets',
+  hooks: {
+    'html:transform': (input) => ({
+      ...input,
+      tags: [
+        ...input.tags,
+        { tag: 'style', attrs: { 'data-abx': 'touch-targets' }, children: TOUCH_TARGET_CSS },
+      ],
+    }),
+  },
+}
+
 export default defineConfig({
+  plugins: [touchTargets],
   title: 'abx 使用手册',
   description: '给 AI coding agent 用的隔离舱：凭据留在舱外，出口默认拒绝，所有进出留痕。',
   // 部署地址尚未确定，因此先不写 siteUrl（它只影响 sitemap / canonical）。
