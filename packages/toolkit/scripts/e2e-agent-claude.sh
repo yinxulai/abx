@@ -341,6 +341,7 @@ const core = (name) => pathToFileURL(path.join(REPO, 'packages/core/source', nam
 const contracts = () => pathToFileURL(path.join(REPO, 'packages/contracts/source/index.ts')).href
 
 const { resolveContext } = await import(core('commands/runtime.ts'))
+const { requireHostPlatform } = await import(core('host-platform.ts'))
 const { startBroker, collectSecretEnvNames, generateCellToken } = await import(core('broker/index.ts'))
 const {
   assertInstancesRoot,
@@ -358,6 +359,11 @@ const {
   toSandboxConfigFiles,
 } = await import(core('session/index.ts'))
 const { findAgent } = await import(contracts())
+
+// 宿主平台由**宿主层**读一次再传下去（见 core 的 `host-platform.ts`）：core 不自己去读
+// `process.platform`，所以这个夹具得像产品入口那样读一次。产品里那一处是
+// `apps/app/source/main.ts`，这里是它的等价物。少了它，路径规则一份都取不到。
+const PLATFORM = requireHostPlatform(process.platform)
 
 const TASK_DIR = path.join(WORK, 'task')
 // 宿主 home。它在这份驱动里只用来做一件事：**记住那条老路径叫什么名字**，
@@ -386,7 +392,7 @@ function check(label, condition, detail) {
 
 // ── 1. 配置（真命令层）────────────────────────────────────────────────────
 at('读配置')
-const context = resolveContext({ cwd: REPO, env: process.env, configPath: CONFIG })
+const context = resolveContext({ cwd: REPO, env: process.env, configPath: CONFIG, platform: PLATFORM })
 const config = context.config
 const agent = findAgent('claude')
 if (agent === null) throw new Error('注册表里没有 claude')
@@ -433,13 +439,13 @@ const instance = planInstance({
   cellHome,
   instancesRoot: defaultInstancesRoot(process.env),
 })
-assertInstancesRoot(instance.instancesRoot)
+assertInstancesRoot({ instancesRoot: instance.instancesRoot, platform: PLATFORM })
 const stateDir = {
   hostPath: ensureInstanceStateDir(instance),
   cellPath: instance.cellPath,
   agentId: agent.id,
 }
-assertStateDirPolicy({ stateDirs: [stateDir], instancesRoot: instance.instancesRoot, cellHome })
+assertStateDirPolicy({ platform: PLATFORM, stateDirs: [stateDir], instancesRoot: instance.instancesRoot, cellHome })
 log(`[instance] 实例 ${instance.instanceId} · 状态目录 ${stateDir.hostPath} → ${stateDir.cellPath}（rw；历史留在这儿）`)
 log(`[instance] 舱内 home （session.cellHome）${cellHome} · 宿主 home ${HOST_HOME}（不进舱，也不当挂载目标）`)
 
@@ -485,6 +491,7 @@ async function runContainer({ label, cellId: id, command, env, configFiles, stat
   const spec = {
     cellId: id,
     agentId: 'claude',
+    platform: PLATFORM,
     command,
     // 调用方有没有终端，是调用方的事：`--tty` 要求**启动方**的 stdin 是终端，
     // 无脑加上去 docker 会直接拒绝起容器。这里照抄 open.ts 的判据。
