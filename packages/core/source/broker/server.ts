@@ -243,6 +243,7 @@ function createHandler(context: HandlerContext) {
     // 请求会把舱令牌一字不差地写进审计文件——审计文件恰恰是最容易被收集走的东西。
     const auditPath = `${extraction.pathname}${url.search}`
     // 来源取对端地址，**不读任何请求头**：请求头是请求方自己能写的。
+    // 只归一化一次，判定和审计用的是同一个值（`null` = 拿不到，判定那侧当 undefined）。
     const remoteAddress = normalizeRemoteAddress(request.socket.remoteAddress)
     // 宿主面没有舱身份。舱面的身份在下面由令牌反查得出，**不读请求头**：
     // 请求头是外部输入，只能用来做「与令牌绑定值是否一致」的辅助检查。

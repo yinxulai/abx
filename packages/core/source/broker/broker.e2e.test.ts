@@ -447,7 +447,7 @@ describe('broker 端到端', () => {
       expect(broker.audit.records[0]).toMatchObject({ decision: 'denied-cell-source', sourceAddress: '127.0.0.1' })
     })
 
-    it('不传允许列表时用默认值，而默认值不含回环', async () => {
+    it('不传允许列表时用默认值，回环来源因此能进来', async () => {
       const upstream = await startEchoUpstream()
       cleanups.push(() => upstream.close())
       const broker = await startTestBroker({ upstreamOrigin: upstream.origin, allowedCellSubnets: null })
@@ -456,8 +456,11 @@ describe('broker 端到端', () => {
         headers: { 'x-abx-cell': CELL_TOKEN },
       })
 
-      expect(response.status).toBe(403)
-      expect(broker.audit.records[0]).toMatchObject({ decision: 'denied-cell-source' })
+      // 默认列表里有回环，这是实测逼出来的（见 cell-source.ts）：Docker Desktop 上
+      // 容器打宿主的连接就是落在宿主回环上的，少了它舱一个请求都进不来。
+      // 「挡住网段外的来源」由上面那几条用例用显式的窄列表验。
+      expect(response.status).toBe(200)
+      expect(broker.audit.records[0]).toMatchObject({ decision: 'allowed', sourceAddress: '127.0.0.1' })
     })
 
     it('宿主面不受网段限制', async () => {

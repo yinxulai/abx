@@ -9,6 +9,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_ALLOWED_CELL_SUBNETS,
+  LOOPBACK_SUBNET,
   classifyCellSource,
   findInvalidCellSubnets,
   isAllowedCellSource,
@@ -117,11 +118,21 @@ describe('isAllowedCellSource', () => {
     expect(classifyCellSource(undefined, DOCKER_SUBNETS).address).toBeNull()
   })
 
-  it('默认网段就是 docker 的那两条', () => {
-    expect(DEFAULT_ALLOWED_CELL_SUBNETS).toEqual(DOCKER_SUBNETS)
+  it('默认网段是 docker 那两条 + 回环', () => {
+    expect(DEFAULT_ALLOWED_CELL_SUBNETS).toEqual([...DOCKER_SUBNETS, LOOPBACK_SUBNET])
     expect(isAllowedCellSource('192.168.65.2', DEFAULT_ALLOWED_CELL_SUBNETS)).toBe(true)
-    // 默认不含回环：宿主回环打舱面必须被挡掉，这是这条闸的意义所在。
-    expect(isAllowedCellSource('127.0.0.1', DEFAULT_ALLOWED_CELL_SUBNETS)).toBe(false)
+    expect(isAllowedCellSource('172.17.0.2', DEFAULT_ALLOWED_CELL_SUBNETS)).toBe(true)
+    // 回环必须在里面：Docker Desktop 上容器打宿主就是落在回环上的（见 cell-source.ts
+    // 里那段实测），少了它舱一个请求都进不来。这不是「放水」——见下面那条。
+    expect(isAllowedCellSource('127.0.0.1', DEFAULT_ALLOWED_CELL_SUBNETS)).toBe(true)
+  })
+
+  it('默认网段挡的是局域网，不是本机', () => {
+    // 这条闸真正挡住的是「网桥外面的人」：局域网里另一台机器走的是普通内核路径，
+    // 来源地址是它自己的地址，落不进默认列表。
+    for (const outsider of ['192.168.1.7', '10.0.0.9', '203.0.113.5', '172.18.0.2']) {
+      expect(isAllowedCellSource(outsider, DEFAULT_ALLOWED_CELL_SUBNETS)).toBe(false)
+    }
   })
 })
 

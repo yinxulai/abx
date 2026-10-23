@@ -72,14 +72,14 @@ describe('allowedCellSubnetsFor', () => {
     expect(response.headers.get('content-type')).toContain('application/json')
   })
 
-  it('反过来：回环来源没被允许时，同一个 broker 连健康检查都进不去', async () => {
+  it('反过来：允许列表里没有回环时，本地来源连健康检查都进不去', async () => {
     const config = makeConfig({ upstreams: [], egress: [] })
     const handle: BrokerHandle = await startBroker({
       config,
       env: {},
       cellToken: 'abx_cell_local-backend-0000',
       cellHost: '127.0.0.1',
-      allowedCellSubnets: DEFAULT_ALLOWED_CELL_SUBNETS,
+      allowedCellSubnets: ['192.168.65.0/24'],
       auditSink: createMemoryAuditSink(),
       hostPort: 0,
       cellPort: 0,

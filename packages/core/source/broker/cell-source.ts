@@ -27,22 +27,44 @@
  * 纯函数：不碰网络、不读配置。`server.ts` 把 `request.socket.remoteAddress` 递进来。
  */
 
+/** 回环网段。默认列表里有它，理由见 {@link DEFAULT_ALLOWED_CELL_SUBNETS}。 */
+export const LOOPBACK_SUBNET = '127.0.0.1/32'
+
 /**
  * 默认允许的来源网段。
  *
- * `192.168.65.0/24` 是 Docker Desktop 在 VM 里的宿主网关（`host.docker.internal`
- * 就解析到 `192.168.65.2`）；`172.17.0.0/16` 是 Linux 上 docker 默认网桥。
- * 舱从这两个网段里的地址打过来，来源地址就落在这里面。
+ *   - `192.168.65.0/24` Docker Desktop 在 VM 里的宿主网关（`host.docker.internal`）
+ *   - `172.17.0.0/16`   Linux 上 docker 默认网桥（舱从容器 IP 打过来）
+ *   - `127.0.0.1/32`    宿主回环
+ *
+ * **第三条是实测逼出来的，不是抄设计文档来的。** §19.1 只写了前两条，前提是
+ * 「舱从 docker 网段打过来，所以网段外的一律是外人」。这个前提在 Docker Desktop
+ * 上不成立：它的端口转发把「容器 → 宿主」的连接**落在宿主自己的回环上**。实测
+ * （docker server 29.9.1 / Docker Desktop for Linux，宿主进程绑 `0.0.0.0`）：
+ *
+ *   容器 fetch host.docker.internal:<port>  → 宿主看到 remoteAddress = 127.0.0.1
+ *   容器 fetch 192.168.65.2:<port>          → 宿主看到 remoteAddress = 127.0.0.1
+ *   容器 fetch <宿主 LAN IP>:<port>         → 宿主看到 remoteAddress = <宿主 LAN IP>
+ *   宿主只绑 127.0.0.1 时，容器照样连得上
+ *
+ * 也就是说：**在 Docker Desktop 上，容器和宿主本机进程在 `remoteAddress` 上无法区分**，
+ * 少了 `127.0.0.1/32` 这一条，舱**一个请求都进不来**（真 docker 脚本上表现为
+ * 满屏 403 `abx_cell_source_denied`）。设计文档里那条「网段外即便令牌正确也拒绝」
+ * 在这块平台上只能做到它的**目的**，做不到它的字面：
+ *
+ *   目的（保留）：局域网上别的机器打不进来——它们走的是普通内核路径，
+ *                 来源地址就是它们自己的地址，落不进上面三条。
+ *   字面（做不到）：把「宿主本机进程」也挡在外面——Docker Desktop 上它和容器同源。
+ *
+ * 少掉的那半由令牌补回来（令牌仍然必须有效），这也是 `token.ts` 存在的原因。
+ * 等 `broker.allowedCellSubnets` 配置项落地时，这段判断要连同实测一起搬到文档里。
  *
  * **这是配置项 `broker.allowedCellSubnets` 的默认值，暂时只能从 `BrokerOptions`
  * 覆盖。** 配置层（`packages/contracts/source/config.ts` 的 `BrokerConfig` +
  * `load-config.ts` 的解析）合并之后，这个常量的落点改成读配置、由配置层给默认值；
  * 在那之前，别为了塞这个字段去动 `packages/contracts/**`。
  */
-export const DEFAULT_ALLOWED_CELL_SUBNETS: readonly string[] = ['192.168.65.0/24', '172.17.0.0/16']
-
-/** 回环网段。`local` 后端把舱面绑在回环上时要用它，见 `commands/runtime.ts`。 */
-export const LOOPBACK_SUBNET = '127.0.0.1/32'
+export const DEFAULT_ALLOWED_CELL_SUBNETS: readonly string[] = ['192.168.65.0/24', '172.17.0.0/16', LOOPBACK_SUBNET]
 
 /** 判定结果。拒绝的几种原因是分开的：事后要靠它区分「没配」和「有人在打」。 */
 export type CellSourceReason =
