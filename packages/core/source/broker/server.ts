@@ -22,11 +22,21 @@ import type { AddressInfo } from 'node:net'
 import type { AbxConfig } from '@abx/contracts'
 import { buildUpstreamIndex } from '../policy/index'
 import { createFileAuditSink, type AuditDecision, type AuditSink, type BrokerFace } from './audit'
-import { safeEqual, type SecretDependencies } from './credentials'
+import type { SecretDependencies } from './credentials'
 import { forwardRequest, writeJson } from './forward'
+import { CellTokenRegistry, DEFAULT_CELL_REGISTRY_LIMIT } from './registry'
 import { CELL_ID_HEADER, CELL_TOKEN_HEADER, extractCellToken, resolveRoute } from './route'
 import { resolveTarget } from './target'
 import { generateCellToken } from './token'
+
+/**
+ * 宿主固定令牌绑定的舱。
+ *
+ * 环境变量 / 显式传入的令牌不是给某个真实会话的，而是 `abx broker` 与
+ * `abx open` 之间传值用的（以及开发自测）。它只对应这一个「默认舱」：
+ * 令牌仍然必须存在、仍要能反查，只是反查出来的身份固定。
+ */
+export const DEFAULT_CELL_ID = 'default'
 
 export interface BrokerLogger {
   info(message: string): void
@@ -62,16 +72,25 @@ export interface BrokerOptions {
   /** 覆盖端口，测试里用 0 让系统分配。 */
   readonly hostPort?: number | null
   readonly cellPort?: number | null
+  /** 同时登记的舱上限（含默认舱）。默认 64。 */
+  readonly cellRegistryLimit?: number | null
   readonly logger?: BrokerLogger
 }
 
 export interface BrokerHandle {
   readonly hostOrigin: string
   readonly cellOrigin: string
+  /** 宿主固定令牌（默认舱用）。按舱分配的令牌请走 {@link registerCell}。 */
   readonly cellToken: string
   readonly cellTokenSource: CellTokenSource
   readonly audit: AuditSink
   readonly config: AbxConfig
+  /** 令牌 → 舱 id 的注册表。 */
+  readonly registry: CellTokenRegistry
+  /** 起舱时登记，返回该舱专属令牌。 */
+  registerCell(cellId: string): string
+  /** 舱销毁时注销；注销之后原令牌立刻失效。 */
+  unregisterCell(cellId: string): boolean
   close(): Promise<void>
 }
 
@@ -87,12 +106,17 @@ export async function startBroker(options: BrokerOptions): Promise<BrokerHandle>
   const token = resolveCellToken(config, options, log)
   const cellHost = options.cellHost ?? config.broker.cellHost
 
+  // 固定令牌也要在表里，但只对应一个默认舱。它不是「绕过注册表」的口子：
+  // 舱面校验仍然要求令牌能在表里查到，只是查出来的身份固定。
+  const registry = new CellTokenRegistry({ limit: options.cellRegistryLimit ?? DEFAULT_CELL_REGISTRY_LIMIT })
+  registry.registerFixed(DEFAULT_CELL_ID, token.value)
+
   const handler = createHandler({
     config,
     secrets,
     audit,
     log,
-    cellToken: token.value,
+    registry,
     upstreamIndex,
   })
 
@@ -140,6 +164,9 @@ export async function startBroker(options: BrokerOptions): Promise<BrokerHandle>
     cellTokenSource: token.source,
     audit,
     config,
+    registry,
+    registerCell: (cellId) => registry.register(cellId),
+    unregisterCell: (cellId) => registry.unregister(cellId),
     async close(): Promise<void> {
       if (closed) return
       closed = true
@@ -156,12 +183,12 @@ interface HandlerContext {
   readonly secrets: SecretDependencies
   readonly audit: AuditSink
   readonly log: BrokerLogger
-  readonly cellToken: string
+  readonly registry: CellTokenRegistry
   readonly upstreamIndex: ReturnType<typeof buildUpstreamIndex>
 }
 
 function createHandler(context: HandlerContext) {
-  const { config, audit, log, cellToken, upstreamIndex } = context
+  const { config, audit, log, registry, upstreamIndex } = context
 
   return (face: BrokerFace, request: IncomingMessage, response: ServerResponse): void => {
     const startedAt = performance.now()
@@ -184,7 +211,9 @@ function createHandler(context: HandlerContext) {
     // 审计里记的是**剥掉令牌之后**的路径。记原文的话，走 `/c/<token>/` 那条路的
     // 请求会把舱令牌一字不差地写进审计文件——审计文件恰恰是最容易被收集走的东西。
     const auditPath = `${extraction.pathname}${url.search}`
-    const cellId = headerValue(request.headers[CELL_ID_HEADER]) ?? (face === 'cell' ? 'unknown-cell' : 'host')
+    // 宿主面没有舱身份。舱面的身份在下面由令牌反查得出，**不读请求头**：
+    // 请求头是外部输入，只能用来做「与令牌绑定值是否一致」的辅助检查。
+    let cellId = face === 'cell' ? 'unknown-cell' : 'host'
 
     const writeAudit = (decision: AuditDecision, status: number, extra: AuditExtra): Promise<void> =>
       audit.write({
@@ -201,10 +230,12 @@ function createHandler(context: HandlerContext) {
         face,
       })
 
-    // ── 1. 舱令牌。宿主面不走这一步。 ──────────────────────────────────────
+    // ── 1. 舱令牌与舱身份。宿主面不走这一步。 ───────────────────────────────
     if (face === 'cell') {
       const provided = extraction.token
-      if (provided === null || !safeEqual(provided, cellToken)) {
+      // 令牌必须存在，并且**反查得出**舱 id。未知令牌不猜身份。
+      const boundCellId = provided === null ? null : registry.resolve(provided)
+      if (boundCellId === null) {
         writeJson(response, 401, {
           error: 'abx_cell_token_required',
           detail: `舱面要求 ${CELL_TOKEN_HEADER} 头，或 /c/<token>/ 路径前缀`,
@@ -212,6 +243,21 @@ function createHandler(context: HandlerContext) {
         await writeAudit('denied-cell-token', 401, {})
         return
       }
+
+      // 辅助检查：舱内自报的 id 只用来「和令牌绑定值对一下」。对不上就拒绝，
+      // 免得一个舱拿着自己的令牌在审计里冒充另一个舱。
+      const claimed = headerValue(request.headers[CELL_ID_HEADER])
+      if (claimed !== undefined && claimed !== '' && claimed !== boundCellId) {
+        cellId = boundCellId
+        writeJson(response, 401, {
+          error: 'abx_cell_id_mismatch',
+          detail: `请求头 ${CELL_ID_HEADER} 与令牌绑定的舱不一致`,
+        })
+        await writeAudit('denied-cell-identity', 401, {})
+        return
+      }
+
+      cellId = boundCellId
     }
 
     // ── 2. 路由。 ────────────────────────────────────────────────────────
@@ -290,8 +336,8 @@ interface ResolvedCellToken {
 }
 
 function resolveCellToken(config: AbxConfig, options: BrokerOptions, log: BrokerLogger): ResolvedCellToken {
-  const explicit = options.cellToken
-  if (explicit !== undefined && explicit !== null && explicit !== '') {
+  const explicit = options.cellToken?.trim()
+  if (explicit !== undefined && explicit !== '') {
     return { value: explicit, source: 'explicit' }
   }
 
