@@ -40,6 +40,7 @@ import {
   type AgentDefinition,
 } from '@abx/contracts'
 import type { SandboxConfigFile } from './backend'
+import { cellBasename, cellHomePath } from './cell-path'
 import { cellBaseUrlFor } from './env'
 
 export class AgentConfigError extends Error {
@@ -135,7 +136,9 @@ export function renderAgentConfig(options: RenderAgentConfigOptions): RenderedAg
   const cellHome = options.cellHome ?? DEFAULT_CELL_HOME
   const files = generatedConfigFiles(agent).map((file) => ({
     fileName: fileNameOf(file.path),
-    cellPath: expandHome(file.path, cellHome),
+    // 清单里的路径是**舱内**的，所以这一行走 `cellHomePath`（posix），不走宿主的 path。
+    // 用宿主 path 的后果见 `cell-path.ts`：Windows 上会拼出 `\home\node\.claude\...`。
+    cellPath: cellHomePath(file.path, cellHome),
     format: file.format,
     content: renderContent(agent, file, values),
   }))
@@ -158,7 +161,7 @@ export function renderAgentConfig(options: RenderAgentConfigOptions): RenderedAg
  *   - 目录就是舱内 home 本身：那等于把整个 home 变成可写挂载点，挂载面大了一整圈。
  */
 export function agentHomePath(agent: AgentDefinition, cellHome: string = DEFAULT_CELL_HOME): string {
-  const directories = [...new Set(agent.statePaths.map((statePath) => expandHome(statePath.path, cellHome)))]
+  const directories = [...new Set(agent.statePaths.map((statePath) => cellHomePath(statePath.path, cellHome)))]
 
   const directory = directories[0]
   if (directory === undefined) {
@@ -266,12 +269,12 @@ function renderContent(agent: AgentDefinition, file: AgentConfigFile, values: Re
   }
 }
 
+/**
+ * 清单里那条路径的最后一段，也是落盘时的文件名。
+ *
+ * 走舱内语义（posix）：它跟 `cellPath` 是同一个路径的两半，两边用了不同的语义就
+ * 会对不上——而 `fileNameOf` 的结果要拿去过配置文件名白名单，对不上就是误拒。
+ */
 function fileNameOf(filePath: string): string {
-  return filePath.split('/').at(-1) ?? filePath
-}
-
-function expandHome(filePath: string, homeDir: string): string {
-  if (filePath === '~') return homeDir
-  if (filePath.startsWith('~/')) return path.join(homeDir, filePath.slice(2))
-  return filePath
+  return cellBasename(filePath)
 }

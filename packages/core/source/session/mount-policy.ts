@@ -30,6 +30,7 @@ import { readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { agentConfigFileNames, agentHomeDirNames } from '@abx/contracts'
 import type { SandboxConfigFile, SandboxMount, SandboxStateDir } from './backend'
+import { cellDirname, isCellAbsolute, isUnderCellPath } from './cell-path'
 import { defaultInstancesRoot } from './instance'
 
 /**
@@ -438,7 +439,11 @@ export function assertInstancesRoot(instancesRoot: string, homeDir: string = rea
  * 而那个文件正是 abx 自己的记账。
  */
 function assertOneStateDir(dir: SandboxStateDir, instancesRoot: string, homeDir: string, cellHome: string | null): void {
-  if (!path.isAbsolute(dir.hostPath) || !path.isAbsolute(dir.cellPath)) {
+  // 两半两套语义：`hostPath` 跟着宿主走，`cellPath` 永远是容器里的路径。
+  // 混用的后果见 `cell-path.ts`——Windows 上 `path.isAbsolute('/home/node/.claude')`
+  // 也返回 true（它认成「当前盘根下的 home\node\.claude」），所以这个闸门不会报错，
+  // 只会放过一个错到别处去的挂载点。
+  if (!path.isAbsolute(dir.hostPath) || !isCellAbsolute(dir.cellPath)) {
     throw new MountPolicyViolation(`实例状态目录必须用绝对路径：${dir.hostPath} → ${dir.cellPath}`)
   }
   if (dir.hostPath.split(path.sep).includes('..')) {
@@ -485,7 +490,7 @@ function assertOneStateDir(dir: SandboxStateDir, instancesRoot: string, homeDir:
     )
   }
 
-  if (cellHome !== null && !isUnder(dir.cellPath, cellHome)) {
+  if (cellHome !== null && !isUnderCellPath(dir.cellPath, cellHome)) {
     throw new MountPolicyViolation(
       `实例状态目录的舱内挂载点 ${dir.cellPath} 不在舱内 home（${cellHome}）之下：` +
         `agent 只会往自己的 home 里写历史，挂到别处等于没挂。`,
@@ -535,7 +540,8 @@ export function assertMountPolicy(input: AssertMountPolicyInput): void {
   const sharedBySource = new Map(sharedMounts.map((mount) => [mount.source, mount]))
 
   for (const mount of mounts) {
-    if (!path.isAbsolute(mount.source) || !path.isAbsolute(mount.target)) {
+    // 来源是宿主路径、挂载点是舱内路径，两边各判各的语义（见 `cell-path.ts`）。
+    if (!path.isAbsolute(mount.source) || !isCellAbsolute(mount.target)) {
       throw new MountPolicyViolation(`挂载必须用绝对路径：${mount.source} → ${mount.target}`)
     }
 
@@ -679,7 +685,7 @@ function assertSharedMount(mount: SandboxMount, expected: SandboxMount): void {
     )
   }
   // 形状：正好一层，不许嵌套，也不许就是共享区根本身。
-  if (path.dirname(mount.target) !== SHARED_CELL_ROOT) {
+  if (cellDirname(mount.target) !== SHARED_CELL_ROOT) {
     throw new MountPolicyViolation(
       `共享条目必须挂在 ${SHARED_CELL_ROOT}/<名字> 那一层，实际是 ${mount.target}：` +
         `挂载点由 resolveSharedMounts() 算，调用方给不了——换了位置，舱内就多出一个没人说得清来历的目录。`,
@@ -725,7 +731,7 @@ function assertNotCredentialFile(source: string): void {
 function assertConfigFileAllowList(files: readonly SandboxConfigFile[]): void {
   const known = agentConfigFileNames()
   for (const file of files) {
-    if (!path.isAbsolute(file.hostPath) || !path.isAbsolute(file.cellPath)) {
+    if (!path.isAbsolute(file.hostPath) || !isCellAbsolute(file.cellPath)) {
       throw new MountPolicyViolation(`生成的配置只能用绝对路径：${file.hostPath} → ${file.cellPath}`)
     }
     // 凭据先判：名单里混进一个 `auth.json` 时，要说的是「这是凭据」，

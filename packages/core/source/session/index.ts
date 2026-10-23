@@ -14,6 +14,17 @@ export type {
   SandboxStateDir,
 } from './backend'
 
+export {
+  CELL_PATH,
+  cellBasename,
+  cellDirname,
+  cellHomePath,
+  cellJoin,
+  isCellAbsolute,
+  isCellAncestor,
+  isUnderCellPath,
+} from './cell-path'
+
 export { createDockerBackend, buildDockerArgs, containerName, isExecutableOnPath, probeDocker } from './docker-backend'
 export type { DockerBackendOptions, DockerProbeResult } from './docker-backend'
 
