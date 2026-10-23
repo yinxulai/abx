@@ -81,6 +81,9 @@ export async function runOpen(input: OpenInput): Promise<number> {
       agentId: agent.id,
       cellOrigin: cellOriginFor(context.config, cellHost),
       upstreamId: upstream.id,
+      // 舱内的 home 来自配置，**不是**宿主 home：这一处漏传过一次，生成的配置
+      // 落到了宿主的 `~/.claude/`，而舱内 agent 读的是另一个地方。
+      cellHome: context.config.session.cellHome,
     })
     log(renderPlan({ agentId: agent.id, taskDir, backendId, cellHost, context, cellId, configPaths: plan.files.map((file) => file.cellPath) }))
     return 0
@@ -121,6 +124,7 @@ export async function runOpen(input: OpenInput): Promise<number> {
           upstreamId: upstream.id,
           cellToken: binding.token,
           tokenInPath: context.config.broker.allowCellTokenInPath,
+          cellHome: context.config.session.cellHome,
         })
       : null
 

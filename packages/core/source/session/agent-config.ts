@@ -27,6 +27,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import {
+  DEFAULT_CELL_HOME,
   findAgent,
   generatedConfigFiles,
   productName,
@@ -61,8 +62,19 @@ export interface RenderAgentConfigOptions {
   /** 舱令牌。只有「配置允许 + 这个 agent 没有别的投递方式」时才会进 URL。 */
   readonly cellToken?: string
   readonly tokenInPath?: boolean
-  /** `~` 展开成哪儿。默认当前用户的主目录，测试里覆盖它。 */
-  readonly homeDir?: string
+  /**
+   * `~` 展开成哪儿。
+   *
+   * **是舱内的 home（`session.cellHome`），不是宿主 home。** 这一条曾经写错过：
+   * 默认取 `os.homedir()`，于是生成出来的 `cellPath` 是
+   * `/home/<宿主用户>/.claude/settings.json`，而舱内 agent 只会去读
+   * `$HOME/.claude/settings.json`（= `/home/node/...`）。挂载参数看上去完全正常，
+   * 「让 agent 走气闸」这件事实际没生效。
+   *
+   * 默认值就是舱内的那个 home，所以「忘了传」得到的是对的答案；要传别的
+   * （例如镜像换了 uid）时显式传。
+   */
+  readonly cellHome?: string
 }
 
 export interface RenderedAgentConfigFile {
@@ -94,10 +106,10 @@ export function renderAgentConfig(options: RenderAgentConfigOptions): RenderedAg
     tokenInPath: options.tokenInPath ?? false,
   })
 
-  const homeDir = options.homeDir ?? homedir()
+  const cellHome = options.cellHome ?? DEFAULT_CELL_HOME
   const files = generatedConfigFiles(agent).map((file) => ({
     fileName: fileNameOf(file.path),
-    cellPath: expandHome(file.path, homeDir),
+    cellPath: expandHome(file.path, cellHome),
     format: file.format,
     content: renderContent(agent, file, baseUrl),
   }))

@@ -12,9 +12,15 @@ import type { CommandOptions } from './options'
 import { runOpen } from './open'
 import type { CommandContext } from './runtime'
 
+/** 测试用的「舱内 home」。刻意**不是**默认值，这样「有没有把配置传进去」才看得出来。 */
+const CELL_HOME = '/home/dev'
+
 function context(): CommandContext {
   return {
-    config: makeConfig({ upstreams: [makeUpstream({ id: 'anthropic', baseUrl: 'https://api.anthropic.com' })] }),
+    config: makeConfig({
+      upstreams: [makeUpstream({ id: 'anthropic', baseUrl: 'https://api.anthropic.com' })],
+      session: { cellHome: CELL_HOME },
+    }),
     configPath: '/tmp/abx.config.json',
     env: {},
     cwd: '/tmp',
@@ -57,6 +63,14 @@ describe('runOpen --dry-run', () => {
   it('点明不挂配置目录——同目录里有凭据文件', async () => {
     const { output } = await dryRun('claude')
     expect(output).toContain('也不挂任何配置**目录**（同目录有凭据）')
+  })
+
+  it('配置挂在**舱内** home 下，用的是配置里的 session.cellHome', async () => {
+    // 这条是那个真空洞的回归测试：`open.ts` 曾经没把 cellHome 传下去，
+    // 于是干跑里报的是一个宿主路径，而舱内 agent 读的是另一个地方。
+    // 这里换成一个非默认值，好让「没传」和「传了」在输出里长得不一样。
+    const { output } = await dryRun('claude')
+    expect(output).toContain(`${CELL_HOME}/.claude/settings.json`)
   })
 
   it('干跑不落盘', async () => {
