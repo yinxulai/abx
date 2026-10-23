@@ -10,8 +10,8 @@
  *      `GET /a%0A{"decision":"allowed"}` 就能在审计文件里凭空造出一行看起来完全
  *      正常的记录。所以写入前把控制字符换成可打印形式，并截断到合理长度。
  *
- * 顺带一提，字段名跟需求里给的那八个对齐，多出来的三个（`credentialInjected` /
- * `face` / `decision` 的细分取值）都是排查问题时真正会去看的东西。
+ * 顺带一提，字段名跟需求里给的那八个对齐，多出来的四个（`credentialInjected` /
+ * `face` / `sourceAddress` / `decision` 的细分取值）都是排查问题时真正会去看的东西。
  */
 
 import { appendFile, mkdir, open } from 'node:fs/promises'
@@ -22,6 +22,8 @@ export type AuditDecision =
   | 'allowed'
   /** 目标域名不在白名单。 */
   | 'denied-egress'
+  /** 来源地址不在舱面允许的网段里。 */
+  | 'denied-cell-source'
   /** 舱令牌不对。 */
   | 'denied-cell-token'
   /** 令牌有效，但请求头自称的舱 id 与令牌绑定的不一致。 */
@@ -43,6 +45,14 @@ export interface AuditRecord {
   /** ISO 8601，带毫秒。 */
   readonly ts: string
   readonly cellId: string
+  /**
+   * 连接的对端地址（IPv4-mapped IPv6 已归一化），拿不到就是 `null`。
+   *
+   * 记它是因为**拒绝才需要归因**：`denied-cell-source` 只说「不在网段里」，
+   * 不说「是谁在打」。审计是事后唯一能回答这个问题的东西，而请求头是请求方
+   * 自己能写的，只有这个地址不是。
+   */
+  readonly sourceAddress: string | null
   readonly method: string
   /** 去掉舱令牌前缀之后的路径（带查询串）。 */
   readonly path: string
@@ -95,6 +105,7 @@ export function toAuditLine(record: AuditRecord): string {
   const payload = {
     ts: record.ts,
     cellId: sanitizeField(record.cellId),
+    sourceAddress: record.sourceAddress === null ? null : sanitizeField(record.sourceAddress),
     method: sanitizeField(record.method, 16),
     path: sanitizeField(record.path, MAX_PATH_LENGTH),
     upstreamId: record.upstreamId === null ? null : sanitizeField(record.upstreamId),

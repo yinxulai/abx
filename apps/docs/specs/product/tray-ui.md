@@ -86,14 +86,28 @@ html[data-surface='tray'] body {
 | `foreground` | `0 0% 9%` | `0 0% 98%` |
 | `secondary` | `0 0% 96%` | `0 0% 15%` |
 | `muted` | `0 0% 96%` | `0 0% 15%` |
+| `muted-foreground` | `0 0% 40%` | `0 0% 66%` |
 | `accent` | `0 0% 9% / .08` | `0 0% 98% / .12` |
 | `destructive` | `6 65% 48%` | `6 65% 42%` |
 | `border` | `0 0% 90%` | `0 0% 20%` |
 | `input` | `0 0% 90%` | `0 0% 16%` |
 | `ring` | `0 0% 9%` | `0 0% 98%` |
 
-**文字层级**（用 `foreground` 透明度派生，托盘面板只有 4 级）：
-`t-1` = 100%（正文/主），`t-2` = 70%（次），`t-3` = 50%（辅助），`t-4` = 35%（最弱/计数）。
+**文字层级**（三级，每一级都在浅色卡与深色卡上实测过，全部 ≥ AA 正文的 4.5:1）：
+
+| 档 | 取值 | 用途 | 浅色实测 | 深色实测 |
+|---|---|---|---|---|
+| `t-1` | `foreground`（100%） | 标题、条目名、在跑的 agent 名 | 17.9:1 | 15.8:1 |
+| `t-2` | `foreground / .7` | 状态胶囊文字、段落标题 | 6.4–6.6:1 | 7.8–8.3:1 |
+| `t-3` | `muted-foreground` | 副标题、未跑的 agent 名、计数、徽标、拖放提示 | 5.7:1 | 6.9:1 |
+
+> OSW 那一版是四级，多一档 `t-4` = `foreground / .35`（最弱/计数）。**abx 不保留它**：
+> 白卡上 `foreground/.35` 只有 2.22:1、`.5` 只有 3.41:1，AA 要求 4.5:1 —— 浅色主题里
+> 「比 `muted-foreground` 更弱」根本没有合法取值空间。最弱的一档只能靠字号与字重表达，
+> 不能靠把颜色继续往白里推。同理方块底从 `foreground/.14` 收到 `.10`：不收的话，
+> `muted-foreground` 的字母压在上头只有 4.0:1。
+>
+> 数由 `pnpm --filter @abx/app verify:linux` 实测（明暗各一轮），不是按公式估的。
 
 ### 2.4 圆角与阴影
 
@@ -138,7 +152,7 @@ radius-sm = 2px, radius-md = 4px, radius-lg = 6px, radius-xl = 10px
 |---|---|---|
 | header | `min-height: 56px`，`padding: 0 14px`，`gap: 10px` | 图标 28px、`border-radius: 7px` |
 | agents | `padding: 12px 14px`，`grid 3 列`，`gap: 8px` | 每个 tile：方块 30px + 名字 11px/500 |
-| section | `padding: 0 14px 12px` | 段落标题 `system-2xs-medium`(t-2) + 右侧计数(t-4) |
+| section | `padding: 0 14px 12px` | 段落标题 `system-2xs-medium`(t-2) + 右侧计数(t-3) |
 | list 行 | `min-height: 40px`，`padding: 8px 10px` | 行间分隔 `foreground/.07` |
 | drop zone | `padding: 12px 10px`，虚线 `foreground/.22` | 常驻提示，拖拽悬停时高亮 |
 | footer | `padding: 8px 10px`，上边框 `foreground/.14` | 三个动作，`停止全部` 用 destructive |
@@ -152,7 +166,7 @@ radius-sm = 2px, radius-md = 4px, radius-lg = 6px, radius-xl = 10px
 | **运行中 · 有舱** | header 右侧绿点 + `N 舱` |
 | **未运行** | 灰点 + `待启动`；agent tile 全部 off |
 | **agent 运行中** | tile 方块为实心 `foreground`、名字 `t-1` |
-| **agent 未运行** | 方块 `foreground/14`、名字 `t-3` |
+| **agent 未运行** | 方块 `foreground/.10`、名字 `t-3` |
 | **共享区为空** | 列表区换成一句引导：`把文件拖到托盘图标，或拖到这里` + 虚线框 |
 | **拖拽悬停** | 面板/卡片外框变 `ring` 2px + 虚线框底色 `muted` |
 | **条目模式** | `只读` 徽标（后续若有可写条目，改用不同徽标，不换布局） |

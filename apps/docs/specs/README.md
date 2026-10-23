@@ -3,9 +3,9 @@
 给 AI coding agent 用的隔离舱，macOS 托盘应用。舱内能像在本机一样干活，
 但**拿不到任何真实凭据**、碰不到任务目录以外的文件、删不掉机器。
 
-> **文档状态：能力层与规格已就位，桌面壳未落地。** 核心模块（broker / policy / session /
-> mounts）已完成并通过测试；`apps/app`（Electron 托盘）尚未开始。真实状态以
-> [`../roadmap.md`](../roadmap.md) 为准。
+> **文档状态：能力层与规格已就位，桌面壳已有骨架。** 核心模块（broker / policy / session /
+> mounts / 共享挂载）已完成并通过测试；`apps/app`（Electron 托盘）能加载面板、收发共享列表与
+> 落盘，但**没在真机上跑过**。真实状态以 [`../roadmap.md`](../roadmap.md) 为准。
 
 ## 名称与理念
 
@@ -57,7 +57,6 @@
 
 每个 agent 的配置由 abx **生成并以只读方式挂载**，详见
 [`overview/agent-config.md`](./overview/agent-config.md)。
-| `overview/agent-manifest.md` | Agent 清单：一个 agent 由哪些数据构成（展示 / 持久化目录 / 镜像 / 配置模板） |
 
 > 注：气闸自带的 `upstreams` 配置能力（可直连某家 API）是**开发期与自测用**的。
 > 生产形态下，气闸的唯一下游就是 OSW。见 [`overview/architecture.md`](./overview/architecture.md) §14。
@@ -88,8 +87,10 @@
 |---|---|---|
 | 整体设计与威胁模型 | [design.md](./overview/design.md) | 一句话定位、威胁模型（防的不是"坏 agent"而是"被污染的仓库"）、设计原则、五个关键机制、沙箱后端矩阵、分阶段、风险与降级 |
 | agent 配置与上游接线 | [agent-config.md](./overview/agent-config.md) | 只读挂载生成配置、不挂凭据文件、气闸默认上游 osw、为什么不需要改 osw、agent id 与 osw client key 的对应 |
-| `overview/agent-manifest.md` | Agent 清单：一个 agent 由哪些数据构成（展示 / 持久化目录 / 镜像 / 配置模板） |
+| Agent 清单 | [agent-manifest.md](./overview/agent-manifest.md) | 一个 agent 由哪些数据构成（展示 / 持久化目录 / 镜像 / 配置模板），以及「加一个 agent 只加一条数据」这条目标现在的差距 |
 | 核心模块架构 | [architecture.md](./overview/architecture.md) | 目标结构、单向依赖规则、contracts / policy / broker / session / mounts 的边界与接口、安全不变量清单、文件闸口、舱令牌投递、真实 Docker 验证结论 |
+| 平台差异与 Linux 开发链路 | [platforms.md](./overview/platforms.md) | 必须按平台分叉的七处（沙箱 / 托盘图标 / 托盘锚点 / 透明窗口 / 拖放 / 字体 / 主题）、无头验证入口与四份产物、透明窗口无合成器时的实测像素、实测结论与尚未取得证据的判断 |
+| 实例持久化 | [persistence.md](./overview/persistence.md) | 为什么用宿主目录而不是留着容器、为什么按实例而不是按舱、整目录 rw 而不是子路径白名单、嵌套只读的实测结果、两类可写挂载与四道闸 |
 
 **这两份冲突时**：产品取舍看 `design.md`，技术边界看 `architecture.md`。
 `architecture.md` §17 记录了它对 `design.md` 的修正，§19 记录了实测推翻的假设。
@@ -101,6 +102,7 @@
 | 功能设计 | [functional-design.md](./product/functional-design.md) | 四个概念的产品语言、六条用户旅程、面板布局与信息优先级、功能清单（V1 / V1.1 / 不做）、状态与文案表、产品级安全承诺与明确不承诺项、非功能目标 |
 | 托盘面板规格 | [tray-ui.md](./product/tray-ui.md) | 为什么是自绘窗口而不是原生菜单、窗口参数（422px / gutter 28）、设计令牌（逐字取自 osw）、布局尺寸、状态、交互 |
 | 第一个体验版验收 | [first-experience.md](./product/first-experience.md) | 体验版是什么、哪些能在无 GUI 的开发机上验、哪些必须在 macOS 上验、必须在 Mac 上走的逐条验收、已知会踩的坑、明确不做的事 |
+| 共享给全部 agent（文件 / 目录） | [shared-mounts.md](./product/shared-mounts.md) | 条目的形状与 kind 的权威来源、舱内 `/shared/<名字>` 的取名与去重、目录为什么整挂、四道闸与目录凭据扫描、被拒条目在界面上怎么显示、列表持久化与 `missing`、明确不做的事 |
 
 ### 运维与验证（[`operations/`](./operations/)）
 

@@ -36,6 +36,10 @@ FAILED=0
 GAPS=0
 
 CELL_TOKEN='abx_cell_e2e-docker-2f9c1a'
+# 临时令牌绑定的舱。舱面要求请求头 `x-abx-cell-id` 与它一致，不一致按 401 拒
+# （见 `broker/registry.ts` 的令牌→舱注册表）。所以这里必须是绑定的那个值，
+# 而不是随手写的名字——写错的话每一步都会 401，而失败信息看起来像「链路不通」。
+CELL_ID='default'
 FAKE_SECRET='FAKE-SECRET-e2e-docker-0000-not-a-real-key'
 
 cleanup() {
@@ -397,7 +401,7 @@ ABX_PROBE_BODY='{"model":"fake","messages":[{"role":"user","content":"hi"}]}' \
   cell_fetch "$CELL_BASE/c/$CELL_TOKEN/u/osw/v1/messages" \
   "content-type: application/json" \
   "authorization: Bearer abx-placeholder" \
-  "x-abx-cell-id: claude-cell-1" || true
+  "x-abx-cell-id: $CELL_ID" || true
 
 if [ -s "$WORK/upstream-seen.json" ]; then
   raw "上游实际收到的（$WORK/upstream-seen.json）："
@@ -417,7 +421,7 @@ else
 fi
 
 # ── 5. 规格探针：设计里要求了、实现里还没有的两条 ──────────────────────────
-step '5. 规格探针：§20.3 与 §19.1 里尚未落地的两条（不影响退出码，但必须看见）'
+step '5. 规格探针：§20.3 已落地，§19.1 的结论是「回环必须放行」（不影响退出码，但必须看见）'
 
 run "docker run --rm $IMAGE node -e '<同一个令牌，声称自己是另一个舱>'"
 FORGED="$(cell_fetch_code "$CELL_BASE/healthz" "x-abx-cell: $CELL_TOKEN" 'x-abx-cell-id: claude-cell-forged')"
@@ -430,11 +434,19 @@ fi
 
 run "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:$CELL_PORT/healthz -H 'x-abx-cell: <令牌>'"
 FROM_HOST="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$CELL_PORT/healthz" -H "x-abx-cell: $CELL_TOKEN" 2>/dev/null)"
-raw "从宿主回环打舱面（来源 127.0.0.1，不在 docker 网段内）-> HTTP ${FROM_HOST:-无响应}"
-if [ "$FROM_HOST" = "401" ] || [ "$FROM_HOST" = "403" ]; then
-  ok '来源不在 docker 网段的请求被拒（§19.1 的补偿措施已落地）'
+raw "从宿主回环打舱面（来源 127.0.0.1）-> HTTP ${FROM_HOST:-无响应}"
+# §19.1 原话是「非 docker VM 网段的请求一律拒绝」。实测下来这条**做不到**，
+# 而且不是取舍问题：Docker Desktop 下容器 fetch `host.docker.internal`，宿主看到的
+# `remoteAddress` 就是 `127.0.0.1`（VM 的 NAT）。把回环拒掉，等于舱一个请求都进不来
+# ——本脚本第 2 步的容器探测会全部变成连不上。所以回环在默认放行列表里，见
+# `broker/cell-source.ts` 的 DEFAULT_ALLOWED_CELL_SUBNETS 注释。
+#
+# 这条探针现在的用处是**反向**的：断言回环确实被放行。哪天有人把它从默认列表里去掉，
+# 这里会红，而不是等到用户发现舱连不上。
+if [ "$FROM_HOST" = "200" ]; then
+  ok '回环来源被放行（Docker Desktop 下容器流量的来源就是 127.0.0.1，去掉它舱就连不上）'
 else
-  gap "§19.1 要求「非 docker VM 网段的请求一律拒绝，即便令牌正确」，当前实现返回 ${FROM_HOST:-无响应}：绑 0.0.0.0 换来的暴露面没有任何补偿"
+  gap "回环来源返回 ${FROM_HOST:-无响应}，而 Docker Desktop 下容器流量的来源就是 127.0.0.1：这会让舱连不上（见本脚本第 2 步的容器探测）"
 fi
 
 # 第二条不是「行为不对」，是「这个行为压根不存在」——所以直接看源码里有没有这个东西。
