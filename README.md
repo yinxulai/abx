@@ -40,7 +40,9 @@
 迟早会和那份表说的不一样。
 
 当前：docker 后端的会话编排、共享目录（文件与目录、只读、四道闸）、agent 清单与镜像
-（`claude` / `codex`）、出口默认拒绝与审计、以及本地与容器两套端到端脚本都已落地并有测试。
+（`claude` / `codex`）、出口默认拒绝与审计、传递窗（舱内 `publish` / `open` 两个工具），
+以及五个端到端脚本（`e2e-local` / `e2e-docker` / `e2e-shared` / `e2e-persist` / `e2e-transom`；
+另有需要真凭据、只在开发机手跑的 `e2e-agent-claude`）都已落地并有测试。
 `dsh` 的镜像尚未构建，所以那个 agent 现在打不开——面板会直接告诉你原因。
 
 ## 目录结构
@@ -55,8 +57,8 @@ abx/
 │   └── docs/               # @abx/docs —— 使用手册
 ├── packages/
 │   ├── contracts/          # @abx/contracts —— 类型 + zod schema，唯一真相
-│   ├── core/               # @abx/core —— broker / policy / session / commands
-│   ├── console/            # @abx/console —— 托盘面板与管理面板（React）
+│   ├── core/               # @abx/core —— broker / policy / session / transom / commands
+│   ├── console/            # @abx/console —— 托盘面板（React）
 │   └── toolkit/            # @abx/toolkit —— 工具链，不含任何运行时代码
 │       ├── scripts/        # lint / typecheck / test / version / 包边界校验 / 端到端
 │       ├── tsconfig.check.json
@@ -81,7 +83,7 @@ abx/
 | 目录 | 职责 |
 | --- | --- |
 | `packages/contracts` | 共享契约：跨包共用的类型与 zod schema。只描述形状，不依赖任何实现。 |
-| `packages/core` | 领域逻辑。broker / policy / session 将来作为本包的内部模块；纯 Node，不含宿主依赖。 |
+| `packages/core` | 领域逻辑。broker / policy / session / transom 已作为本包的内部模块落地；纯 Node，不含宿主依赖。 |
 | `packages/console` | 面板 UI（React），只跟宿主给的 bridge 说话；浏览器里也能单独打开。 |
 | `packages/toolkit` | 跨包的开发脚本与静态守卫（lint / typecheck / test / version / 包边界）。 |
 | `apps/app` | 托盘应用宿主：系统托盘、面板窗口、拖放与会话 IPC。 |
@@ -102,7 +104,7 @@ pnpm test:coverage # 同上，并收集覆盖率
 
 ## 环境要求
 
-- Node.js >= 22
+- Node.js >= 24（根 `package.json` 的 `engines` 字段是唯一权威）
 - pnpm（版本由根 `package.json` 的 `packageManager` 字段决定）
 
 ## 技术选型
@@ -112,7 +114,7 @@ pnpm test:coverage # 同上，并收集覆盖率
 | 领域 | 选型 |
 | --- | --- |
 | 工作区 | pnpm workspace（`pnpm@12.14.0`，`packages/*` + `apps/*`） |
-| 语言 | TypeScript（`@typescript/typescript6`）+ Node >= 22 |
+| 语言 | TypeScript（`@typescript/typescript6`）+ Node >= 24 |
 | 任务编排 | turbo 2 |
 | 静态检查 | eslint 10 + `@yinxulai/eslint-plugin-peculiar` |
 | 测试 | vitest 5（`@vitest/coverage-v8`），组件测试用 jsdom + Testing Library |
@@ -121,6 +123,6 @@ pnpm test:coverage # 同上，并收集覆盖率
 
 **目的：将来 abx 与 osw 可以合并为一个应用。** 两边目录语义对位（`contracts` / `core` / `console` / `toolkit` + `apps/*`）、技术栈同版本，合并时不需要先做一轮「统一依赖版本」的迁移。
 
-前端与测试栈（React / Vite / jsdom 等）**先落在根 `devDependencies`**，`@abx/console` 本阶段只是占位、不搭应用；这样版本只有一个来源，将来 console 真正开工时不必再谈一次。
+前端与测试工具链（Vite / jsdom / Testing Library 等）**统一落在根 `devDependencies`**，版本只有一个来源；`@abx/console` 的面板已落地并复用这些版本。
 
 electron 已引入（`apps/app`）；其余尚未引入的具体产品库见 `AGENTS.md` 的「暂缓未加依赖」一节。
